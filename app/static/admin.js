@@ -64,7 +64,7 @@ async function overview() {
   view.innerHTML = `<div class="cards">
     ${[["کاربران", data.users], ["پلن‌ها", data.plans], ["کشورها", data.countries], ["نودها", data.nodes], ["نود آنلاین", data.online_nodes]]
       .map((item) => `<div class="card">${item[0]}<strong>${item[1]}</strong></div>`).join("")}
-    </div><div class="panel"><h2>وضعیت هسته مرکزی</h2><p>PostgreSQL، Redis و API مرکزی فعال هستند.</p></div>`;
+    </div><div class="panel"><h2>وضعیت هسته مرکزی</h2><p>PostgreSQL، Redis و API مرکزی فعال هستند.<br><br><b>نود داخلی:</b> Xray:8443 — WireGuard:51820 — OpenVPN:1194 — OpenConnect:4443</p></div>`;
 }
 
 async function countries() {
