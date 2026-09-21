@@ -125,7 +125,7 @@ async function services() {
     view.innerHTML = '<div class="panel"><h2>صدور سرویس VPN</h2><div class="workflow"><span>۱. ساخت کاربر</span><span>۲. ساخت پلن</span><span>۳. ثبت نود</span><span>۴. صدور سرویس</span></div><div class="notice warning"><b>پیش‌نیاز ناقص:</b> ابتدا ' + missing.join("، ") + ' را بسازید.</div><div class="help-box"><h3>سرویس چگونه فعال می‌شود؟</h3><ol><li>کاربر، مالک سرویس است.</li><li>پلن، مدت و حجم را تعیین می‌کند.</li><li>نود، سروری است که اکانت روی آن ساخته می‌شود.</li><li>Node Agent باید روی نود آنلاین باشد تا فرمان را دریافت کند.</li></ol></div></div>';
     return;
   }
-  view.innerHTML = `<div class="panel"><h2>صدور سرویس VPN</h2><div class="help-box"><b>روش کار:</b> کاربر + پلن + نود + پروتکل را انتخاب کنید. اگر Agent نود آنلاین باشد، سرویس فعال و کانفیگ ساخته می‌شود؛ در غیر این صورت وضعیت pending می‌ماند.</div>
+  view.innerHTML = `<div class="panel"><h2>صدور سرویس VPN</h2><div class="help-box"><b>روش کار:</b> کاربر + پلن + نود + پروتکل را انتخاب کنید. پس از نصب Node Agent و Adapter واقعی پروتکل روی نود، فرمان ساخت کانفیگ اجرا می‌شود؛ تا قبل از اتصال نود، وضعیت pending می‌ماند.</div>
     <form id="serviceForm" class="grid-form">
     <select id="serviceUser">${userRows.map((x)=>`<option value="${x.id}">${esc(x.username)}</option>`).join("")}</select>
     <select id="servicePlan">${planRows.map((x)=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
