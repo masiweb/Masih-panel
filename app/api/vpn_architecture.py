@@ -28,6 +28,38 @@ XRAY_VARIANTS = {"vless", "vmess", "trojan", "shadowsocks"}
 XRAY_TRANSPORTS = {"tcp", "ws", "grpc", "httpupgrade", "xhttp", "kcp"}
 XRAY_SECURITY = {"none", "tls", "reality"}
 
+
+# Kept in sync with the capability predicates in 3x-ui v3.8.5.
+PROTOCOL_CAPABILITIES = {
+    "xray": {"ready": True, "engine": "xray", "multiple_inbounds": True,
+        "variants": ["vless", "vmess", "trojan", "shadowsocks"],
+        "transports": ["tcp", "kcp", "ws", "grpc", "httpupgrade", "xhttp"],
+        "security": ["none", "tls", "reality"],
+        "tls_protocols": ["vmess", "vless", "trojan", "shadowsocks"],
+        "tls_transports": ["tcp", "ws", "http", "grpc", "httpupgrade", "xhttp"],
+        "reality_protocols": ["vless", "trojan"], "reality_transports": ["tcp", "http", "grpc", "xhttp"],
+        "features": ["sniffing", "sockopt", "fallbacks", "proxy-protocol", "subscription", "qr"]},
+    "wireguard": {"ready": True, "engine": "wireguard-tools", "multiple_inbounds": False,
+        "variants": ["native"], "transports": ["udp"], "security": ["wireguard"],
+        "features": ["peer-keys", "allowed-ips", "dns", "mtu", "keepalive", "subscription", "qr"]},
+    "openvpn": {"ready": True, "engine": "openvpn", "multiple_inbounds": False,
+        "variants": ["server"], "transports": ["udp", "tcp"], "security": ["tls-auth", "tls-crypt"],
+        "features": ["tun", "tap", "cipher", "auth", "dns", "redirect-gateway", "profile-download"]},
+    "openconnect": {"ready": True, "engine": "ocserv", "multiple_inbounds": False,
+        "variants": ["anyconnect"], "transports": ["tcp", "dtls"], "security": ["tls"],
+        "features": ["dtls", "cisco-compatible", "dns", "max-clients", "profile-download"]},
+}
+REFERENCE_PROTOCOLS = {
+    "hysteria": {"ready": False, "engine": "xray", "reason": "adapter pending"},
+    "tuic": {"ready": False, "engine": "sing-box", "reason": "adapter pending"},
+    "http": {"ready": False, "engine": "xray", "reason": "adapter pending"},
+    "mixed": {"ready": False, "engine": "xray", "reason": "adapter pending"},
+    "mtproto": {"ready": False, "engine": "external", "reason": "adapter pending"},
+    "tunnel": {"ready": False, "engine": "xray", "reason": "adapter pending"},
+    "tun": {"ready": False, "engine": "xray", "reason": "adapter pending"},
+    "amneziawg": {"ready": False, "engine": "amneziawg", "reason": "adapter pending"},
+}
+
 DEFAULT_SETTINGS = {
     "xray": {"variant": "vless", "transport": "tcp", "security": "reality", "flow": "xtls-rprx-vision", "server_name": "www.microsoft.com", "fingerprint": "chrome", "sniffing": True},
     "wireguard": {"interface": "wg0", "network": "10.70.0.0/24", "dns": ["1.1.1.1", "1.0.0.1"], "mtu": 1420, "allowed_ips": ["0.0.0.0/0", "::/0"], "persistent_keepalive": 25},
@@ -142,6 +174,39 @@ def inbound_out(item):
     return data
 
 
+def inbound_runtime(db, item):
+    data = inbound_out(item)
+    node = db.get(VPNNode, item.node_id)
+    attachments = db.scalars(select(ClientInbound).where(ClientInbound.inbound_id == item.id)).all()
+    active_attachments = [a for a in attachments if a.enabled]
+    service_states, used_bytes = {}, 0
+    for attachment in active_attachments:
+        service = db.get(VPNService, attachment.legacy_service_id) if attachment.legacy_service_id else None
+        state = service.status.value if service else attachment.status
+        service_states[state] = service_states.get(state, 0) + 1
+        used_bytes += service.used_bytes if service else 0
+    jobs = db.scalars(select(NodeJob).where(NodeJob.node_id == item.node_id).order_by(NodeJob.created_at.desc())).all()
+    latest_job = next((job for job in jobs if
+        str((job.payload or {}).get("inbound_id", "")) == str(item.id) or
+        str(((job.payload or {}).get("inbound") or {}).get("id", "")) == str(item.id)), None)
+    settings = item.settings or {}
+    data["runtime"] = {
+        "node": {"name": node.name if node else None, "status": serialize(node.status) if node else "missing",
+                 "last_seen_at": serialize(node.last_seen_at) if node else None,
+                 "agent_version": node.agent_version if node else None},
+        "variant": settings.get("variant") if item.protocol == "xray" else item.protocol,
+        "transport": settings.get("transport"), "security": settings.get("security"),
+        "clients_total": len(attachments), "clients_enabled": len(active_attachments),
+        "service_states": service_states, "used_bytes": used_bytes,
+        "capabilities": PROTOCOL_CAPABILITIES.get(item.protocol, {}),
+        "last_job": ({"id": str(latest_job.id), "type": latest_job.job_type,
+                      "status": serialize(latest_job.status), "result": latest_job.result,
+                      "created_at": serialize(latest_job.created_at),
+                      "finished_at": serialize(latest_job.finished_at)} if latest_job else None),
+    }
+    return data
+
+
 def client_out(db, item, include_configs=False):
     attachments = db.scalars(select(ClientInbound).where(ClientInbound.client_id == item.id)).all()
     config_rows = []
@@ -207,9 +272,23 @@ def create_attachment(db, client, inbound):
     return attachment
 
 
+@router.get("/protocol-capabilities")
+def protocol_capabilities():
+    return {"reference": {"name": "3x-ui", "version": "3.8.5"},
+            "available": PROTOCOL_CAPABILITIES, "planned": REFERENCE_PROTOCOLS}
+
+
 @router.get("/inbounds")
 def list_inbounds(db: Session = Depends(db_session)):
-    return [inbound_out(x) for x in db.scalars(select(VPNInbound).order_by(VPNInbound.created_at.desc())).all()]
+    return [inbound_runtime(db, x) for x in db.scalars(select(VPNInbound).order_by(VPNInbound.created_at.desc())).all()]
+
+
+@router.get("/inbounds/{inbound_id}/runtime")
+def get_inbound_runtime(inbound_id: UUID, db: Session = Depends(db_session)):
+    inbound = db.get(VPNInbound, inbound_id)
+    if not inbound:
+        raise HTTPException(404, "Inbound پیدا نشد")
+    return inbound_runtime(db, inbound)
 
 
 @router.post("/inbounds", status_code=201)
@@ -239,6 +318,13 @@ def update_inbound(inbound_id: UUID, payload: InboundUpdate, admin: Admin = Depe
     changes = payload.model_dump(exclude_unset=True)
     if "settings" in changes:
         changes["settings"] = validate_settings(inbound.protocol, changes["settings"])
+    listen = changes.get("listen", inbound.listen)
+    port = changes.get("port", inbound.port)
+    collision = db.scalar(select(VPNInbound).where(
+        VPNInbound.node_id == inbound.node_id, VPNInbound.listen == listen,
+        VPNInbound.port == port, VPNInbound.id != inbound.id))
+    if collision:
+        raise HTTPException(409, "این Listen/Port قبلاً روی Node ثبت شده است")
     for key, value in changes.items(): setattr(inbound, key, value)
     inbound.status = InboundStatus.pending
     job = queue_inbound_job(db, inbound, "update_inbound")
