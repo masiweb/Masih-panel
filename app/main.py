@@ -9,7 +9,7 @@ from . import __version__
 from .api.admin_api import router as admin_router
 from .api.auth_api import router as auth_router
 from .api.nodes import router as nodes_router
-from .api.services import router as services_router
+from .api.services import router as services_router, public_router as subscription_router
 from .api.node_agent_api import router as agent_router
 from .auth import hash_password
 from .config import get_settings
@@ -32,6 +32,7 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(nodes_router)
 app.include_router(services_router)
+app.include_router(subscription_router)
 app.include_router(agent_router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
