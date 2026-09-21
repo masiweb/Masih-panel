@@ -81,3 +81,23 @@ class NodeOut(BaseModel):
     agent_version: str | None
     last_seen_at: datetime | None
     model_config = {"from_attributes": True}
+
+class ServiceCreate(BaseModel):
+    subscriber_id: UUID
+    plan_id: UUID
+    node_id: UUID
+    protocol: str
+
+class ServiceRenew(BaseModel):
+    plan_id: UUID | None = None
+
+class JobResultIn(BaseModel):
+    ok: bool
+    client_config: str | None = None
+    used_bytes: int | None = Field(default=None, ge=0)
+    details: dict = {}
+
+class OrderCreate(BaseModel):
+    subscriber_id: UUID
+    plan_id: UUID
+    source: str = "admin"
