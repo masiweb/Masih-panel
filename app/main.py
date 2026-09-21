@@ -11,14 +11,18 @@ from .api.auth_api import router as auth_router
 from .api.nodes import router as nodes_router
 from .api.services import router as services_router, public_router as subscription_router
 from .api.node_agent_api import router as agent_router
+from .api.vpn_architecture import router as vpn_router, public_router as client_subscription_router
 from .auth import hash_password
 from .config import get_settings
 from .database import Base, SessionLocal, engine
 from .models import Admin
+from .migrate_architecture import migrate_legacy_services
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    with SessionLocal() as migration_db:
+        migrate_legacy_services(migration_db)
     settings = get_settings()
     if settings.bootstrap_admin_password:
         with SessionLocal() as db:
@@ -32,8 +36,10 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(nodes_router)
 app.include_router(services_router)
+app.include_router(client_subscription_router)
 app.include_router(subscription_router)
 app.include_router(agent_router)
+app.include_router(vpn_router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
