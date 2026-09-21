@@ -1,36 +1,177 @@
-const api='/api/v1',v=document.getElementById('view');
-async function req(url,opt={}){let r=await fetch(api+url,{headers:{'Content-Type':'application/json',...(opt.headers||{})},...opt});if(r.status===401){location='/admin/login';throw 0}if(!r.ok)throw new Error((await r.json()).detail||'خطا');return r.status===204?null:r.json()}
-const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const btns=(type,id)=>'<button onclick="edit'+type+"('"+id+"')"+'">ویرایش</button> <button class="danger" onclick="del'+type+"('"+id+"')"+'">حذف</button>';
-async function overview(){let d=await req('/admin/summary');v.innerHTML='<div class="cards">'+[['کاربران',d.users],['پلن‌ها',d.plans],['کشورها',d.countries],['نودها',d.nodes],['نود آنلاین',d.online_nodes]].map(x=>'<div class="card">'+x[0]+'<strong>'+x[1]+'</strong></div>').join('')+'</div><div class="panel"><h2>وضعیت هسته مرکزی</h2><p>PostgreSQL، Redis و API مرکزی در حال فعالیت هستند.</p></div>'}
-function table(rows,cols,type){return '<table><thead><tr>'+cols.map(c=>'<th>'+c[1]+'</th>').join('')+'<th>عملیات</th></tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[2]?c[2](r[c[0]],r):r[c[0]])+'</td>').join('')+'<td>'+btns(type,r.id)+'</td></tr>').join('')+'</tbody></table>'}
-async function countries(){let rows=await req('/admin/countries');window._countries=rows;v.innerHTML='<div class="panel"><h2>کشورها</h2><form class="grid-form" onsubmit="addCountry(event)"><input id="cc" placeholder="کد مانند DE" required maxlength="2"><input id="cn" placeholder="نام کشور" required><button class="primary">افزودن</button></form>'+table(rows,[['code','کد'],['name','نام'],['enabled','فعال',x=>x?'بله':'خیر']],'Country')+'</div>'}
-async function plans(){let rows=await req('/admin/plans');window._plans=rows;v.innerHTML='<div class="panel"><h2>پلن‌ها</h2><form class="grid-form" onsubmit="addPlan(event)"><input id="pn" placeholder="نام" required><input id="pd" type="number" placeholder="روز" required><input id="pt" type="number" placeholder="حجم GB" required><input id="pp" type="number" placeholder="قیمت" required><button class="primary">ساخت</button></form>'+table(rows,[['name','نام'],['duration_days','مدت'],['traffic_gb','حجم'],['price','قیمت'],['enabled','فعال',x=>x?'بله':'خیر']],'Plan')+'</div>'}
-async function users(){let [rows,ps]=await Promise.all([req('/admin/users'),req('/admin/plans')]);window._users=rows;window._plans=ps;v.innerHTML='<div class="panel"><h2>کاربران</h2><form class="grid-form" onsubmit="addUser(event)"><input id="un" placeholder="نام کاربری" required><input id="um" placeholder="موبایل"><select id="up"><option value="">بدون پلن</option>'+ps.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select><button class="primary">ساخت</button></form>'+table(rows,[['username','نام کاربری'],['mobile','موبایل'],['plan_id','پلن'],['enabled','فعال',x=>x?'بله':'خیر']],'User')+'</div>'}
-async function nodes(){let [rows,cs]=await Promise.all([req('/nodes'),req('/admin/countries')]);window._nodes=rows;window._countries=cs;v.innerHTML='<div class="panel"><h2>نودها</h2><form class="grid-form" onsubmit="addNode(event)"><input id="nn" placeholder="نام نود" required><select id="nc">'+cs.map(c=>'<option value="'+c.code+'">'+esc(c.name)+'</option>').join('')+'</select><input id="na" placeholder="IP یا دامنه" required><input id="np" value="xray,wireguard" placeholder="پروتکل‌ها"><button class="primary">افزودن</button></form>'+table(rows,[['name','نام'],['country_code','کشور'],['public_address','آدرس'],['protocols','پروتکل'],['status','وضعیت']],'Node')+'</div>'}
-async function services(){let [rows,users,plans,nodesList]=await Promise.all([req('/admin/services'),req('/admin/users'),req('/admin/plans'),req('/nodes')]);window._services=rows;v.innerHTML='<div class="panel"><h2>سرویس‌های VPN</h2><form class="grid-form" onsubmit="addService(event)"><select id="su">'+users.map(x=>'<option value="'+x.id+'">'+esc(x.username)+'</option>').join('')+'</select><select id="sp">'+plans.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select><select id="sn">'+nodesList.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select><select id="sproto"><option>xray</option><option>wireguard</option><option>openvpn</option><option>openconnect</option></select><button class="primary">صدور سرویس</button></form><table><thead><tr><th>شناسه</th><th>پروتکل</th><th>وضعیت</th><th>حجم</th><th>انقضا</th><th>عملیات</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+esc(x.external_id)+'</td><td>'+esc(x.protocol)+'</td><td>'+esc(x.status)+'</td><td>'+Math.round(x.quota_bytes/1073741824)+' GB</td><td>'+esc(new Date(x.expires_at).toLocaleDateString('fa-IR'))+'</td><td><button onclick="renewService(''+x.id+'')">تمدید</button> <button class="danger" onclick="revokeService(''+x.id+'')">قطع</button></td></tr>').join('')+'</tbody></table></div>'}
-async function addService(e){e.preventDefault();await req('/admin/services',{method:'POST',body:JSON.stringify({subscriber_id:su.value,plan_id:sp.value,node_id:sn.value,protocol:sproto.value})});services()}
-async function renewService(id){if(confirm('سرویس تمدید شود؟')){await req('/admin/services/'+id+'/renew',{method:'POST',body:'{}'});services()}}
-async function revokeService(id){if(confirm('سرویس قطع شود؟')){await req('/admin/services/'+id+'/revoke',{method:'POST'});services()}}
-async function orders(){let [rows,users,plans]=await Promise.all([req('/admin/orders'),req('/admin/users'),req('/admin/plans')]);v.innerHTML='<div class="panel"><h2>سفارش‌ها</h2><form class="grid-form" onsubmit="addOrder(event)"><select id="ou">'+users.map(x=>'<option value="'+x.id+'">'+esc(x.username)+'</option>').join('')+'</select><select id="op">'+plans.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select><button class="primary">ثبت سفارش</button></form><table><thead><tr><th>شناسه</th><th>مبلغ</th><th>وضعیت</th><th>منبع</th><th>عملیات</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+esc(x.amount)+'</td><td>'+esc(x.status)+'</td><td>'+esc(x.source)+'</td><td>'+(x.status==='pending'?'<button onclick="payOrder(''+x.id+'')">تأیید پرداخت</button>':'')+'</td></tr>').join('')+'</tbody></table></div>'}
-async function addOrder(e){e.preventDefault();await req('/admin/orders',{method:'POST',body:JSON.stringify({subscriber_id:ou.value,plan_id:op.value,source:'admin'})});orders()}
-async function payOrder(id){if(confirm('پرداخت تأیید شود؟')){await req('/admin/orders/'+id+'/paid',{method:'POST'});orders()}}
-async function logs(){let rows=await req('/admin/audit-logs');v.innerHTML='<div class="panel"><h2>گزارش فعالیت مدیران</h2><table><thead><tr><th>زمان</th><th>مدیر</th><th>عملیات</th><th>بخش</th><th>شناسه</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+esc(new Date(r.created_at).toLocaleString('fa-IR'))+'</td><td>'+esc(r.admin_username)+'</td><td>'+esc(r.action)+'</td><td>'+esc(r.resource_type)+'</td><td>'+esc(r.resource_id)+'</td></tr>').join('')+'</tbody></table></div>'}
-async function settings(){v.innerHTML='<div class="panel"><h2>تغییر رمز مدیر</h2><form class="grid-form" onsubmit="changePassword(event)"><input id="oldp" type="password" placeholder="رمز فعلی" required><input id="newp" type="password" minlength="12" placeholder="رمز جدید حداقل ۱۲ کاراکتر" required><button class="primary">تغییر رمز</button></form><p id="securityMsg"></p></div>'}
-async function addCountry(e){e.preventDefault();await req('/admin/countries',{method:'POST',body:JSON.stringify({code:cc.value,name:cn.value})});countries()}
-async function addPlan(e){e.preventDefault();await req('/admin/plans',{method:'POST',body:JSON.stringify({name:pn.value,duration_days:+pd.value,traffic_gb:+pt.value,price:+pp.value})});plans()}
-async function addUser(e){e.preventDefault();await req('/admin/users',{method:'POST',body:JSON.stringify({username:un.value,mobile:um.value||null,plan_id:up.value||null})});users()}
-async function addNode(e){e.preventDefault();let r=await req('/nodes',{method:'POST',body:JSON.stringify({name:nn.value,country_code:nc.value,public_address:na.value,protocols:np.value.split(',').map(x=>x.trim())})});alert('توکن نود فقط یک بار نمایش داده می‌شود. آن را ذخیره کنید:
+const api = "/api/v1";
+const view = document.getElementById("view");
 
-'+r.node_token);nodes()}
-async function editCountry(id){let x=_countries.find(v=>v.id===id),name=prompt('نام کشور',x.name);if(name!==null){await req('/admin/countries/'+id,{method:'PATCH',body:JSON.stringify({name})});countries()}}
-async function editPlan(id){let x=_plans.find(v=>v.id===id),name=prompt('نام پلن',x.name);if(name!==null){await req('/admin/plans/'+id,{method:'PATCH',body:JSON.stringify({name})});plans()}}
-async function editUser(id){let x=_users.find(v=>v.id===id),mobile=prompt('شماره موبایل',x.mobile||'');if(mobile!==null){await req('/admin/users/'+id,{method:'PATCH',body:JSON.stringify({mobile:mobile||null})});users()}}
-async function editNode(id){let x=_nodes.find(v=>v.id===id),address=prompt('IP یا دامنه',x.public_address);if(address!==null){await req('/nodes/'+id,{method:'PATCH',body:JSON.stringify({public_address:address})});nodes()}}
-async function delCountry(id){if(confirm('حذف شود؟')){await req('/admin/countries/'+id,{method:'DELETE'});countries()}}
-async function delPlan(id){if(confirm('حذف شود؟')){await req('/admin/plans/'+id,{method:'DELETE'});plans()}}
-async function delUser(id){if(confirm('حذف شود؟')){await req('/admin/users/'+id,{method:'DELETE'});users()}}
-async function delNode(id){if(confirm('حذف شود؟')){await req('/nodes/'+id,{method:'DELETE'});nodes()}}
-async function changePassword(e){e.preventDefault();try{await req('/auth/change-password',{method:'POST',body:JSON.stringify({current_password:oldp.value,new_password:newp.value})});securityMsg.textContent='رمز تغییر کرد؛ در حال انتقال به صفحه ورود...';setTimeout(()=>location='/admin/login',1200)}catch(x){securityMsg.textContent=x.message}}
-async function logout(){await req('/auth/logout',{method:'POST'});location='/admin/login'}
-const views={overview,users,plans,countries,nodes,services,orders,logs,settings};document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');views[b.dataset.view]()});document.querySelector('nav button').click();
+async function req(url, options = {}) {
+  const response = await fetch(api + url, {
+    ...options,
+    headers: {"Content-Type": "application/json", ...(options.headers || {})},
+  });
+  if (response.status === 401) {
+    window.location = "/admin/login";
+    throw new Error("authentication required");
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || "خطا در انجام عملیات");
+  return body;
+}
+
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+}[char]));
+
+function showError(error) {
+  alert(error.message || "خطای ناشناخته");
+}
+
+function bindActions() {
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.onclick = () => {
+      const fn = window[button.dataset.action];
+      if (typeof fn === "function") fn(button.dataset.id);
+    };
+  });
+}
+
+function actions(type, id) {
+  return `<button data-action="edit${type}" data-id="${esc(id)}">ویرایش</button>
+    <button class="danger" data-action="del${type}" data-id="${esc(id)}">حذف</button>`;
+}
+
+function resourceTable(rows, columns, type) {
+  return `<table><thead><tr>
+    ${columns.map((column) => `<th>${column[1]}</th>`).join("")}<th>عملیات</th>
+    </tr></thead><tbody>
+    ${rows.map((row) => `<tr>
+      ${columns.map((column) => `<td>${esc(column[2] ? column[2](row[column[0]], row) : row[column[0]])}</td>`).join("")}
+      <td>${actions(type, row.id)}</td></tr>`).join("")}
+    </tbody></table>`;
+}
+
+async function overview() {
+  const data = await req("/admin/summary");
+  view.innerHTML = `<div class="cards">
+    ${[["کاربران", data.users], ["پلن‌ها", data.plans], ["کشورها", data.countries], ["نودها", data.nodes], ["نود آنلاین", data.online_nodes]]
+      .map((item) => `<div class="card">${item[0]}<strong>${item[1]}</strong></div>`).join("")}
+    </div><div class="panel"><h2>وضعیت هسته مرکزی</h2><p>PostgreSQL، Redis و API مرکزی فعال هستند.</p></div>`;
+}
+
+async function countries() {
+  window.countriesData = await req("/admin/countries");
+  view.innerHTML = `<div class="panel"><h2>کشورها</h2>
+    <form id="countryForm" class="grid-form"><input id="countryCode" maxlength="2" placeholder="کد مانند DE" required>
+    <input id="countryName" placeholder="نام کشور" required><button class="primary">افزودن</button></form>
+    ${resourceTable(countriesData, [["code","کد"],["name","نام"],["enabled","فعال",(v)=>v?"بله":"خیر"]], "Country")}</div>`;
+  countryForm.onsubmit = addCountry;
+  bindActions();
+}
+
+async function plans() {
+  window.plansData = await req("/admin/plans");
+  view.innerHTML = `<div class="panel"><h2>پلن‌ها</h2>
+    <form id="planForm" class="grid-form"><input id="planName" placeholder="نام" required>
+    <input id="planDays" type="number" placeholder="روز" required><input id="planTraffic" type="number" placeholder="حجم GB" required>
+    <input id="planPrice" type="number" placeholder="قیمت" required><button class="primary">ساخت</button></form>
+    ${resourceTable(plansData, [["name","نام"],["duration_days","مدت"],["traffic_gb","حجم"],["price","قیمت"],["enabled","فعال",(v)=>v?"بله":"خیر"]], "Plan")}</div>`;
+  planForm.onsubmit = addPlan;
+  bindActions();
+}
+
+async function users() {
+  const [rows, planRows] = await Promise.all([req("/admin/users"), req("/admin/plans")]);
+  window.usersData = rows; window.plansData = planRows;
+  view.innerHTML = `<div class="panel"><h2>کاربران</h2>
+    <form id="userForm" class="grid-form"><input id="userName" placeholder="نام کاربری" required><input id="userMobile" placeholder="موبایل">
+    <select id="userPlan"><option value="">بدون پلن</option>${planRows.map((p)=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+    <button class="primary">ساخت</button></form>
+    ${resourceTable(rows, [["username","نام کاربری"],["mobile","موبایل"],["plan_id","پلن"],["enabled","فعال",(v)=>v?"بله":"خیر"]], "User")}</div>`;
+  userForm.onsubmit = addUser;
+  bindActions();
+}
+
+async function nodes() {
+  const [rows, countryRows] = await Promise.all([req("/nodes"), req("/admin/countries")]);
+  window.nodesData = rows; window.countriesData = countryRows;
+  view.innerHTML = `<div class="panel"><h2>نودها</h2>
+    <form id="nodeForm" class="grid-form"><input id="nodeName" placeholder="نام نود" required>
+    <select id="nodeCountry">${countryRows.map((c)=>`<option value="${c.code}">${esc(c.name)}</option>`).join("")}</select>
+    <input id="nodeAddress" placeholder="IP یا دامنه" required><input id="nodeProtocols" value="xray,wireguard" placeholder="پروتکل‌ها">
+    <button class="primary">افزودن</button></form>
+    ${resourceTable(rows, [["name","نام"],["country_code","کشور"],["public_address","آدرس"],["protocols","پروتکل"],["status","وضعیت"]], "Node")}</div>`;
+  nodeForm.onsubmit = addNode;
+  bindActions();
+}
+
+async function services() {
+  const [rows, userRows, planRows, nodeRows] = await Promise.all([
+    req("/admin/services"), req("/admin/users"), req("/admin/plans"), req("/nodes"),
+  ]);
+  view.innerHTML = `<div class="panel"><h2>سرویس‌های VPN</h2>
+    <form id="serviceForm" class="grid-form">
+    <select id="serviceUser">${userRows.map((x)=>`<option value="${x.id}">${esc(x.username)}</option>`).join("")}</select>
+    <select id="servicePlan">${planRows.map((x)=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
+    <select id="serviceNode">${nodeRows.map((x)=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
+    <select id="serviceProtocol"><option>xray</option><option>wireguard</option><option>openvpn</option><option>openconnect</option></select>
+    <button class="primary">صدور سرویس</button></form>
+    <table><thead><tr><th>شناسه</th><th>پروتکل</th><th>وضعیت</th><th>حجم</th><th>انقضا</th><th>عملیات</th></tr></thead><tbody>
+    ${rows.map((x)=>`<tr><td>${esc(x.external_id)}</td><td>${esc(x.protocol)}</td><td>${esc(x.status)}</td>
+    <td>${Math.round(x.quota_bytes/1073741824)} GB</td><td>${esc(new Date(x.expires_at).toLocaleDateString("fa-IR"))}</td>
+    <td><button data-action="renewService" data-id="${x.id}">تمدید</button>
+    <button class="danger" data-action="revokeService" data-id="${x.id}">قطع</button></td></tr>`).join("")}</tbody></table></div>`;
+  serviceForm.onsubmit = addService;
+  bindActions();
+}
+
+async function orders() {
+  const [rows, userRows, planRows] = await Promise.all([req("/admin/orders"), req("/admin/users"), req("/admin/plans")]);
+  view.innerHTML = `<div class="panel"><h2>سفارش‌ها</h2><form id="orderForm" class="grid-form">
+    <select id="orderUser">${userRows.map((x)=>`<option value="${x.id}">${esc(x.username)}</option>`).join("")}</select>
+    <select id="orderPlan">${planRows.map((x)=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
+    <button class="primary">ثبت سفارش</button></form><table><thead><tr><th>شناسه</th><th>مبلغ</th><th>وضعیت</th><th>منبع</th><th>عملیات</th></tr></thead><tbody>
+    ${rows.map((x)=>`<tr><td>${esc(x.id)}</td><td>${esc(x.amount)}</td><td>${esc(x.status)}</td><td>${esc(x.source)}</td>
+    <td>${x.status==="pending"?`<button data-action="payOrder" data-id="${x.id}">تأیید پرداخت</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
+  orderForm.onsubmit = addOrder;
+  bindActions();
+}
+
+async function logs() {
+  const rows = await req("/admin/audit-logs");
+  view.innerHTML = `<div class="panel"><h2>گزارش فعالیت مدیران</h2><table><thead><tr><th>زمان</th><th>مدیر</th><th>عملیات</th><th>بخش</th><th>شناسه</th></tr></thead><tbody>
+    ${rows.map((x)=>`<tr><td>${esc(new Date(x.created_at).toLocaleString("fa-IR"))}</td><td>${esc(x.admin_username)}</td>
+    <td>${esc(x.action)}</td><td>${esc(x.resource_type)}</td><td>${esc(x.resource_id)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+async function settings() {
+  view.innerHTML = `<div class="panel"><h2>تغییر رمز مدیر</h2><form id="passwordForm" class="grid-form">
+    <input id="currentPassword" type="password" placeholder="رمز فعلی" required>
+    <input id="newPassword" type="password" minlength="12" placeholder="رمز جدید حداقل ۱۲ کاراکتر" required>
+    <button class="primary">تغییر رمز</button></form><p id="securityMessage"></p></div>`;
+  passwordForm.onsubmit = changePassword;
+}
+
+async function addCountry(event){event.preventDefault();try{await req("/admin/countries",{method:"POST",body:JSON.stringify({code:countryCode.value,name:countryName.value})});countries()}catch(e){showError(e)}}
+async function addPlan(event){event.preventDefault();try{await req("/admin/plans",{method:"POST",body:JSON.stringify({name:planName.value,duration_days:+planDays.value,traffic_gb:+planTraffic.value,price:+planPrice.value})});plans()}catch(e){showError(e)}}
+async function addUser(event){event.preventDefault();try{await req("/admin/users",{method:"POST",body:JSON.stringify({username:userName.value,mobile:userMobile.value||null,plan_id:userPlan.value||null})});users()}catch(e){showError(e)}}
+async function addNode(event){event.preventDefault();try{const result=await req("/nodes",{method:"POST",body:JSON.stringify({name:nodeName.value,country_code:nodeCountry.value,public_address:nodeAddress.value,protocols:nodeProtocols.value.split(",").map((x)=>x.trim())})});alert(`توکن نود فقط یک بار نمایش داده می‌شود. آن را ذخیره کنید:\n\n${result.node_token}`);nodes()}catch(e){showError(e)}}
+async function addService(event){event.preventDefault();try{await req("/admin/services",{method:"POST",body:JSON.stringify({subscriber_id:serviceUser.value,plan_id:servicePlan.value,node_id:serviceNode.value,protocol:serviceProtocol.value})});services()}catch(e){showError(e)}}
+async function addOrder(event){event.preventDefault();try{await req("/admin/orders",{method:"POST",body:JSON.stringify({subscriber_id:orderUser.value,plan_id:orderPlan.value,source:"admin"})});orders()}catch(e){showError(e)}}
+
+window.editCountry=async(id)=>{const x=countriesData.find((v)=>v.id===id),name=prompt("نام کشور",x.name);if(name!==null){await req("/admin/countries/"+id,{method:"PATCH",body:JSON.stringify({name})});countries()}};
+window.editPlan=async(id)=>{const x=plansData.find((v)=>v.id===id),name=prompt("نام پلن",x.name);if(name!==null){await req("/admin/plans/"+id,{method:"PATCH",body:JSON.stringify({name})});plans()}};
+window.editUser=async(id)=>{const x=usersData.find((v)=>v.id===id),mobile=prompt("شماره موبایل",x.mobile||"");if(mobile!==null){await req("/admin/users/"+id,{method:"PATCH",body:JSON.stringify({mobile:mobile||null})});users()}};
+window.editNode=async(id)=>{const x=nodesData.find((v)=>v.id===id),address=prompt("IP یا دامنه",x.public_address);if(address!==null){await req("/nodes/"+id,{method:"PATCH",body:JSON.stringify({public_address:address})});nodes()}};
+window.delCountry=async(id)=>{if(confirm("حذف شود؟")){await req("/admin/countries/"+id,{method:"DELETE"});countries()}};
+window.delPlan=async(id)=>{if(confirm("حذف شود؟")){await req("/admin/plans/"+id,{method:"DELETE"});plans()}};
+window.delUser=async(id)=>{if(confirm("حذف شود؟")){await req("/admin/users/"+id,{method:"DELETE"});users()}};
+window.delNode=async(id)=>{if(confirm("حذف شود؟")){await req("/nodes/"+id,{method:"DELETE"});nodes()}};
+window.renewService=async(id)=>{if(confirm("سرویس تمدید شود؟")){await req("/admin/services/"+id+"/renew",{method:"POST",body:"{}"});services()}};
+window.revokeService=async(id)=>{if(confirm("سرویس قطع شود؟")){await req("/admin/services/"+id+"/revoke",{method:"POST"});services()}};
+window.payOrder=async(id)=>{if(confirm("پرداخت تأیید شود؟")){await req("/admin/orders/"+id+"/paid",{method:"POST"});orders()}};
+
+async function changePassword(event){event.preventDefault();try{await req("/auth/change-password",{method:"POST",body:JSON.stringify({current_password:currentPassword.value,new_password:newPassword.value})});securityMessage.textContent="رمز تغییر کرد؛ در حال انتقال...";setTimeout(()=>location="/admin/login",1000)}catch(e){securityMessage.textContent=e.message}}
+async function logout(){await req("/auth/logout",{method:"POST"});location="/admin/login"}
+
+const views={overview,users,plans,countries,nodes,services,orders,logs,settings};
+document.querySelectorAll("nav button").forEach((button)=>{
+  button.onclick=async()=>{document.querySelectorAll("nav button").forEach((x)=>x.classList.remove("active"));button.classList.add("active");try{await views[button.dataset.view]()}catch(e){showError(e)}};
+});
+document.querySelector("nav button").click();
