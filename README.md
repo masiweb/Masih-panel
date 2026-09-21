@@ -12,4 +12,4 @@ Central multi-node VPN management platform.
 - Git-based delivery without committed secrets
 
 ## Current milestone
-Version 0.2.0 adds secure admin login, an RTL management dashboard, users, plans, countries and nodes, plus the Node Agent and Telegram bot foundations.
+Version 0.3.0 adds full resource editing, administrator password rotation, login throttling, audit logs, and automatic offline-node detection.
