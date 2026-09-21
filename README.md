@@ -12,4 +12,4 @@ Central multi-node VPN management platform.
 - Git-based delivery without committed secrets
 
 ## Current milestone
-Version 0.5.0 turns the central host into an online self-node with Xray, WireGuard, OpenVPN and OpenConnect listeners, persistent NAT, firewall rules and a local Node Agent.
+Version 0.6.0 adds real protocol provisioning plus admin config view/copy, downloads, QR codes and per-service subscription links. The central host is also an online self-node for all four protocols.
