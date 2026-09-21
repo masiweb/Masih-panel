@@ -140,3 +140,63 @@ class Order(Base):
     source: Mapped[str] = mapped_column(String(30), default="admin")
     payment_reference: Mapped[str | None] = mapped_column(String(150), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class InboundStatus(str, enum.Enum):
+    pending = "pending"
+    active = "active"
+    failed = "failed"
+    disabled = "disabled"
+    deleting = "deleting"
+
+
+class VPNInbound(Base):
+    __tablename__ = "vpn_inbounds"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vpn_nodes.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    protocol: Mapped[str] = mapped_column(String(30), index=True)
+    listen: Mapped[str] = mapped_column(String(100), default="0.0.0.0")
+    port: Mapped[int] = mapped_column(Integer)
+    public_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sub_sort_index: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[InboundStatus] = mapped_column(Enum(InboundStatus), default=InboundStatus.pending, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class VPNClient(Base):
+    __tablename__ = "vpn_clients"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subscriber_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("subscribers.id"), unique=True, index=True)
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("plans.id"), nullable=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    sub_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    quota_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    limit_ip: Mapped[int] = mapped_column(Integer, default=0)
+    telegram_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    group_name: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_online_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sub_fetch_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ClientInbound(Base):
+    __tablename__ = "client_inbounds"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vpn_clients.id"), index=True)
+    inbound_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vpn_inbounds.id"), index=True)
+    legacy_service_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("vpn_services.id"), unique=True, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    credentials: Mapped[dict] = mapped_column(JSON, default=dict)
+    client_config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
