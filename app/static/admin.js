@@ -117,29 +117,79 @@ async function services() {
   const [rows, userRows, planRows, nodeRows] = await Promise.all([
     req("/admin/services"), req("/admin/users"), req("/admin/plans"), req("/nodes"),
   ]);
+  window.servicesData = rows;
   if (!userRows.length || !planRows.length || !nodeRows.length) {
     const missing = [];
     if (!userRows.length) missing.push("کاربر");
     if (!planRows.length) missing.push("پلن");
     if (!nodeRows.length) missing.push("نود");
-    view.innerHTML = '<div class="panel"><h2>صدور سرویس VPN</h2><div class="workflow"><span>۱. ساخت کاربر</span><span>۲. ساخت پلن</span><span>۳. ثبت نود</span><span>۴. صدور سرویس</span></div><div class="notice warning"><b>پیش‌نیاز ناقص:</b> ابتدا ' + missing.join("، ") + ' را بسازید.</div><div class="help-box"><h3>سرویس چگونه فعال می‌شود؟</h3><ol><li>کاربر، مالک سرویس است.</li><li>پلن، مدت و حجم را تعیین می‌کند.</li><li>نود، سروری است که اکانت روی آن ساخته می‌شود.</li><li>Node Agent باید روی نود آنلاین باشد تا فرمان را دریافت کند.</li></ol></div></div>';
+    view.innerHTML = '<div class="panel"><h2>صدور سرویس VPN</h2><div class="notice warning"><b>پیش‌نیاز ناقص:</b> ابتدا ' + missing.join("، ") + ' را بسازید.</div></div>';
     return;
   }
-  view.innerHTML = `<div class="panel"><h2>صدور سرویس VPN</h2><div class="help-box"><b>روش کار:</b> کاربر + پلن + نود + پروتکل را انتخاب کنید. پس از نصب Node Agent و Adapter واقعی پروتکل روی نود، فرمان ساخت کانفیگ اجرا می‌شود؛ تا قبل از اتصال نود، وضعیت pending می‌ماند.</div>
+  view.innerHTML = `<div class="panel"><h2>صدور سرویس VPN</h2>
+    <div class="help-box"><b>دریافت کانفیگ:</b> بعد از فعال‌شدن سرویس، «نمایش» برای مشاهده و کپی، «دانلود» برای فایل کلاینت، «QR» برای اسکن و «کپی ساب» برای لینک بروزرسانی خودکار است.</div>
     <form id="serviceForm" class="grid-form">
     <select id="serviceUser">${userRows.map((x)=>`<option value="${x.id}">${esc(x.username)}</option>`).join("")}</select>
     <select id="servicePlan">${planRows.map((x)=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
     <select id="serviceNode">${nodeRows.map((x)=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
-    <select id="serviceProtocol"><option>xray</option><option>wireguard</option><option>openvpn</option><option>openconnect</option></select>
+    <select id="serviceProtocol"><option value="xray">Xray / VLESS Reality</option><option value="wireguard">WireGuard</option><option value="openvpn">OpenVPN</option><option value="openconnect">OpenConnect</option></select>
     <button class="primary">صدور سرویس</button></form>
-    <table><thead><tr><th>شناسه</th><th>پروتکل</th><th>وضعیت</th><th>حجم</th><th>انقضا</th><th>عملیات</th></tr></thead><tbody>
-    ${rows.map((x)=>`<tr><td>${esc(x.external_id)}</td><td>${esc(x.protocol)}</td><td>${esc(x.status)}</td>
+    <div class="table-wrap"><table><thead><tr><th>شناسه</th><th>پروتکل</th><th>وضعیت</th><th>حجم</th><th>انقضا</th><th>کانفیگ و عملیات</th></tr></thead><tbody>
+    ${rows.map((x)=>`<tr><td>${esc(x.external_id)}</td><td>${esc(x.protocol)}</td><td><span class="status ${esc(x.status)}">${esc(x.status)}</span></td>
     <td>${Math.round(x.quota_bytes/1073741824)} GB</td><td>${esc(new Date(x.expires_at).toLocaleDateString("fa-IR"))}</td>
-    <td><button data-action="renewService" data-id="${x.id}">تمدید</button>
-    <button class="danger" data-action="revokeService" data-id="${x.id}">قطع</button></td></tr>`).join("")}</tbody></table></div>`;
+    <td class="service-actions">${x.has_config ? `<button data-action="showServiceConfig" data-id="${x.id}">نمایش</button><button data-action="downloadService" data-id="${x.id}">دانلود</button><button data-action="showServiceQr" data-id="${x.id}">QR</button><button data-action="copySubscription" data-id="${x.id}">کپی ساب</button>` : `<button data-action="reprovisionService" data-id="${x.id}">ساخت مجدد</button>`}
+    <button data-action="renewService" data-id="${x.id}">تمدید</button><button class="danger" data-action="revokeService" data-id="${x.id}">قطع</button></td></tr>`).join("")}</tbody></table></div></div>`;
   serviceForm.onsubmit = addService;
   bindActions();
 }
+
+function serviceModal(title) {
+  let modal = document.getElementById("serviceModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "serviceModal";
+    modal.className = "modal-overlay";
+    modal.innerHTML = '<div class="modal-card"><button id="modalClose" class="modal-close">×</button><h3 id="modalTitle"></h3><div id="modalBody"></div></div>';
+    document.body.appendChild(modal);
+    modalClose.onclick = () => modal.remove();
+    modal.onclick = (event) => { if (event.target === modal) modal.remove(); };
+  }
+  modalTitle.textContent = title;
+  modalBody.replaceChildren();
+  return modalBody;
+}
+
+window.showServiceConfig = async (id) => {
+  try {
+    const item = await req("/admin/services/" + id);
+    if (!item.client_config) throw new Error("کانفیگ هنوز آماده نیست");
+    const body = serviceModal("کانفیگ " + item.protocol);
+    const pre = document.createElement("pre"); pre.className = "config-box"; pre.textContent = item.client_config;
+    const copy = document.createElement("button"); copy.className = "primary"; copy.textContent = "کپی کانفیگ";
+    copy.onclick = async () => { await navigator.clipboard.writeText(item.client_config); copy.textContent = "کپی شد ✓"; };
+    body.append(pre, copy);
+  } catch (e) { showError(e); }
+};
+window.downloadService = (id) => { window.location = api + "/admin/services/" + id + "/download"; };
+window.showServiceQr = (id) => {
+  const body = serviceModal("QR کانفیگ");
+  const image = document.createElement("img"); image.className = "qr-image"; image.alt = "QR کانفیگ VPN";
+  image.src = api + "/admin/services/" + id + "/qr?t=" + Date.now();
+  body.appendChild(image);
+};
+window.copySubscription = async (id) => {
+  try {
+    const item = servicesData.find((x) => x.id === id);
+    if (!item || !item.subscription_url) throw new Error("لینک ساب آماده نیست");
+    await navigator.clipboard.writeText(item.subscription_url);
+    alert("لینک Subscription کپی شد");
+  } catch (e) { showError(e); }
+};
+window.reprovisionService = async (id) => {
+  try { await req("/admin/services/" + id + "/reprovision", {method:"POST"}); alert("در صف ساخت قرار گرفت"); services(); }
+  catch (e) { showError(e); }
+};
+
 
 async function orders() {
   const [rows, userRows, planRows] = await Promise.all([req("/admin/orders"), req("/admin/users"), req("/admin/plans")]);
