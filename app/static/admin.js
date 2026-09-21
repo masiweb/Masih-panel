@@ -11,7 +11,19 @@ async function req(url, options = {}) {
     throw new Error("authentication required");
   }
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail || "خطا در انجام عملیات");
+  if (!response.ok) {
+    let message = body.detail || "خطا در انجام عملیات";
+    const fieldNames = {name:"نام",duration_days:"مدت",traffic_gb:"حجم",price:"قیمت",country_code:"کشور",public_address:"آدرس نود",protocols:"پروتکل"};
+    if (Array.isArray(message)) {
+      message = message.map((item) => {
+        const field = item.loc && item.loc.length ? item.loc[item.loc.length - 1] : "فیلد";
+        return (fieldNames[field] || field) + ": " + (item.msg || "مقدار نامعتبر است");
+      }).join("\n");
+    } else if (typeof message === "object") {
+      message = JSON.stringify(message);
+    }
+    throw new Error(message);
+  }
   return body;
 }
 
@@ -67,10 +79,10 @@ async function countries() {
 
 async function plans() {
   window.plansData = await req("/admin/plans");
-  view.innerHTML = `<div class="panel"><h2>پلن‌ها</h2>
-    <form id="planForm" class="grid-form"><input id="planName" placeholder="نام" required>
-    <input id="planDays" type="number" placeholder="روز" required><input id="planTraffic" type="number" placeholder="حجم GB" required>
-    <input id="planPrice" type="number" placeholder="قیمت" required><button class="primary">ساخت</button></form>
+  view.innerHTML = `<div class="panel"><h2>پلن‌های فروش</h2><div class="help-box"><b>راهنما:</b> نام پلن باید حداقل دو کاراکتر باشد. مدت برحسب روز، حجم برحسب گیگابایت و قیمت برحسب واحد مالی مورد استفاده شماست.</div>
+    <form id="planForm" class="grid-form"><label class="field"><span>نام پلن</span><input id="planName" minlength="2" placeholder="مثال: یک‌ماهه ۵۰ گیگ" required><small>حداقل دو کاراکتر</small></label>
+    <label class="field"><span>مدت اعتبار</span><input id="planDays" type="number" min="1" value="30" required><small>تعداد روز</small></label><label class="field"><span>حجم ترافیک</span><input id="planTraffic" type="number" min="1" value="50" required><small>برحسب گیگابایت</small></label>
+    <label class="field"><span>قیمت فروش</span><input id="planPrice" type="number" min="0" step="0.01" value="0" required><small>مبلغ فروش</small></label><button class="primary">ساخت</button></form>
     ${resourceTable(plansData, [["name","نام"],["duration_days","مدت"],["traffic_gb","حجم"],["price","قیمت"],["enabled","فعال",(v)=>v?"بله":"خیر"]], "Plan")}</div>`;
   planForm.onsubmit = addPlan;
   bindActions();
@@ -91,10 +103,10 @@ async function users() {
 async function nodes() {
   const [rows, countryRows] = await Promise.all([req("/nodes"), req("/admin/countries")]);
   window.nodesData = rows; window.countriesData = countryRows;
-  view.innerHTML = `<div class="panel"><h2>نودها</h2>
-    <form id="nodeForm" class="grid-form"><input id="nodeName" placeholder="نام نود" required>
-    <select id="nodeCountry">${countryRows.map((c)=>`<option value="${c.code}">${esc(c.name)}</option>`).join("")}</select>
-    <input id="nodeAddress" placeholder="IP یا دامنه" required><input id="nodeProtocols" value="xray,wireguard" placeholder="پروتکل‌ها">
+  view.innerHTML = `<div class="panel"><h2>نودهای VPN</h2><div class="help-box"><b>نود چیست؟</b> نود همان سرور VPN است. نام: یک عنوان داخلی مثل Germany-01؛ کشور: محل سرور؛ IP یا دامنه: آدرس عمومی سرور؛ پروتکل‌ها: xray,wireguard. پس از ثبت، توکن اتصال Agent فقط یک بار نمایش داده می‌شود.</div>
+    <form id="nodeForm" class="grid-form"><label class="field"><span>نام نود</span><input id="nodeName" minlength="2" placeholder="مثال: Germany-01" required><small>نام داخلی سرور</small></label>
+    <label class="field"><span>کشور سرور</span><select id="nodeCountry">${countryRows.map((c)=>`<option value="${c.code}">${esc(c.name)}</option>`).join("")}</select>
+    <input id="nodeAddress" placeholder="IP یا دامنه" required><label class="field"><span>پروتکل‌ها</span><input id="nodeProtocols" value="xray,wireguard" placeholder="xray,wireguard"><small>با کاما جدا کنید: xray, wireguard, openvpn, openconnect</small></label>
     <button class="primary">افزودن</button></form>
     ${resourceTable(rows, [["name","نام"],["country_code","کشور"],["public_address","آدرس"],["protocols","پروتکل"],["status","وضعیت"]], "Node")}</div>`;
   nodeForm.onsubmit = addNode;
@@ -105,7 +117,15 @@ async function services() {
   const [rows, userRows, planRows, nodeRows] = await Promise.all([
     req("/admin/services"), req("/admin/users"), req("/admin/plans"), req("/nodes"),
   ]);
-  view.innerHTML = `<div class="panel"><h2>سرویس‌های VPN</h2>
+  if (!userRows.length || !planRows.length || !nodeRows.length) {
+    const missing = [];
+    if (!userRows.length) missing.push("کاربر");
+    if (!planRows.length) missing.push("پلن");
+    if (!nodeRows.length) missing.push("نود");
+    view.innerHTML = '<div class="panel"><h2>صدور سرویس VPN</h2><div class="workflow"><span>۱. ساخت کاربر</span><span>۲. ساخت پلن</span><span>۳. ثبت نود</span><span>۴. صدور سرویس</span></div><div class="notice warning"><b>پیش‌نیاز ناقص:</b> ابتدا ' + missing.join("، ") + ' را بسازید.</div><div class="help-box"><h3>سرویس چگونه فعال می‌شود؟</h3><ol><li>کاربر، مالک سرویس است.</li><li>پلن، مدت و حجم را تعیین می‌کند.</li><li>نود، سروری است که اکانت روی آن ساخته می‌شود.</li><li>Node Agent باید روی نود آنلاین باشد تا فرمان را دریافت کند.</li></ol></div></div>';
+    return;
+  }
+  view.innerHTML = `<div class="panel"><h2>صدور سرویس VPN</h2><div class="help-box"><b>روش کار:</b> کاربر + پلن + نود + پروتکل را انتخاب کنید. اگر Agent نود آنلاین باشد، سرویس فعال و کانفیگ ساخته می‌شود؛ در غیر این صورت وضعیت pending می‌ماند.</div>
     <form id="serviceForm" class="grid-form">
     <select id="serviceUser">${userRows.map((x)=>`<option value="${x.id}">${esc(x.username)}</option>`).join("")}</select>
     <select id="servicePlan">${planRows.map((x)=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
