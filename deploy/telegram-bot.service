@@ -1,0 +1,16 @@
+[Unit]
+Description=Masiha VPN Telegram Bot
+After=network-online.target masiha-vpn-platform.service
+[Service]
+Type=simple
+User=masiha-vpn
+Group=masiha-vpn
+WorkingDirectory=/opt/masiha-vpn-platform
+EnvironmentFile=/etc/masiha-vpn-platform.env
+ExecStart=/opt/masiha-vpn-platform/.venv/bin/python telegram_bot/bot.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target
