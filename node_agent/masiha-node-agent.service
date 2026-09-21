@@ -1,0 +1,13 @@
+[Unit]
+Description=Masiha VPN Node Agent
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+EnvironmentFile=/etc/masiha-node-agent.env
+ExecStart=/opt/masiha-node-agent/.venv/bin/python /opt/masiha-node-agent/agent.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target
