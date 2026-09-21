@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import time
 import uuid
+import copy
+import re
 
 import httpx
 
@@ -77,8 +79,12 @@ def provision_xray(payload, old):
     config_path = pathlib.Path("/usr/local/etc/xray/config.json")
     data = json.loads(config_path.read_text())
     target = None
+    inbound_spec = payload.get("inbound") or {}
+    wanted_tag = "masiha-" + str(inbound_spec.get("id", ""))[:8]
     for inbound in data.get("inbounds", []):
-        if inbound.get("protocol") == "vless":
+        if (inbound.get("tag") == wanted_tag or
+            (inbound_spec and inbound.get("protocol") == "vless" and inbound.get("port") == inbound_spec.get("port")) or
+            (not inbound_spec and inbound.get("protocol") == "vless")):
             target = inbound
             break
     if target is None:
@@ -89,10 +95,10 @@ def provision_xray(payload, old):
     config_path.write_text(json.dumps(data, indent=2))
     run(["xray", "run", "-test", "-config", str(config_path)])
     run(["systemctl", "restart", "xray"])
-    port = values.get("XRAY_PORT", "8443")
+    port = str(inbound_spec.get("port") or values.get("XRAY_PORT", "8443"))
     public_key = values.get("XRAY_PUBLIC_KEY") or values.get("PUBLIC_KEY")
     short_id = values.get("XRAY_SHORT_ID") or values.get("SHORT_ID")
-    server_name = values.get("XRAY_SERVER_NAME") or values.get("SERVER_NAME", "www.cloudflare.com")
+    server_name = (inbound_spec.get("settings") or {}).get("server_name") or values.get("XRAY_SERVER_NAME") or values.get("SERVER_NAME", "www.cloudflare.com")
     if not public_key or not short_id:
         raise RuntimeError("Xray public key or short id is missing")
     label = payload["external_id"]
@@ -169,10 +175,13 @@ def provision_wireguard(payload, old):
     peer = f"[Peer]\nPublicKey = {public_key}\nAllowedIPs = {client_ip}/32"
     rewrite_wg_peer(payload["service_id"], peer)
     run(["wg", "set", "wg0", "peer", public_key, "allowed-ips", f"{client_ip}/32"])
+    inbound_spec = payload.get("inbound") or {}
+    endpoint_port = inbound_spec.get("port", 51820)
+    public_host = inbound_spec.get("public_host") or PUBLIC_HOST
     config = ("[Interface]\n"
               f"PrivateKey = {private_key}\nAddress = {client_ip}/32\nDNS = 1.1.1.1, 1.0.0.1\n\n"
               "[Peer]\n"
-              f"PublicKey = {wg_server_public_key()}\nEndpoint = {PUBLIC_HOST}:51820\n"
+              f"PublicKey = {wg_server_public_key()}\nEndpoint = {public_host}:{endpoint_port}\n"
               "AllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n")
     return config, {"client_public_key": public_key, "client_ip": client_ip}
 
@@ -211,7 +220,13 @@ def provision_openvpn(payload, old):
     if not ta_path.exists():
         ta_path = pathlib.Path("/etc/openvpn/ta.key")
     ta = ta_path.read_text().strip()
-    config = (f"client\ndev tun\nproto udp\nremote {PUBLIC_HOST} 1194\nresolv-retry infinite\n"
+    inbound_spec = payload.get("inbound") or {}
+    settings = inbound_spec.get("settings") or {}
+    public_host = inbound_spec.get("public_host") or PUBLIC_HOST
+    port = inbound_spec.get("port", 1194)
+    transport = settings.get("transport", "udp")
+    device = settings.get("device", "tun")
+    config = (f"client\ndev {device}\nproto {transport}\nremote {public_host} {port}\nresolv-retry infinite\n"
               "nobind\npersist-key\npersist-tun\nremote-cert-tls server\nverb 3\nkey-direction 1\n"
               f"<ca>\n{ca}\n</ca>\n<cert>\n{cert}\n</cert>\n<key>\n{key}\n</key>\n<tls-auth>\n{ta}\n</tls-auth>\n")
     return config, {"common_name": name}
@@ -231,8 +246,11 @@ def provision_openconnect(payload, old):
     username = payload["external_id"].replace("_", "-")
     password = secrets.token_urlsafe(18)
     run(["ocpasswd", "-c", "/etc/ocserv/ocpasswd", username], input_text=f"{password}\n{password}\n")
+    inbound_spec = payload.get("inbound") or {}
+    public_host = inbound_spec.get("public_host") or PUBLIC_HOST
+    port = inbound_spec.get("port", 4443)
     config = ("Masiha VPN - OpenConnect\n"
-              f"Server: https://{PUBLIC_HOST}:4443\nUsername: {username}\nPassword: {password}\n"
+              f"Server: https://{public_host}:{port}\nUsername: {username}\nPassword: {password}\n"
               "Client: OpenConnect / Cisco AnyConnect compatible\n")
     return config, {"username": username}
 
@@ -251,10 +269,89 @@ REVOKERS = {
 }
 
 
+def replace_setting(path, key, value):
+    text = path.read_text()
+    pattern = rf"(?m)^\s*{re.escape(key)}\s+.*$"
+    line = f"{key} {value}"
+    text, count = re.subn(pattern, line, text, count=1)
+    if not count:
+        text += "\n" + line + "\n"
+    path.write_text(text)
+
+
+def apply_inbound(payload, deleting=False):
+    inbound_id = payload["inbound_id"]
+    protocol = payload["protocol"]
+    registry = STATE / f"inbound-{inbound_id}.json"
+    if deleting:
+        if protocol == "xray":
+            config_path = pathlib.Path("/usr/local/etc/xray/config.json")
+            data = json.loads(config_path.read_text())
+            tag = "masiha-" + inbound_id[:8]
+            original = data.get("inbounds", [])
+            data["inbounds"] = [item for item in original if item.get("tag") != tag]
+            if len(data["inbounds"]) != len(original):
+                config_path.write_text(json.dumps(data, indent=2))
+                run(["xray", "run", "-test", "-config", str(config_path)])
+                run(["systemctl", "restart", "xray"])
+        registry.unlink(missing_ok=True)
+        return
+    if protocol == "xray":
+        settings = payload.get("settings") or {}
+        if settings.get("variant", "vless") != "vless":
+            raise RuntimeError("This node release currently provisions Xray VLESS inbounds; other Xray variants are reserved for the next adapter")
+        config_path = pathlib.Path("/usr/local/etc/xray/config.json")
+        data = json.loads(config_path.read_text())
+        tag = "masiha-" + inbound_id[:8]
+        target = next((x for x in data.get("inbounds", []) if x.get("tag") == tag), None)
+        if target is None:
+            target = next((x for x in data.get("inbounds", []) if x.get("protocol") == "vless" and x.get("port") == int(payload["port"])), None)
+            if target is not None: target["tag"] = tag
+        if target is None:
+            template = next((x for x in data.get("inbounds", []) if x.get("protocol") == "vless"), None)
+            if template is None: raise RuntimeError("VLESS template inbound not found")
+            target = copy.deepcopy(template)
+            target["tag"] = tag
+            target.setdefault("settings", {})["clients"] = []
+            data.setdefault("inbounds", []).append(target)
+        target["listen"] = payload.get("listen", "0.0.0.0")
+        target["port"] = int(payload["port"])
+        target.setdefault("streamSettings", {})["network"] = settings.get("transport", "tcp")
+        target["streamSettings"]["security"] = settings.get("security", "reality")
+        config_path.write_text(json.dumps(data, indent=2))
+        run(["xray", "run", "-test", "-config", str(config_path)])
+        run(["systemctl", "restart", "xray"])
+    elif protocol == "wireguard":
+        path = pathlib.Path("/etc/wireguard/wg0.conf")
+        text = path.read_text()
+        text, count = re.subn(r"(?m)^ListenPort\s*=\s*\d+\s*$", f"ListenPort = {int(payload['port'])}", text, count=1)
+        if not count: text = text.replace("[Interface]", f"[Interface]\nListenPort = {int(payload['port'])}", 1)
+        path.write_text(text); run(["systemctl", "restart", "wg-quick@wg0"])
+    elif protocol == "openvpn":
+        path = pathlib.Path("/etc/openvpn/server/server.conf")
+        replace_setting(path, "port", int(payload["port"]))
+        replace_setting(path, "proto", (payload.get("settings") or {}).get("transport", "udp"))
+        run(["systemctl", "restart", "openvpn-server@server"])
+        run(["systemctl", "is-active", "openvpn-server@server"])
+    elif protocol == "openconnect":
+        path = pathlib.Path("/etc/ocserv/ocserv.conf")
+        replace_setting(path, "tcp-port", int(payload["port"]))
+        replace_setting(path, "udp-port", int(payload["port"]))
+        run(["ocserv", "-t", "-c", str(path)])
+        run(["systemctl", "restart", "ocserv"])
+    registry.write_text(json.dumps(payload, indent=2)); os.chmod(registry, 0o600)
+
+
 def execute(job):
     payload = job["payload"]
-    service_id = payload["service_id"]
     kind = job["type"]
+    if kind in ("create_inbound", "update_inbound"):
+        apply_inbound(payload)
+        return {"ok": True}
+    if kind == "delete_inbound":
+        apply_inbound(payload, deleting=True)
+        return {"ok": True}
+    service_id = payload["service_id"]
     protocol = payload["protocol"]
     old = load_state(service_id)
     if kind in ("provision", "update"):
