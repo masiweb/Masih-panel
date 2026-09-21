@@ -12,4 +12,4 @@ Central multi-node VPN management platform.
 - Git-based delivery without committed secrets
 
 ## Current milestone
-Version 0.3.0 adds full resource editing, administrator password rotation, login throttling, audit logs, and automatic offline-node detection.
+Version 0.4.0 adds per-node credentials, a secure node job queue, service provisioning/renewal/revocation, usage fields, orders, and an upgraded Node Agent.
