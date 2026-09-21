@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
-from ..models import JobStatus, NodeJob, ServiceStatus, VPNNode, VPNService
+from ..models import ClientInbound, InboundStatus, JobStatus, NodeJob, ServiceStatus, VPNInbound, VPNNode, VPNService
 from ..node_security import verify_node_token
 from ..schemas import JobResultIn, NodeHeartbeat
 
@@ -36,6 +36,14 @@ def job_result(node_id:str,job_id:str,payload:JobResultIn,node:VPNNode=Depends(n
     job=db.get(NodeJob,job_id)
     if not job or job.node_id!=node.id: raise HTTPException(404,"Job not found")
     job.status=JobStatus.completed if payload.ok else JobStatus.failed; job.result=payload.model_dump(); job.finished_at=datetime.now(timezone.utc)
+    inbound_id=(job.payload or {}).get("inbound_id")
+    if inbound_id:
+        inbound=db.get(VPNInbound,inbound_id)
+        if inbound:
+            if job.job_type=="delete_inbound" and payload.ok:
+                inbound.status=InboundStatus.disabled; inbound.enabled=False
+            else:
+                inbound.status=InboundStatus.active if payload.ok else InboundStatus.failed
     if job.service_id:
         service=db.get(VPNService,job.service_id)
         if service:
@@ -44,4 +52,8 @@ def job_result(node_id:str,job_id:str,payload:JobResultIn,node:VPNNode=Depends(n
                 if payload.client_config: service.client_config=payload.client_config
                 if payload.used_bytes is not None: service.used_bytes=payload.used_bytes
             else: service.status=ServiceStatus.failed
+            attachment=db.scalar(select(ClientInbound).where(ClientInbound.legacy_service_id==service.id))
+            if attachment:
+                attachment.status=service.status.value
+                if payload.client_config: attachment.client_config=payload.client_config
     db.commit(); return {"ok":True}
