@@ -1,23 +1,35 @@
 #!/usr/bin/env python3
-import json, os, subprocess, time
+import json, os, pathlib, subprocess, time
 import httpx
 
-API_URL=os.environ["MASIHA_API_URL"].rstrip("/")
+API=os.environ["MASIHA_API_URL"].rstrip("/")
 NODE_ID=os.environ["MASIHA_NODE_ID"]
-NODE_TOKEN=os.environ["MASIHA_NODE_TOKEN"]
-INTERVAL=int(os.getenv("MASIHA_HEARTBEAT_INTERVAL","30"))
-PROTOCOLS=[x.strip() for x in os.getenv("MASIHA_PROTOCOLS","xray,wireguard,openvpn,openconnect").split(",") if x.strip()]
+TOKEN=os.environ["MASIHA_NODE_TOKEN"]
+INTERVAL=int(os.getenv("MASIHA_HEARTBEAT_INTERVAL","20"))
+PROTOCOLS=[x.strip() for x in os.getenv("MASIHA_PROTOCOLS","xray,wireguard").split(",") if x.strip()]
+STATE=pathlib.Path(os.getenv("MASIHA_STATE_DIR","/var/lib/masiha-node-agent"))
+STATE.mkdir(parents=True,exist_ok=True)
+HEAD={"X-Node-Token":TOKEN}
 
-def ensure_services():
-    for name in PROTOCOLS:
-        service={"xray":"xray","wireguard":"wg-quick@wg0","openvpn":"openvpn-server@server","openconnect":"ocserv"}.get(name)
-        if service: subprocess.run(["systemctl","start",service],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+def execute(job):
+    payload=job["payload"]; service_id=payload["service_id"]; kind=job["type"]
+    path=STATE/f"{service_id}.json"
+    if kind in ("provision","update"):
+        path.write_text(json.dumps(payload,indent=2))
+        return {"ok":True,"client_config":json.dumps({"service_id":service_id,"protocol":payload["protocol"],"node":NODE_ID})}
+    if kind=="revoke":
+        path.unlink(missing_ok=True)
+        return {"ok":True}
+    return {"ok":False,"details":{"error":"unsupported job type"}}
 
-while True:
-    try:
-        ensure_services()
-        r=httpx.post(f"{API_URL}/api/v1/nodes/{NODE_ID}/heartbeat",headers={"X-Node-Token":NODE_TOKEN},json={"agent_version":"0.1.0","protocols":PROTOCOLS},timeout=15)
-        r.raise_for_status()
-    except Exception as exc:
-        print(json.dumps({"heartbeat":"failed","error":str(exc)}),flush=True)
-    time.sleep(INTERVAL)
+with httpx.Client(timeout=20) as client:
+    while True:
+        try:
+            client.post(f"{API}/api/v1/agent/{NODE_ID}/heartbeat",headers=HEAD,json={"agent_version":"0.2.0","protocols":PROTOCOLS}).raise_for_status()
+            job=client.get(f"{API}/api/v1/agent/{NODE_ID}/jobs/next",headers=HEAD).json().get("job")
+            if job:
+                result=execute(job)
+                client.post(f"{API}/api/v1/agent/{NODE_ID}/jobs/{job['id']}/result",headers=HEAD,json=result).raise_for_status()
+        except Exception as exc:
+            print(json.dumps({"agent":"error","message":str(exc)}),flush=True)
+        time.sleep(INTERVAL)
