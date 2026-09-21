@@ -103,6 +103,7 @@ class VPNService(Base):
     protocol: Mapped[str] = mapped_column(String(30))
     status: Mapped[ServiceStatus] = mapped_column(Enum(ServiceStatus), default=ServiceStatus.pending, index=True)
     external_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    access_token: Mapped[str | None] = mapped_column(String(100), unique=True, index=True, nullable=True)
     quota_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
