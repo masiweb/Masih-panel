@@ -1,14 +1,20 @@
+import base64
+import io
 import secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+import qrcode
 from ..audit import audit
 from ..auth import current_admin, db_session
-from ..models import Admin, JobStatus, NodeJob, Order, OrderStatus, Plan, ServiceStatus, Subscriber, VPNNode, VPNService
+from ..config import get_settings
+from ..models import Admin, NodeJob, Order, OrderStatus, Plan, ServiceStatus, Subscriber, VPNNode, VPNService
 from ..schemas import OrderCreate, ServiceCreate, ServiceRenew
 
 router = APIRouter(prefix="/api/v1/admin", tags=["services"], dependencies=[Depends(current_admin)])
+public_router = APIRouter(tags=["subscription"])
 
 def obj(x):
     d={c.name:getattr(x,c.name) for c in x.__table__.columns}
@@ -16,6 +22,9 @@ def obj(x):
         if hasattr(v,"isoformat"): d[k]=v.isoformat()
         elif hasattr(v,"value"): d[k]=v.value
         elif not isinstance(v,(str,int,float,bool,dict,list,type(None))): d[k]=str(v)
+    if isinstance(x,VPNService) and x.access_token:
+        d["subscription_url"]=f"{get_settings().public_base_url}/sub/{x.access_token}"
+        d["has_config"]=bool(x.client_config)
     return d
 
 def create_job(db, service, job_type):
@@ -29,6 +38,12 @@ def create_job(db, service, job_type):
 def list_services(db:Session=Depends(db_session)):
     return [obj(x) for x in db.scalars(select(VPNService).order_by(VPNService.created_at.desc())).all()]
 
+@router.get("/services/{service_id}")
+def service_detail(service_id:str,db:Session=Depends(db_session)):
+    service=db.get(VPNService,service_id)
+    if not service: raise HTTPException(404,"Service not found")
+    return obj(service)
+
 @router.post("/services",status_code=201)
 def create_service(payload:ServiceCreate,admin:Admin=Depends(current_admin),db:Session=Depends(db_session)):
     user=db.get(Subscriber,payload.subscriber_id); plan=db.get(Plan,payload.plan_id); node=db.get(VPNNode,payload.node_id)
@@ -37,8 +52,8 @@ def create_service(payload:ServiceCreate,admin:Admin=Depends(current_admin),db:S
     if protocol not in [p for p in node.protocols.split(",") if p]: raise HTTPException(422,"Protocol is not enabled on node")
     if not node.enabled: raise HTTPException(422,"Node is disabled")
     service=VPNService(subscriber_id=user.id,plan_id=plan.id,node_id=node.id,protocol=protocol,
-        external_id="svc_"+secrets.token_urlsafe(12),quota_bytes=plan.traffic_gb*1024**3,
-        expires_at=datetime.now(timezone.utc)+timedelta(days=plan.duration_days))
+        external_id="svc_"+secrets.token_urlsafe(12),access_token=secrets.token_urlsafe(32),
+        quota_bytes=plan.traffic_gb*1024**3,expires_at=datetime.now(timezone.utc)+timedelta(days=plan.duration_days))
     db.add(service); db.flush(); job=create_job(db,service,"provision")
     audit(db,admin,"create","service",service.id,{"job_id":str(job.id),"protocol":protocol}); db.commit(); db.refresh(service)
     return obj(service)
@@ -54,12 +69,48 @@ def renew(service_id:str,payload:ServiceRenew,admin:Admin=Depends(current_admin)
     service.status=ServiceStatus.pending; job=create_job(db,service,"update")
     audit(db,admin,"renew","service",service.id,{"job_id":str(job.id)}); db.commit(); db.refresh(service); return obj(service)
 
+@router.post("/services/{service_id}/reprovision")
+def reprovision(service_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(db_session)):
+    service=db.get(VPNService,service_id)
+    if not service: raise HTTPException(404,"Service not found")
+    service.status=ServiceStatus.pending; job=create_job(db,service,"provision")
+    audit(db,admin,"reprovision","service",service.id,{"job_id":str(job.id)}); db.commit()
+    return {"ok":True,"job_id":str(job.id)}
+
 @router.post("/services/{service_id}/revoke")
 def revoke(service_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(db_session)):
     service=db.get(VPNService,service_id)
     if not service: raise HTTPException(404,"Service not found")
     service.status=ServiceStatus.revoked; job=create_job(db,service,"revoke")
     audit(db,admin,"revoke","service",service.id,{"job_id":str(job.id)}); db.commit(); return {"ok":True,"job_id":str(job.id)}
+
+def config_response(service:VPNService):
+    if not service.client_config: raise HTTPException(409,"Configuration is not ready; node job is still pending")
+    ext={"xray":"txt","wireguard":"conf","openvpn":"ovpn","openconnect":"txt"}.get(service.protocol,"txt")
+    media={"wireguard":"text/plain","openvpn":"application/x-openvpn-profile"}.get(service.protocol,"text/plain")
+    return Response(service.client_config,media_type=media,headers={"Content-Disposition":f'attachment; filename="{service.external_id}.{ext}"'})
+
+@router.get("/services/{service_id}/download")
+def download(service_id:str,db:Session=Depends(db_session)):
+    service=db.get(VPNService,service_id)
+    if not service: raise HTTPException(404,"Service not found")
+    return config_response(service)
+
+@router.get("/services/{service_id}/qr")
+def qr(service_id:str,db:Session=Depends(db_session)):
+    service=db.get(VPNService,service_id)
+    if not service or not service.client_config: raise HTTPException(404,"Configuration not ready")
+    qr_value=service.client_config if len(service.client_config.encode()) <= 2000 else f"{get_settings().public_base_url}/sub/{service.access_token}"
+    image=qrcode.make(qr_value)
+    buf=io.BytesIO(); image.save(buf,format="PNG")
+    return Response(buf.getvalue(),media_type="image/png",headers={"Cache-Control":"no-store"})
+
+@public_router.get("/sub/{token}")
+def subscription(token:str,db:Session=Depends(db_session)):
+    service=db.scalar(select(VPNService).where(VPNService.access_token==token))
+    if not service or service.status!=ServiceStatus.active or not service.client_config: raise HTTPException(404,"Subscription not available")
+    body=base64.b64encode(service.client_config.encode()).decode()
+    return Response(body,media_type="text/plain",headers={"Cache-Control":"no-store","Profile-Update-Interval":"24"})
 
 @router.get("/orders")
 def orders(db:Session=Depends(db_session)):
