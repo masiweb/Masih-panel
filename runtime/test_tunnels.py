@@ -1,11 +1,11 @@
-import subprocess,sys,json,secrets,time,os,tempfile,re,socket
+import subprocess,sys,json,secrets,time,os,tempfile,re,socket,ipaddress
 from pathlib import Path
 # Tests intentionally create disposable users/network namespaces. NEVER reuse a
 # production host's fixed IP: the actual TLS domain is read from this server.
 DOMAIN=json.loads(Path("/etc/masiha-vpn-extension/config.json").read_text())["domain"]
 SERVER_IP=socket.gethostbyname(DOMAIN)
 assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]+",DOMAIN)
-assert re.fullmatch(r"(?:[0-9]{1,3}\\.){3}[0-9]{1,3}",SERVER_IP)
+ipaddress.IPv4Address(SERVER_IP)
 def run(*a,check=True):
  return subprocess.run(a,text=True,capture_output=True,check=check,timeout=20)
 def call(proto,act,**kw):
