@@ -1326,10 +1326,10 @@ index 0000000..5181f3d
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 0000000..4e7c0fd
+index 0000000..2f7b1b4
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,89 @@
 +import {useEffect,useState} from 'react';
 +import {Alert,App,Button,Card,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography} from 'antd';
 +import {HttpUtil} from '@/utils';
@@ -1391,15 +1391,19 @@ index 0000000..4e7c0fd
 +   {title:'عملیات',render:(_:unknown,r:Row)=><Space wrap>
 +     <Button size="small" onClick={()=>editPlan(r)}>ویرایش</Button>
 +     <Button size="small" onClick={()=>editPlan(r,true)}>کپی</Button>
-+     <Popconfirm title={r.sold?'این پلن سفارش دارد؛ برای آرشیو از کلید فعال استفاده کنید.':'حذف این پلن بدون سابقه سفارش؟'} okText="حذف" cancelText="انصراف" onConfirm={()=>void run('plan_delete',{id:r.id})}>
-+      <Button danger size="small" disabled={!!r.sold}>حذف</Button>
++     <Popconfirm title={r.has_history?'این پلن سابقه سفارش دارد؛ برای آرشیو از کلید فعال استفاده کنید.':'حذف این پلن بدون سابقه سفارش؟'} okText="حذف" cancelText="انصراف" onConfirm={()=>void run('plan_delete',{id:r.id})}>
++      <Button danger size="small" disabled={!!r.has_history}>حذف</Button>
 +     </Popconfirm>
 +   </Space>},
 +  ])}
 + </Space>},
 + {key:'users',label:'کاربران و نمایندگان',children:table(data?.users||[],[{title:'آیدی',dataIndex:'id'},{title:'نام',dataIndex:'name'},{title:'موجودی تومان',dataIndex:'balance'},{title:'شماره',dataIndex:'phone'},{title:'مسدود',render:(_:unknown,r:Row)=><Switch checked={!!r.blocked} onChange={v=>void run('user',{id:r.id,blocked:v,reseller:!!r.reseller})}/>},{title:'نماینده',render:(_:unknown,r:Row)=><Switch checked={!!r.reseller} onChange={v=>void run('user',{id:r.id,blocked:!!r.blocked,reseller:v})}/>},{title:'اعتبار',render:(_:unknown,r:Row)=><Button onClick={()=>{setEntry('');setDialog({action:'credit',id:r.id,title:'افزایش یا کاهش موجودی به تومان (عدد منفی: کاهش)',reference:crypto.randomUUID()})}}>اصلاح موجودی</Button>}])},
 + {key:'payments',label:'رسیدهای پرداخت',children:table(data?.topups||[],[{title:'شماره',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'مبلغ',dataIndex:'amount'},{title:'رسید',render:(_:unknown,r:Row)=>r.receipt.startsWith('photo:')?'تصویر به ربات مدیر ارسال شده':r.receipt},{title:'وضعیت',dataIndex:'status'},{title:'تصمیم',render:(_:unknown,r:Row)=>r.status==='pending'?<Space><Popconfirm title="مبلغ و رسید را بررسی کرده‌اید؟" onConfirm={()=>run('topup',{id:r.id,approve:true})}><Button>تأیید و شارژ</Button></Popconfirm><Button danger onClick={()=>void run('topup',{id:r.id,approve:false})}>رد</Button></Space>:null}])},
-+ {key:'orders',label:'سفارش‌ها و درآمد',children:<><Typography.Title level={4}>فروش تحویل‌شده: {data?.revenue||0} تومان</Typography.Title>{table(data?.orders||[],[...base,{title:'عملیات',render:(_:unknown,r:Row)=>r.status==='review'?<Button onClick={()=>void run('retry',{id:r.id})}>تلاش مجدد تحویل</Button>:null}])}</>},
++ {key:'orders',label:'سفارش‌ها و درآمد',children:<Space orientation="vertical" style={{width:'100%'}}>
++  <Typography.Title level={4}>فروش تحویل‌شده: {Number(data?.revenue||0).toLocaleString('fa-IR')} تومان</Typography.Title>
++  <Alert type="info" showIcon title="پیگیری سفارش" description="سفارش‌های در انتظار رسید را می‌توان لغو کرد. سفارش ناموفق در مرحله تحویل را می‌توان دوباره پردازش کرد. سفارش‌های تحویل‌شده حذف نمی‌شوند."/>
++  {table(data?.orders||[],[...base,{title:'عملیات',render:(_:unknown,r:Row)=>r.status==='review'?<Button onClick={()=>void run('retry',{id:r.id})}>تلاش مجدد تحویل</Button>:['awaiting_receipt','receipt_review'].includes(r.status)?<Popconfirm title="سفارش لغو شود؟ رسید مرتبط رد و تخفیف رزروشده آزاد می‌شود." okText="لغو سفارش" cancelText="انصراف" onConfirm={()=>void run('cancel_order',{id:r.id})}><Button danger size="small">لغو سفارش</Button></Popconfirm>:null}])}
++ </Space>},
 + {key:'coupons',label:'تخفیف و هدیه',children:<Space orientation="vertical" style={{width:'100%'}}><Form form={coupon} layout="inline" onFinish={v=>void run('coupon',{values:v})}><Form.Item name="code" rules={[{required:true}]}><Input placeholder="کد"/></Form.Item><Form.Item name="percent" initialValue={0}><InputNumber placeholder="درصد تخفیف" min={0} max={100}/></Form.Item><Form.Item name="credit" initialValue={0}><InputNumber placeholder="هدیه تومان" min={0}/></Form.Item><Form.Item name="uses" initialValue={1}><InputNumber placeholder="تعداد استفاده" min={0}/></Form.Item><Form.Item><Button htmlType="submit">ثبت</Button></Form.Item></Form>{table(data?.coupons||[],[{title:'کد',dataIndex:'code'},{title:'تخفیف ٪',dataIndex:'percent'},{title:'هدیه تومان',dataIndex:'credit'},{title:'استفاده باقی‌مانده',dataIndex:'uses'}])}</Space>},
 + {key:'support',label:'پشتیبانی',children:table(data?.tickets||[],[{title:'کاربر',dataIndex:'user_id'},{title:'پیام',dataIndex:'body'},{title:'پاسخ',dataIndex:'reply'},{title:'عملیات',render:(_:unknown,r:Row)=><Button onClick={()=>{setEntry('');setDialog({action:'reply',id:r.id,title:'پاسخ به کاربر'})}}>پاسخ</Button>}])},
 + {key:'messages',label:'پیام همگانی',children:<Card><Typography.Paragraph>پیام برای کاربران ثبت‌شده و غیرمسدود در صف ارسال قرار می‌گیرد.</Typography.Paragraph><Button onClick={()=>{setEntry('');setDialog({action:'broadcast',title:'متن پیام همگانی',reference:crypto.randomUUID()})}}>نوشتن پیام</Button></Card>},
