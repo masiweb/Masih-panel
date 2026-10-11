@@ -60,7 +60,7 @@ mkdir -p "$TOOLS"
 download_verified() {
   # $1 destination, $2 official sha256, $3 optional local archive path,
   # $4 optional user-selected HTTPS mirror, $5... trusted mirrors.
-  local filename="$1" expected="$2" supplied="$3" alternate="$4" url tmp
+  local filename="$1" expected="$2" supplied="$3" alternate="$4" url tmp ip_mode
   shift 4
   tmp="${filename}.part"
   if [[ -s "$filename" ]] &&
@@ -88,23 +88,32 @@ download_verified() {
     urls+=("$alternate")
   fi
   urls+=("$@")
+  # IPv4 takes priority. Only if it fails do we try IPv6 for that SAME URL.
+  # If both fail (including checksum mismatch), move to the next URL.
+  # This also prevents broken IPv6 routing from stalling normal IPv4 hosts.
   for url in "${urls[@]}"; do
-    echo "Downloading $(basename "$filename") from $url"
-    rm -f "$tmp"
-    if curl --fail --location --retry 2 --connect-timeout 20 --max-time 360 \
-       --output "$tmp" "$url" &&
-       printf '%s  %s\n' "$expected" "$tmp" | sha256sum --check --status; then
-      mv -f "$tmp" "$filename"
-      echo "Verified SHA256 of $(basename "$filename")"
-      return 0
-    fi
-    echo "Download failed or checksum mismatch; trying next mirror." >&2
+    for ip_mode in 4 6; do
+      echo "Downloading $(basename "$filename"): IPv$ip_mode -> $url"
+      rm -f "$tmp"
+      if curl "-$ip_mode" --fail --location --retry 1 --retry-delay 1 \
+         --connect-timeout 8 --max-time 240 --output "$tmp" "$url"; then
+        if printf '%s  %s\n' "$expected" "$tmp" | sha256sum --check --status; then
+          mv -f "$tmp" "$filename"
+          echo "Verified SHA256 of $(basename "$filename") via IPv$ip_mode"
+          return 0
+        fi
+        echo "Checksum mismatch on IPv$ip_mode ($url); rejecting archive." >&2
+      else
+        echo "Download failed on IPv$ip_mode ($url)." >&2
+      fi
+    done
+    echo "Both IP families failed on this mirror; checking next URL." >&2
   done
   rm -f "$tmp"
   echo "Cannot download a SHA256-verified $(basename "$filename")." >&2
-  echo "Option A: download it from a reachable HTTPS mirror." >&2
-  echo "Option B: copy official tarball from another server and re-run with" >&2
-  echo "  sudo env MASIHA_GO_ARCHIVE=/root/go1.27.1.linux-amd64.tar.gz bash deploy/install-ubuntu-24.04.sh" >&2
+  echo "Try a reachable HTTPS endpoint via MASIHA_GO_URL or MASIHA_NODE_URL." >&2
+  echo "Or copy a valid archive to the server and set MASIHA_GO_ARCHIVE" >&2
+  echo "or MASIHA_NODE_ARCHIVE before re-running the installer." >&2
   return 1
 }
 if [[ ! -x "$TOOLS/go/bin/go" ]]; then
@@ -114,16 +123,20 @@ if [[ ! -x "$TOOLS/go/bin/go" ]]; then
     "https://mirrors.aliyun.com/golang/go1.27.1.linux-amd64.tar.gz" \
     "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz" \
     "https://dl.google.com/go/go1.27.1.linux-amd64.tar.gz" \
-    "https://storage.googleapis.com/golang/go1.27.1.linux-amd64.tar.gz"
+    "https://storage.googleapis.com/golang/go1.27.1.linux-amd64.tar.gz" \
+    "https://golang.google.cn/dl/go1.27.1.linux-amd64.tar.gz"
   tar -xzf "$TOOLS/go.tar.gz" -C "$TOOLS"
 fi
 if [[ ! -x "$TOOLS/node-v24.21.0-linux-x64/bin/node" ]]; then
   download_verified "$TOOLS/node.tar.xz" \
-    "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8a4a27d94fbe49f56cb2d6" \
+    "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6" \
     "${MASIHA_NODE_ARCHIVE:-}" "${MASIHA_NODE_URL:-}" \
     "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
-    "https://mirrors.huaweicloud.com/nodejs/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
-    "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
+    "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
+    "https://mirrors.aliyun.com/nodejs-release/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
+    "https://npmmirror.com/mirrors/node/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
+    "https://mirrors.cloud.tencent.com/nodejs-release/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
+    "https://mirrors.huaweicloud.com/nodejs/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
   tar -xJf "$TOOLS/node.tar.xz" -C "$TOOLS"
 fi
 export PATH="$TOOLS/go/bin:$TOOLS/node-v24.21.0-linux-x64/bin:$PATH"
