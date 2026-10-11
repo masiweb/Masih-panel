@@ -144,7 +144,7 @@ ufw allow 443/tcp >/dev/null
 ufw allow 1194/udp >/dev/null
 ufw allow 4443/tcp >/dev/null
 ufw allow 4443/udp >/dev/null
-for xray_port in 8443 8444 8445 8446 8447; do
+for xray_port in 8443 8444 8445 8446 8447 8448; do
   ufw allow "$xray_port/tcp" >/dev/null
 done
 systemctl daemon-reload
