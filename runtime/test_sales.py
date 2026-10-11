@@ -143,4 +143,50 @@ class Commerce(unittest.TestCase):
   with s.conn() as c:
    self.assertEqual(tuple(c.execute("SELECT done,attempts,next_try FROM outbox WHERE id=?",(rid,)).fetchone()),(0,0,0))
    with self.assertRaises(ValueError):s.admin({"action":"retry_outbox","id":rid})
+ def test_plan_create_edit_toggle_delete(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":7,"enable":True,"protocol":"vless"}]):
+   with s.conn() as c:c.execute("DELETE FROM plans")
+   v={"name":"Starter","category":"عمومی","protocol":"xray","price":45000,"days":30,
+      "gb":40,"inbounds":[7],"capacity":2,"active":True}
+   s.admin({"action":"plan","values":v})
+   p=s.admin({"action":"get"})["plans"][0]
+   self.assertEqual((p["sold"],p["remaining"],p["price"]),(0,2,45000))
+   v.update(id=p["id"],name="Starter VIP",price=49000)
+   s.admin({"action":"plan","values":v})
+   self.assertEqual(s.admin({"action":"get"})["plans"][0]["name"],"Starter VIP")
+   s.admin({"action":"plan_toggle","id":p["id"],"active":False})
+   self.assertEqual(s.admin({"action":"get"})["plans"][0]["active"],0)
+   s.admin({"action":"plan_delete","id":p["id"]})
+   self.assertEqual(s.admin({"action":"get"})["plans"],[])
+ def test_plan_capacity_and_sold_history(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":9,"enable":True,"protocol":"vless"}]):
+   with s.conn() as c:c.execute("DELETE FROM plans")
+   v={"name":"Capacity","category":"Public","protocol":"xray","price":1000,
+     "days":10,"gb":3,"inbounds":[9],"capacity":1,"active":True}
+   s.admin({"action":"plan","values":v})
+   ident=s.admin({"action":"get"})["plans"][0]["id"]
+   with s.conn() as c:
+    c.execute("UPDATE users SET balance=100000 WHERE id=101")
+    s.order(c,101,ident,"limited")
+   p=s.admin({"action":"get"})["plans"][0]
+   self.assertEqual((p["sold"],p["remaining"],p["pending"]),(1,0,1))
+   with self.assertRaisesRegex(ValueError,"سابقه سفارش"):
+    s.admin({"action":"plan_delete","id":ident})
+   s.admin({"action":"plan_toggle","id":ident,"active":False})
+   with s.conn() as c:
+    with self.assertRaises(ValueError):s.order(c,102,ident,"disabled")
+ def test_plan_validation_and_legacy(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":9,"enable":True,"protocol":"vless"}]):
+   v={"name":"Xray","protocol":"xray","price":1000,"days":10,
+      "gb":2,"inbounds":[99],"capacity":0,"active":True}
+   with self.assertRaises(ValueError):s.admin({"action":"plan","values":v})
+   with self.assertRaises(ValueError):s.admin({"action":"plan","values":dict(v,inbounds=[9,9])})
+   with self.assertRaises(ValueError):s.admin({"action":"plan","values":dict(v,inbounds=[9],price="1000")})
+   with self.assertRaises(ValueError):s.admin({"action":"plan","values":dict(v,protocol="openvpn",inbounds=[],gb=5)})
+   with self.assertRaises(ValueError):s.admin({"action":"plan","values":dict(v,protocol="openconnect",inbounds=[9],gb=0)})
+  with s.conn() as c:c.execute("DELETE FROM plans")
+  s.admin({"action":"plan","values":{"name":"OVPN","protocol":"openvpn","price":0,
+    "days":30,"gb":0,"inbounds":[],"capacity":0,"active":True}})
+  p=s.admin({"action":"get"})["plans"][0]
+  self.assertIsNone(p["remaining"])
 if __name__=="__main__":unittest.main()
