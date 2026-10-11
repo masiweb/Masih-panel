@@ -12,7 +12,7 @@ class Commerce(unittest.TestCase):
    for t in ("settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders"):c.execute("DELETE FROM "+t)
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
-   c.execute("INSERT INTO plans VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
+   c.execute("INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
  def test_duplicate_purchase_and_balance(self):
   with s.conn() as c:
    a=s.order(c,101,1,"same");b=s.order(c,101,1,"same")
@@ -223,4 +223,68 @@ class Commerce(unittest.TestCase):
    s.order(c,101,1,"pending-renew",renew="service",card=True)
    with self.assertRaises(ValueError):
     s.order(c,101,1,"another-renew",renew="service",card=True)
+ def test_trial_flag_migration_preserves_legacy_plans(self):
+  with s.conn() as c:
+   cols=[x[1] for x in c.execute("PRAGMA table_info(plans)")]
+   self.assertIn("is_trial",cols)
+   self.assertEqual(c.execute("SELECT is_trial FROM plans WHERE id=1").fetchone()[0],0)
+ def test_free_trial_single_use_without_wallet_debit(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":1,"enable":True,"protocol":"vless"}]):
+   s.admin({"action":"plan","values":{"name":"Free Trial","category":"test",
+     "protocol":"xray","price":20000,"days":2,"gb":3,"inbounds":[1],
+     "capacity":10,"active":True,"is_trial":True}})
+  with s.conn() as c:
+   pid=c.execute("SELECT id FROM plans WHERE is_trial=1").fetchone()[0]
+   self.assertEqual(c.execute("SELECT price FROM plans WHERE id=?",(pid,)).fetchone()[0],0)
+   s.put(c,"trial",True)
+   original=c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0]
+   self.assertEqual(original,0)
+   w.handle(c,{"update_id":300,"callback_query":{"from":{"id":102},
+     "message":{"chat":{"id":102,"type":"private"}},"data":"trialpick:"+str(pid)}})
+   o=c.execute("SELECT * FROM orders WHERE user_id=102 AND trial=1").fetchone()
+   self.assertIsNotNone(o)
+   self.assertEqual((o["price"],o["status"]), (0,"paid"))
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],original)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM ledger WHERE user_id=102").fetchone()[0],0)
+   with self.assertRaises(ValueError):s.order(c,102,pid,"any:second",trial=True)
+   with self.assertRaises(ValueError):s.order(c,101,pid,"try:charged",trial=False,card=True)
+ def test_trial_cannot_be_paid_or_quoted_even_when_its_price_is_zero(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":1,"enable":True,"protocol":"vless"}]):
+   s.admin({"action":"plan","values":{"name":"Trial","protocol":"xray",
+    "price":0,"days":1,"gb":1,"inbounds":[1],"capacity":0,"active":True,"is_trial":True}})
+  with s.conn() as c:
+   pid=c.execute("SELECT id FROM plans WHERE is_trial=1").fetchone()[0]
+   with self.assertRaises(ValueError):w.quote(c,101,pid)
+   with self.assertRaises(ValueError):s.order(c,101,pid,"paid-attempt",card=False)
+   s.put(c,"trial",False)
+   with self.assertRaises(ValueError):s.order(c,101,pid,"free-disabled",trial=True)
+ def test_trial_plan_type_protected_after_order(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":1,"enable":True,"protocol":"vless"}]):
+   v={"name":"Trial","protocol":"xray","price":0,"days":1,"gb":1,
+      "inbounds":[1],"capacity":0,"active":True,"is_trial":True}
+   s.admin({"action":"plan","values":v})
+   with s.conn() as c:
+    pid=c.execute("SELECT id FROM plans WHERE is_trial=1").fetchone()[0]
+    s.put(c,"trial",True)
+    s.order(c,101,pid,"trial:101",trial=True)
+   with self.assertRaises(ValueError):
+    s.admin({"action":"plan","values":dict(v,id=pid,is_trial=False)})
+ def test_trial_visible_in_dedicated_menu_only(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":1,"enable":True,"protocol":"vless"}]):
+   s.admin({"action":"plan","values":{"name":"Free Offer","protocol":"xray","price":0,
+     "days":1,"gb":2,"inbounds":[1],"capacity":0,"active":True,"is_trial":True}})
+  with s.conn() as c:
+   s.put(c,"trial",True)
+   w.handle(c,{"update_id":500,"message":{"from":{"id":102},
+    "chat":{"type":"private","id":102},"text":"/start"}})
+   out=[json.loads(row["payload"]) for row in c.execute("SELECT payload FROM outbox")]
+   self.assertTrue(any("دریافت تست رایگان" in str(x) for x in out))
+   w.handle(c,{"update_id":501,"callback_query":{"from":{"id":102},
+    "message":{"chat":{"id":102,"type":"private"}},"data":"plans"}})
+   out=[json.loads(row["payload"]) for row in c.execute("SELECT payload FROM outbox")]
+   self.assertFalse(any("Free Offer" in json.dumps(x) for x in out))
+   w.handle(c,{"update_id":502,"callback_query":{"from":{"id":102},
+    "message":{"chat":{"id":102,"type":"private"}},"data":"trial"}})
+   out=[json.loads(row["payload"]) for row in c.execute("SELECT payload FROM outbox")]
+   self.assertTrue(any("Free Offer" in json.dumps(x) for x in out))
 if __name__=="__main__":unittest.main()
