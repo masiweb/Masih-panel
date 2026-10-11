@@ -35,6 +35,10 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl git tar xz-utils build-essential pkg-config python3 \
   sqlite3 jq nginx certbot openvpn openconnect ocserv easy-rsa iptables ufw openssl
+# Distribution ocserv may start on TCP/443 before Masiha config is installed.
+# Release that listener so Nginx can terminate the public HTTPS endpoint.
+systemctl stop ocserv.service 2>/dev/null || true
+systemctl disable ocserv.service 2>/dev/null || true
 # Install exact tool versions needed by the pinned fork; never use system Node 18.
 TOOLS=/opt/masiha-vpn-toolchains
 mkdir -p "$TOOLS"
