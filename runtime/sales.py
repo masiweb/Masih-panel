@@ -127,7 +127,7 @@ def order(c,uid,pid,reference,renew="",trial=False,card=False):
   if not s["trial"] or s["trial_plan"]!=pid:raise ValueError("تست فعال نیست")
   if c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1",(uid,)).fetchone():raise ValueError("قبلاً تست دریافت کرده‌اید")
  if renew:
-  if c.execute("SELECT 1 FROM orders WHERE service_id=? AND status IN (\'paid\',\'review\')",(renew,)).fetchone():raise ValueError("یک سفارش برای این سرویس در حال پردازش یا بررسی است")
+  if c.execute("SELECT 1 FROM orders WHERE service_id=? AND status IN (\'paid\',\'review\',\'awaiting_receipt\',\'receipt_review\')",(renew,)).fetchone():raise ValueError("یک سفارش برای این سرویس در حال پردازش یا بررسی است")
   service=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(renew,uid)).fetchone()
   if not service or service["protocol"]!=p["protocol"]:raise ValueError("سرویس قابل تمدید نیست")
  else:
@@ -141,6 +141,7 @@ def order(c,uid,pid,reference,renew="",trial=False,card=False):
   if cp and not c.execute("SELECT 1 FROM redeemed WHERE code=? AND user_id=?",(coupon,uid)).fetchone():
    price=price*(100-cp["percent"])//100
    c.execute("INSERT INTO redeemed VALUES(?,?)",(coupon,uid));c.execute("UPDATE coupons SET uses=uses-1 WHERE code=?",(coupon,))
+   p["_coupon_code"]=coupon
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  if not card:money(c,uid,-price,"purchase",reference+":debit")
  sid=renew or secrets.token_hex(12)
@@ -179,6 +180,17 @@ def provision(c,o):
  enqueue(c,uid,"اشتراک آماده است. از «سرویس‌های من» دریافت کنید.",[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
  for admin in s["admins"]+([s["report_channel"]] if s["report_channel"] else []):enqueue(c,admin,"سفارش "+o["id"]+" تحویل شد؛ مبلغ "+str(o["price"])+" تومان.",key=o["id"]+":admin:"+str(admin))
 
+def restore_reserved_coupon(c,o):
+ # A rejected receipt should free a coupon reserved by the card order.
+ if not o or o["status"] not in ("awaiting_receipt","receipt_review"):return
+ try: code=json.loads(o["plan"]).get("_coupon_code")
+ except (ValueError,TypeError):code=None
+ if code:
+  removed=c.execute("DELETE FROM redeemed WHERE code=? AND user_id=?",(code,o["user_id"])).rowcount
+  if removed:
+   c.execute("UPDATE coupons SET uses=uses+1 WHERE code=?",(code,))
+   audit(c,"coupon_restored","order:"+o["id"])
+
 def decide_receipt(c,ident,approve):
  r=c.execute("SELECT * FROM topups WHERE id=?",(ident,)).fetchone()
  if not r or r["status"]!="pending":raise ValueError("این درخواست قبلاً رسیدگی شده")
@@ -186,6 +198,7 @@ def decide_receipt(c,ident,approve):
  if linked:
   o=c.execute("SELECT * FROM orders WHERE id=?",(linked["order_id"],)).fetchone()
   if not o or o["status"]!="receipt_review" or o["price"]!=r["amount"] or o["user_id"]!=r["user_id"]:raise ValueError("سفارش رسید معتبر نیست")
+  if not approve:restore_reserved_coupon(c,o)
   c.execute("UPDATE orders SET status=? WHERE id=?",("paid" if approve else "cancelled",o["id"]))
   enqueue(c,r["user_id"],"رسید سفارش تأیید شد؛ اشتراک در حال ساخت است." if approve else "رسید سفارش رد شد؛ با پشتیبانی تماس بگیرید.")
  else:
@@ -308,6 +321,18 @@ def admin(req):
    for u in c.execute("SELECT id FROM users WHERE blocked=0"):enqueue(c,u["id"],body,key="broadcast:"+ref+":"+str(u["id"]))
   elif a=="retry":
    c.execute("UPDATE orders SET status='paid' WHERE id=? AND status='review'",(text(req["id"]),))
+  elif a=="cancel_order":
+   ident=text(req.get("id"),120)
+   o=c.execute("SELECT * FROM orders WHERE id=?",(ident,)).fetchone()
+   if not o or o["status"] not in ("awaiting_receipt","receipt_review"):
+    raise ValueError("فقط سفارش در انتظار رسید قابل لغو است")
+   restore_reserved_coupon(c,o)
+   linked=c.execute("SELECT topup_id FROM receipt_orders WHERE order_id=?",(ident,)).fetchone()
+   if linked:
+    c.execute("UPDATE topups SET status='rejected' WHERE id=? AND status='pending'",(linked["topup_id"],))
+   c.execute("UPDATE orders SET status='cancelled' WHERE id=?",(ident,))
+   enqueue(c,o["user_id"],"سفارش در انتظار رسید لغو شد؛ در صورت نیاز دوباره خرید کنید.",
+     key="cancel:"+ident)
   elif a=="retry_outbox":
    # Admin-only local panel RPC. Message payload stays private in SQLite.
    ident=integer(req["id"],1)
