@@ -81,7 +81,7 @@ echo "Resuming verified installation for $DOMAIN; existing CA/database/SSL retai
 # only while this exact root-owned marker exists.
 install -d -m 0700 /etc/masiha-vpn-extension
 if [[ ! -e "$FINALIZE_MARKER" ]]; then
-  printf 'incomplete-finalization-v1\\n' > "$FINALIZE_MARKER"
+  printf 'incomplete-finalization-v1\n' > "$FINALIZE_MARKER"
   chmod 0600 "$FINALIZE_MARKER"
 fi
 # Per-server CA & TLS-crypt; do not reuse keys from production unless migrating.
