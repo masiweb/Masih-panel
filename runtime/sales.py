@@ -121,7 +121,9 @@ def save_settings(c,r):
  return True
 def order(c,uid,pid,reference,renew="",trial=False,card=False):
  existing=c.execute("SELECT id FROM orders WHERE id=?",(reference,)).fetchone()
- if existing:return existing["id"]
+ if existing:
+  if trial:raise ValueError("شما قبلاً تست رایگان دریافت کرده‌اید")
+  return existing["id"]
  s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if not u or u["blocked"]:raise ValueError("دسترسی مسدود است")
  if (not trial and not s["buy"]) or (renew and not s["renew"]):
