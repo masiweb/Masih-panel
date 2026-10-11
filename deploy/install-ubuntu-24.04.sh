@@ -4,7 +4,8 @@
 set -Eeuo pipefail
 umask 077
 if [[ "${1:-}" == "--help" ]]; then
-  echo 'Usage: DOMAIN=vpn.example.com EMAIL=admin@example.com sudo -E bash deploy/install-ubuntu-24.04.sh'
+  echo 'Usage (interactive): sudo bash deploy/install-ubuntu-24.04.sh'
+  echo 'Usage (automated): sudo env DOMAIN=vpn.example.com EMAIL=admin@example.com bash deploy/install-ubuntu-24.04.sh'
   echo 'Optional: PANEL_PATH=/xui/ PANEL_ADMIN_USER=admin MASIHA_BUILD_ROOT=/opt/masiha-vpn-build-20261011'
   exit 0
 fi
@@ -13,8 +14,21 @@ fi
 source /etc/os-release
 [[ "$ID" == "ubuntu" && "$VERSION_ID" == "24.04" && "$(uname -m)" == "x86_64" ]] ||
   { echo "Only fresh Ubuntu 24.04 amd64 is supported" >&2; exit 1; }
-DOMAIN="${DOMAIN:?Set DOMAIN to the public DNS name of this server}"
-EMAIL="${EMAIL:?Set EMAIL for the TLS certificate}"
+# Interactive prompts are required when values are not supplied via environment.
+# On unattended runs, demand values explicitly instead of silently choosing a domain.
+request_value() {
+  local name="$1" label="$2" result
+  if [[ ! -t 0 ]]; then
+    echo "Missing $name. For noninteractive installation, pass DOMAIN=... EMAIL=... via sudo env." >&2
+    exit 2
+  fi
+  read -r -p "$label: " result
+  printf -v "$name" '%s' "$result"
+}
+DOMAIN="${DOMAIN:-}"
+EMAIL="${EMAIL:-}"
+if [[ -z "$DOMAIN" ]]; then request_value DOMAIN "Enter the VPN domain (DNS A record points here)"; fi
+if [[ -z "$EMAIL" ]]; then request_value EMAIL "Enter the email for automatic Let's Encrypt SSL"; fi
 PANEL_PATH="${PANEL_PATH:-/xui/}"
 ADMIN_USER="${PANEL_ADMIN_USER:-admin}"
 [[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ && "$DOMAIN" == *.* ]] ||
@@ -39,15 +53,42 @@ apt-get install -y ca-certificates curl git tar xz-utils build-essential pkg-con
 # Release that listener so Nginx can terminate the public HTTPS endpoint.
 systemctl stop ocserv.service 2>/dev/null || true
 systemctl disable ocserv.service 2>/dev/null || true
-# Install exact tool versions needed by the pinned fork; never use system Node 18.
+# Official archives, pinned SHA256 and alternate URLs. HTTP 404 on a mirror
+# must never be confused with a successful installation.
 TOOLS=/opt/masiha-vpn-toolchains
 mkdir -p "$TOOLS"
+download_verified() {
+  local filename="$1" expected="$2" url tmp
+  shift 2
+  tmp="${filename}.part"
+  for url in "$@"; do
+    echo "Downloading $(basename "$filename") from $url"
+    rm -f "$tmp"
+    if curl --fail --location --retry 2 --connect-timeout 20 --max-time 360 \
+       --output "$tmp" "$url" &&
+       printf '%s  %s\n' "$expected" "$tmp" | sha256sum --check --status; then
+      mv -f "$tmp" "$filename"
+      return 0
+    fi
+    echo "Mirror failed or SHA256 mismatch; trying next official endpoint." >&2
+  done
+  rm -f "$tmp"
+  echo "Cannot download verified $(basename "$filename"). Check outbound HTTPS/DNS/proxy." >&2
+  return 1
+}
 if [[ ! -x "$TOOLS/go/bin/go" ]]; then
-  curl --fail --location --retry 3 --output "$TOOLS/go.tar.gz" https://go.dev/dl/go1.27.1.linux-amd64.tar.gz
+  download_verified "$TOOLS/go.tar.gz" \
+    "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445" \
+    "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz" \
+    "https://dl.google.com/go/go1.27.1.linux-amd64.tar.gz" \
+    "https://storage.googleapis.com/golang/go1.27.1.linux-amd64.tar.gz"
   tar -xzf "$TOOLS/go.tar.gz" -C "$TOOLS"
 fi
 if [[ ! -x "$TOOLS/node-v24.21.0-linux-x64/bin/node" ]]; then
-  curl --fail --location --retry 3 --output "$TOOLS/node.tar.xz" https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz
+  download_verified "$TOOLS/node.tar.xz" \
+    "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8a4a27d94fbe49f56cb2d6" \
+    "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
+    "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
   tar -xJf "$TOOLS/node.tar.xz" -C "$TOOLS"
 fi
 export PATH="$TOOLS/go/bin:$TOOLS/node-v24.21.0-linux-x64/bin:$PATH"
@@ -58,7 +99,9 @@ BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-20261011}"
 [[ -s "$BUILD_ROOT/x-ui" ]] || exit 1
 # Official pinned installer supplies Xray, geo data and native systemd helpers.
 # The official downloaded 3x-ui binary is IMMEDIATELY replaced by the verified Masiha build.
-XUI_NONINTERACTIVE=1 bash "$BUILD_ROOT/src/install.sh"
+XUI_NONINTERACTIVE=1 XUI_SSL_MODE=none XUI_DB_TYPE=sqlite \
+  XUI_PANEL_PORT=62053 XUI_WEB_BASE_PATH="$PANEL_PATH" \
+  bash "$BUILD_ROOT/src/install.sh"
 [[ -d /usr/local/x-ui/bin && -f /etc/systemd/system/x-ui.service ]] ||
   { echo "3x-ui dependencies not installed; stop without starting Masiha extension" >&2; exit 1; }
 systemctl stop x-ui.service 2>/dev/null || true
@@ -79,6 +122,10 @@ p.write_text(json.dumps({'domain':sys.argv[1],'panel_path':sys.argv[2]},indent=2
 p.chmod(0o600)
 PY
 # ACME HTTP-01 needs public TCP/80 and the DNS A record to target this host.
+getent ahostsv4 "$DOMAIN" >/dev/null || {
+  echo "The domain has no resolvable A record. Update DNS before requesting SSL." >&2
+  exit 1
+}
 systemctl enable --now nginx
 certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos \
   --email "$EMAIL" -d "$DOMAIN" --keep-until-expiring
@@ -103,6 +150,7 @@ cat > /etc/nginx/sites-available/masiha-vpn <<EOF
 server {
   listen 80;
   server_name $DOMAIN;
+  location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
   location / { return 301 https://\$host\$request_uri; }
 }
 server {
@@ -133,6 +181,15 @@ ln -sfn /etc/nginx/sites-available/masiha-vpn /etc/nginx/sites-enabled/masiha-vp
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl reload nginx
+# Renewed Let's Encrypt certificates must reload both TLS consumers.
+install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+cat > /etc/letsencrypt/renewal-hooks/deploy/masiha-reload.sh <<'HOOK'
+#!/usr/bin/env bash
+set -e
+systemctl reload nginx.service
+systemctl reload ocserv.service 2>/dev/null || systemctl restart ocserv.service
+HOOK
+chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/masiha-reload.sh
 # Per-server CA & TLS-crypt; do not reuse keys from production unless migrating.
 install -d -m 0700 /etc/openvpn/masiha
 export EASYRSA_PKI=/etc/openvpn/masiha/pki EASYRSA_BATCH=1 EASYRSA_ALGO=ec \
@@ -196,11 +253,17 @@ systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
 systemctl enable --now masiha-vpn-extension.service
 bash "$REPO_ROOT/deploy/verify-install.sh"
-cat <<EOF
-Masiha installation complete.
-Panel: https://$DOMAIN$PANEL_PATH
-Root-only credentials: /root/masiha-vpn-initial-login.env
-Set 3x-ui subscription URI to https://$DOMAIN/sub and bind subscription to 127.0.0.1:2096.
-Create Xray inbounds in the panel and allow ONLY their intended ports in your firewall.
-Configure Telegram bot token and admins in the sales-bot UI; no bot token is stored in Git.
-EOF
+# Print credentials immediately on the terminal, ONLY after health checks pass.
+# Keep a 0600 copy for recovery; do not print during partial/failed installs.
+printf '\n===============================================\n'
+printf ' MASIHA VPN INSTALLED SUCCESSFULLY\n'
+printf '===============================================\n'
+printf ' Panel URL : https://%s%s\n' "$DOMAIN" "$PANEL_PATH"
+printf ' Username  : %s\n' "$ADMIN_USER"
+printf ' Password  : %s\n' "$ADMIN_PASS"
+printf ' HTTPS SSL : Let\047s Encrypt (%s)\n' "$DOMAIN"
+printf ' Recovery  : /root/masiha-vpn-initial-login.env (root only)\n'
+printf '===============================================\n'
+printf 'Next: set the native subscription URI to https://%s/sub and\n' "$DOMAIN"
+printf 'bind subscriptions to 127.0.0.1:2096. Configure Telegram in the sales UI.\n'
+
