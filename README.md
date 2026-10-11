@@ -1,26 +1,25 @@
-# Masiha VPN Platform
+# Masiha VPN Manager
 
-Central multi-node VPN management platform.
+Masiha VPN Manager is deployed as a **patched SANAei 3x-ui** with native Xray inbounds, OpenVPN, OpenConnect and a Telegram commerce manager. New deployments are generated from a pinned upstream commit plus our auditable patch and Python runtime sources.
 
-## Initial scope
-- Central API and management core
-- Dynamic multi-country node registry
-- Xray, WireGuard, OpenVPN, and OpenConnect node capabilities
-- Node heartbeat and health state
-- Telegram bot integration in the first product phase
-- HTTPS-first deployment
-- Git-based delivery without committed secrets
+**[راهنمای نصب کامل روی سرور جدید (فارسی)](docs/INSTALL_NEW_SERVER_FA.md)**
 
-## Current milestone
-Version 0.7.0 adds real protocol provisioning plus admin config view/copy, downloads, QR codes and per-service subscription links. The central host is also an online self-node for all four protocols.
+## Deployment source of truth (2026-10-11)
 
-## Version 0.7.0 — Inbound / Client architecture
+- `deploy/3x-ui.patch`: patch for 29 files over upstream 3x-ui commit `7ef22f94c950ff09f0870e2295fa65ad5968742c`.
+- `runtime/`: live Python extension, shared quota/expiry accounting, OpenVPN and OpenConnect provisioning, Telegram sales worker, safe test scripts.
+- `deploy/build-3x-ui.sh`: reproduces patched React and Go build.
+- `deploy/install-ubuntu-24.04.sh`: fresh Ubuntu 24.04 amd64 provisioning; **refuses pre-existing x-ui installations**.
+- `deploy/verify-install.sh`: post-install sanity and isolated shared-quota tests.
+- `docs/RELEASE_2026-10-11.md`: verification and known limits.
 
-- First-class, node-owned VPN inbounds with protocol-specific settings
-- Independent VPN clients attached to multiple inbounds
-- Shared quota and expiry per client
-- One subscription URL and HTML profile per client
-- Per-inbound config, QR, copy and download actions
-- Backward-compatible migration from legacy VPN services
-- Node Agent jobs for inbound create/update/delete and client reprovision
+The older `app/` FastAPI control-plane and `node_agent/` prototype are retained for historical reference **but are not the implementation currently running on the VPN server**. Do not deploy that prototype as a replacement for the native extension.
 
+## Supported flows
+
+- Native 3x-ui Xray service with VLESS, VMess, Trojan and other supported inbounds.
+- Shared per-client expiry and traffic across Xray, OpenVPN and OpenConnect, including automatically provisioned VPN credentials and downloadable profiles.
+- Telegram bot sales, plan management, receipt-based top-ups and admin approval. Bot activation requires an actual token and admin Telegram IDs.
+- Subscription URL and per-protocol profiles, with TLS termination by Nginx.
+
+Never commit customer profiles, live databases, private keys, passwords, bot tokens or production configuration. The public repository contains only source code, templates and instructions. See installation guide for the complete list of backup-only paths.

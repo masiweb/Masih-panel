@@ -8,3 +8,23 @@ __pycache__/
 .coverage
 dist/
 build/
+# Security: never track runtime identities, credentials or exported client profiles.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.ovpn
+*.p12
+*.pfx
+*.key
+*.pem
+*.crt
+*.csr
+*.bak.*
+*.backup
+install-result.env
+credentials*.txt
+*/pki/
+release-staging/
+toolchain/

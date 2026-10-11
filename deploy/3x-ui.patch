@@ -1,0 +1,1848 @@
+diff --git a/MASIHA-VPN.md b/MASIHA-VPN.md
+new file mode 100644
+index 0000000..b4977e2
+--- /dev/null
++++ b/MASIHA-VPN.md
+@@ -0,0 +1,32 @@
++# Integrated OpenVPN and OpenConnect
++Based on official MHSanaei/3x-ui v3.8.5, commit 7ef22f94c950ff09f0870e2295fa65ad5968742c.
++
++## Interfaces
++- /panel/openvpn and /panel/openconnect are native React/Ant Design pages.
++- POST /panel/api/masiha-vpn uses existing API authentication, token scope and CSRF middleware.
++- Root-owned /opt/masiha-vpn-extension/manager.py accepts JSON on stdin only. No public daemon/API is added.
++- Users can be created, renewed, enabled, disabled and deleted. OpenVPN exports per-user profiles; OpenConnect passwords are hashed using ocpasswd.
++- Accounts and quotas are separate from Xray; there is no combined subscription or traffic quota.
++- OpenVPN disabling revokes its certificate. Re-enabling generates a new certificate: download a new profile.
++- Expires are UTC Unix seconds (0 is unlimited); worker reconciles every 15 seconds.
++- Local audit records store timestamp/action/protocol/username, never passwords or keys.
++
++## Runtime
++- openvpn-server@masiha: UDP/1194, subnet 10.81.0.0/24.
++- ocserv: TCP+UDP/4443, subnet 10.82.0.0/24, public certificate for xu.chanelchat.ir.
++- masiha-vpn-extension.service manages expiry, NAT restoration after boot, and reloads ocserv after public certificate renewal.
++- Internal administration uses the root-only OpenVPN Unix management socket and occtl.
++- Existing subscription and Xray configuration are not modified.
++
++## Build and deployment
++Go 1.27.1 and Node 24.21.0 are installed under /opt/masiha-vpn-extension/toolchain.
++Run npm ci, npm run typecheck, npm run build inside frontend, then go build at repository root.
++Build candidate outside /usr/local/x-ui, run smoke_panel.py and test_tunnels.py before deploying.
++The tests create temporary users and isolated Linux network namespaces; they remove their own test accounts afterward.
++Backup binary and SQLite database before replacement. Stop x-ui, install candidate, start, test HTTPS and subscription.
++Backup files are held under /opt/masiha-vpn-extension/backups (root-only).
++
++## Updates
++An official 3x-ui binary update overwrites these custom routes and pages. Rebase this branch and rebuild for updates.
++The helper, service settings and account database remain independent. Preserve the original LICENSE and attribution.
++Do not commit account databases, password files, certificates or exported profiles to Git.
+diff --git a/SALES-BOT.md b/SALES-BOT.md
+new file mode 100644
+index 0000000..5594f45
+--- /dev/null
++++ b/SALES-BOT.md
+@@ -0,0 +1,41 @@
++# Masiha sales bot
++Custom Python commerce engine and Telegram polling worker, native React administration and authenticated Go bridge. No WizWiz source is used.
++Panel route: /panel/sales-bot. POST /panel/api/sales-bot inherits panel authentication, token scope and CSRF.
++Private state: /etc/masiha-vpn-extension/sales/sales.db (root only). Never commit this database.
++Token is omitted from reads; an empty token field preserves the saved token. Disabled by default.
++Runtime: sales_worker.py supervised by the existing VPN worker/systemd cgroup. No extra public port or webhook.
++Configure BotFather token and numeric admin IDs in the panel; save, check connection, create plans, configure payment instructions, then enable.
++The bot must have no existing webhook or other polling process. Admins must start the bot to receive messages.
++
++Implemented:
++- Plan/category editing, capacity, existing Xray inbound selection, OpenVPN/OpenConnect time plans.
++- Wallet ledger, one-time order references, immutable expiring quotes, manual receipt approval, transfer.
++- Purchase, renewal, profile delivery, Xray subscription/direct links and locally generated QR.
++- One trial per Telegram account, gift/discount codes, referral commission.
++- Reseller discount and batch purchase, client display names, Xray credential/subscription rotation.
++- Forced channel membership and contact ownership checking.
++- Support tickets/replies, broadcast queue, admin notifications and report channel.
++- Expiry warnings and Xray traffic warning (currently first 100 active recorded services per sweep).
++- Account blocking, credit adjustments, orders needing review and retry.
++- Pending fulfillment preserves an absolute target before external operations; uncertain failures require admin review.
++- No automatic refunds after uncertain partial provisioning.
++- Telegram outbox delivery is at-least-once: a crash after Telegram accepts a message but before local acknowledgement may duplicate a notification, never a debit.
++
++Not yet implemented (do not advertise parity with every WizWiz feature):
++- NextPay and cryptocurrency gateways. Zarinpal request/verification and public return route are implemented; real merchant payment is not tested.
++- Automatic server health/failover, cross-server relocation, multi-panel sales and dedicated inbound creation.
++- Imported external subscription ownership verification and migration.
++- Custom volume/time add-ons separate from renewal, arbitrary custom button designer, scheduled broadcast UI.
++- OpenVPN/OpenConnect byte quota enforcement; time-only plans are validated.
++- Remote backup delivery through the bot.
++
++Verification:
++test_sales.py: money/ownership/duplicate orders, token omission, quotes and bulk buying.
++Frontend tests: JSON requests and numeric admin IDs.
++smoke_panel.py: isolated panel login, CSRF/auth rejection and settings page.
++Real provision/renew/delete tested using disposable accounts on all three adapters.
++Telegram live messaging remains untested until the operator supplies a token; no credentials are prepopulated.
++Preserve the custom source branch when updating upstream panel binaries.
++
++Zarinpal: https://www.zarinpal.com/docs/paymentGateway/connectToGateway
++Amounts stored as integer tomans and sent as integer IRR (times 10). Browser status does not credit; server verifies authority and stored amount. Duplicate 100/101 responses are protected by a unique ledger reference. The callback path /xui/sales-payment has bounded concurrent verification slots and does not accept arbitrary admin actions.
+diff --git a/extensions/masiha-sales/sales.py b/extensions/masiha-sales/sales.py
+new file mode 100644
+index 0000000..16be7ef
+--- /dev/null
++++ b/extensions/masiha-sales/sales.py
+@@ -0,0 +1,268 @@
++#!/usr/bin/python3
++"""Masiha sales: private local administration and durable Telegram commerce."""
++import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, shlex, sqlite3, subprocess, sys, time, urllib.request, urllib.parse, uuid
++from pathlib import Path
++BASE=Path(os.environ.get("MASIHA_SALES_DIR","/etc/masiha-vpn-extension/sales"))
++DEFAULT={"enabled":False,"token":"","admins":[],"welcome":"به فروشگاه مسیحا خوش آمدید","support":"برای پشتیبانی پیام خود را ارسال کنید.","card":"","channel":"","require_contact":False,"buy":True,"renew":True,"wallet":True,"transfer":False,"trial":False,"referrals":False,"commission":5,"discounts":True,"notifications":True,"self_delete":False,"reseller":False,"reseller_discount":10,"trial_plan":0,"warning_days":3,"usage_warning_percent":10,"report_channel":"","bulk":False,"rename":True,"rotate":False,"new_user_notice":True,"zarinpal":False,"merchant_id":""}
++def now():return int(time.time())
++def conn():
++ BASE.mkdir(parents=True,exist_ok=True,mode=0o700)
++ c=sqlite3.connect(BASE/"sales.db",timeout=30);c.row_factory=sqlite3.Row
++ c.executescript("""
++ PRAGMA journal_mode=WAL;
++ CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT);
++ CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,name TEXT,balance INTEGER DEFAULT 0 CHECK(balance>=0),blocked INTEGER DEFAULT 0,reseller INTEGER DEFAULT 0,referrer INTEGER DEFAULT 0,phone TEXT DEFAULT '',state TEXT DEFAULT '',created INTEGER);
++ CREATE TABLE IF NOT EXISTS plans(id INTEGER PRIMARY KEY,name TEXT,category TEXT,protocol TEXT,price INTEGER,days INTEGER,gb INTEGER,inbounds TEXT,capacity INTEGER,active INTEGER);
++ CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,user_id INTEGER,plan TEXT,price INTEGER,status TEXT,service_id TEXT,renew_id TEXT DEFAULT '',created INTEGER,error TEXT DEFAULT '',trial INTEGER DEFAULT 0);
++ CREATE TABLE IF NOT EXISTS services(id TEXT PRIMARY KEY,user_id INTEGER,protocol TEXT,username TEXT,plan TEXT,expires INTEGER,data TEXT,deleted INTEGER DEFAULT 0);
++ CREATE TABLE IF NOT EXISTS ledger(id INTEGER PRIMARY KEY,user_id INTEGER,amount INTEGER,reason TEXT,reference TEXT UNIQUE,created INTEGER);
++ CREATE TABLE IF NOT EXISTS topups(id INTEGER PRIMARY KEY,user_id INTEGER,amount INTEGER,receipt TEXT,status TEXT DEFAULT 'pending',created INTEGER);
++ CREATE TABLE IF NOT EXISTS coupons(code TEXT PRIMARY KEY,percent INTEGER,credit INTEGER,uses INTEGER,expires INTEGER);
++ CREATE TABLE IF NOT EXISTS redeemed(code TEXT,user_id INTEGER,PRIMARY KEY(code,user_id));
++ CREATE TABLE IF NOT EXISTS tickets(id INTEGER PRIMARY KEY,user_id INTEGER,body TEXT,reply TEXT DEFAULT '',created INTEGER);
++ CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY,dedupe TEXT UNIQUE,chat INTEGER,method TEXT,payload TEXT,done INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,next_try INTEGER DEFAULT 0);
++ CREATE TABLE IF NOT EXISTS updates(id INTEGER PRIMARY KEY,created INTEGER);
++ CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY,user_id INTEGER,amount INTEGER,authority TEXT UNIQUE,status TEXT,ref TEXT,created INTEGER);
++ CREATE TABLE IF NOT EXISTS quotes(id TEXT PRIMARY KEY,user_id INTEGER,plan_id INTEGER,plan TEXT,renew_id TEXT,expires INTEGER);
++ CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,action TEXT,detail TEXT,created INTEGER);
++ """)
++ return c
++def settings(c):return {**DEFAULT,**{r["k"]:json.loads(r["v"]) for r in c.execute("SELECT * FROM settings")}}
++def put(c,k,v):c.execute("INSERT OR REPLACE INTO settings VALUES(?,?)",(k,json.dumps(v,ensure_ascii=False)))
++def audit(c,a,d):c.execute("INSERT INTO audit(action,detail,created) VALUES(?,?,?)",(a,str(d)[:500],now()))
++def integer(x,lo=0,hi=10**12):
++ if type(x) is not int or not lo<=x<=hi:raise ValueError("عدد واردشده نامعتبر است")
++ return x
++def text(x,n=4000):
++ if not isinstance(x,str) or len(x)>n:raise ValueError("متن نامعتبر است")
++ return x.strip()
++def enqueue(c,chat,body,keys=None,key=None):
++ p={"chat_id":chat,"text":body[:4000]}
++ if keys:p["reply_markup"]={"inline_keyboard":[[{"text":a,"callback_data":b} for a,b in row] for row in keys]}
++ c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(key or secrets.token_hex(12),chat,"sendMessage",json.dumps(p,ensure_ascii=False)))
++def money(c,uid,amount,reason,ref):
++ if c.execute("SELECT 1 FROM ledger WHERE reference=?",(ref,)).fetchone():return
++ if not c.execute("UPDATE users SET balance=balance+? WHERE id=? AND balance+?>=0",(amount,uid,amount)).rowcount:raise ValueError("موجودی کافی نیست یا کاربر وجود ندارد")
++ c.execute("INSERT INTO ledger(user_id,amount,reason,reference,created) VALUES(?,?,?,?,?)",(uid,amount,reason,ref,now()))
++def vpn(req):
++ p=subprocess.run(["/usr/bin/python3","/opt/masiha-vpn-extension/manager.py"],input=json.dumps(req),text=True,capture_output=True,timeout=55)
++ try:r=json.loads(p.stdout)
++ except Exception:raise ValueError("ارتباط با سرویس VPN ناموفق بود")
++ if not r["success"]:raise ValueError(r.get("msg","خطای VPN"))
++ return r["obj"]
++class Panel:
++ def __init__(self):
++  env={}
++  for line in Path("/etc/x-ui/install-result.env").read_text().splitlines():
++   if "=" in line and not line.startswith("#"):
++    k,v=line.split("=",1);env[k]=shlex.split(v)[0] if shlex.split(v) else ""
++  self.base="http://127.0.0.1:"+env.get("XUI_PANEL_PORT","62053")+"/"+env.get("XUI_WEB_BASE_PATH","xui").strip("/")
++  self.client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
++  self.token=self.call("/csrf-token")
++  self.call("/login",{"username":env["XUI_USERNAME"],"password":env["XUI_PASSWORD"]})
++  self.token=self.call("/panel/csrf-token")
++ def call(self,path,data=None):
++  headers={"Content-Type":"application/json","X-Requested-With":"XMLHttpRequest","Host":"xu.chanelchat.ir"}
++  if getattr(self,"token",None):headers["X-CSRF-Token"]=self.token
++  try:
++   with self.client.open(urllib.request.Request(self.base+path,data=None if data is None else json.dumps(data).encode(),headers=headers),timeout=25) as r:obj=json.load(r)
++  except Exception:raise ValueError("ارتباط با پنل برقرار نشد")
++  if not obj.get("success"):raise ValueError("پنل عملیات را نپذیرفت")
++  return obj.get("obj")
++def subscription_url(sub_id):
++ with sqlite3.connect("file:/etc/x-ui/x-ui.db?mode=ro",uri=True) as db:
++  row=db.execute("SELECT value FROM settings WHERE key='subURI'").fetchone()
++ if not row:raise ValueError("آدرس HTTPS ساب در پنل تنظیم نشده")
++ base=row[0].strip();url=urllib.parse.urlparse(base)
++ if url.scheme!="https" or url.hostname!="xu.chanelchat.ir":raise ValueError("دامنه HTTPS ساب را در پنل بررسی کنید")
++ return base.rstrip("/")+"/"+urllib.parse.quote(sub_id,safe="")
++def inbound_list():
++ return [{"id":r["id"],"name":r.get("remark",""),"protocol":r["protocol"],"enable":r["enable"]} for r in Panel().call("/panel/api/inbounds/list")]
++def tg(s,method,payload):
++ try:
++  req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+"/"+method,data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
++  with urllib.request.urlopen(req,timeout=35) as r:obj=json.load(r)
++  if not obj.get("ok"):raise ValueError()
++  return obj["result"]
++ except Exception:raise ValueError("ارتباط با تلگرام ناموفق است؛ توکن، شبکه و وضعیت webhook را بررسی کنید")
++def save_settings(c,r):
++ s=settings(c)
++ for k,v in r.items():
++  if k not in DEFAULT:continue
++  if k=="token":
++   if not v:continue
++   if s["token"] and v.split(":")[0]!=s["token"].split(":")[0] and c.execute("SELECT 1 FROM users LIMIT 1").fetchone():raise ValueError("تغییر هویت ربات دارای مشتری مجاز نیست؛ فقط توکن جدید همان ربات را وارد کنید")
++   if not re.fullmatch(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}",v):raise ValueError("فرمت توکن نادرست است")
++  elif k=="merchant_id":
++   if not v:continue
++   try:v=str(uuid.UUID(v))
++   except Exception:raise ValueError("مرچنت زرین‌پال باید UUID معتبر باشد")
++  elif k=="admins":
++   if not isinstance(v,list) or not v:raise ValueError("حداقل یک آیدی مدیر لازم است")
++   v=list(set(integer(i,1,2**52) for i in v))
++  elif type(DEFAULT[k]) is bool:
++   if type(v) is not bool:raise ValueError("وضعیت نامعتبر")
++  elif type(DEFAULT[k]) is int:v=integer(v,0,100 if k in ("commission","reseller_discount","warning_days","usage_warning_percent") else 10**9)
++  else:v=text(v)
++  s[k]=v
++ if s["zarinpal"] and not s["merchant_id"]:raise ValueError("مرچنت درگاه را ثبت کنید")
++ if s["enabled"] and (not s["token"] or not s["admins"]):raise ValueError("ابتدا توکن و آیدی مدیر را ثبت کنید")
++ for k in DEFAULT:put(c,k,s[k])
++ audit(c,"settings","updated")
++ return True
++def order(c,uid,pid,reference,renew="",trial=False):
++ existing=c.execute("SELECT id FROM orders WHERE id=?",(reference,)).fetchone()
++ if existing:return existing["id"]
++ s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
++ if not u or u["blocked"]:raise ValueError("دسترسی مسدود است")
++ if not s["buy"] or renew and not s["renew"]:raise ValueError("فروش یا تمدید غیرفعال است")
++ p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
++ if not p:raise ValueError("پلن موجود نیست")
++ p=dict(p)
++ if trial:
++  if not s["trial"] or s["trial_plan"]!=pid:raise ValueError("تست فعال نیست")
++  if c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1",(uid,)).fetchone():raise ValueError("قبلاً تست دریافت کرده‌اید")
++ if renew:
++  if c.execute("SELECT 1 FROM orders WHERE service_id=? AND status IN (\'paid\',\'review\')",(renew,)).fetchone():raise ValueError("یک سفارش برای این سرویس در حال پردازش یا بررسی است")
++  service=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(renew,uid)).fetchone()
++  if not service or service["protocol"]!=p["protocol"]:raise ValueError("سرویس قابل تمدید نیست")
++ else:
++  count=c.execute("SELECT COUNT(*) FROM orders WHERE json_extract(plan,'$.id')=? AND renew_id='' AND status!='cancelled'",(pid,)).fetchone()[0]
++  if p["capacity"] and count>=p["capacity"]:raise ValueError("ظرفیت پلن تکمیل است")
++ price=0 if trial else p["price"]
++ if u["reseller"] and s["reseller"]:price=price*(100-s["reseller_discount"])//100
++ coupon=u["state"][7:] if u["state"].startswith("coupon:") else ""
++ if coupon and s["discounts"] and not trial:
++  cp=c.execute("SELECT * FROM coupons WHERE code=? AND uses>0 AND (expires=0 OR expires>?)",(coupon,now())).fetchone()
++  if cp and not c.execute("SELECT 1 FROM redeemed WHERE code=? AND user_id=?",(coupon,uid)).fetchone():
++   price=price*(100-cp["percent"])//100
++   c.execute("INSERT INTO redeemed VALUES(?,?)",(coupon,uid));c.execute("UPDATE coupons SET uses=uses-1 WHERE code=?",(coupon,))
++ c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
++ money(c,uid,-price,"purchase",reference+":debit")
++ sid=renew or secrets.token_hex(12)
++ c.execute("INSERT INTO orders VALUES(?,?,?,?,?,?,?,?,?,?)",(reference,uid,json.dumps(p),price,"paid",sid,renew,now(),"",int(trial)))
++ return reference
++def provision(c,o):
++ p=json.loads(o["plan"]);uid=o["user_id"];sid=o["service_id"];name="ms-"+sid[:20]
++ old=c.execute("SELECT * FROM services WHERE id=?",(sid,)).fetchone()
++ # Persist absolute targets before contacting the VPN so retries cannot extend twice.
++ data=json.loads(old["data"]) if old else {"uuid":str(uuid.uuid4()),"password":secrets.token_urlsafe(24),"subId":secrets.token_urlsafe(18)}
++ if not o["error"].startswith("target:"):
++  target=max(now(),old["expires"] if old and o["renew_id"] else 0)+p["days"]*86400
++  data["expires"]=target
++  data["totalGB"]=int(data.get("totalGB",0))+p["gb"]*1024**3 if old else p["gb"]*1024**3
++  c.execute("UPDATE orders SET error=? WHERE id=?",("target:"+json.dumps(data),o["id"]));c.commit()
++ else:data=json.loads(o["error"][7:]);target=data["expires"]
++ if p["protocol"]=="xray":
++  api=Panel()
++  try:current=api.call("/panel/api/clients/get/"+name)
++  except ValueError:current=None
++  client={"email":name,"id":data["uuid"],"password":data["password"],"auth":data["password"],"security":"auto","flow":"","subId":data["subId"],"enable":True,"expiryTime":target*1000,"totalGB":data["totalGB"],"tgId":uid,"limitIp":0,"comment":"Masiha sales"}
++  if current:api.call("/panel/api/clients/update/"+name,client)
++  else:api.call("/panel/api/clients/add",{"client":client,"inboundIds":json.loads(p["inbounds"])})
++  check=api.call("/panel/api/clients/get/"+name)
++  if not set(json.loads(p["inbounds"])).issubset(set(check["inboundIds"])):raise ValueError("اتصال به همه اینباندها کامل نشده")
++  data["subscription"]=[subscription_url(data["subId"])]
++  data["links"]=api.call("/panel/api/clients/links/"+name)
++ else:
++  exists=any(u["username"]==name for u in vpn({"protocol":p["protocol"],"action":"list"})["users"])
++  vpn({"protocol":p["protocol"],"action":"update" if exists else "create","username":name,"password":data["password"] if p["protocol"]=="openconnect" else "","enabled":True,"expires":target})
++ c.execute("INSERT OR REPLACE INTO services VALUES(?,?,?,?,?,?,?,0)",(sid,uid,p["protocol"],name,o["plan"],target,json.dumps(data)))
++ c.execute("UPDATE orders SET status='fulfilled',error='' WHERE id=?",(o["id"],))
++ s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
++ if s["referrals"] and u["referrer"] and o["price"]:
++  money(c,u["referrer"],o["price"]*s["commission"]//100,"commission",o["id"]+":commission")
++ enqueue(c,uid,"اشتراک آماده است. از «سرویس‌های من» دریافت کنید.",[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
++ for admin in s["admins"]+([s["report_channel"]] if s["report_channel"] else []):enqueue(c,admin,"سفارش "+o["id"]+" تحویل شد؛ مبلغ "+str(o["price"])+" تومان.",key=o["id"]+":admin:"+str(admin))
++def admin(req):
++ with conn() as c:
++  c.execute("BEGIN IMMEDIATE")
++  a=req.get("action");s=settings(c)
++  if a=="get":
++   safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"])
++   return {"settings":safe,"plans":[dict(r) for r in c.execute("SELECT * FROM plans ORDER BY id DESC")],"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0]}
++  if a=="settings":return save_settings(c,req["values"])
++  if a=="test":
++   me=tg(s,"getMe",{});hook=tg(s,"getWebhookInfo",{})
++   if hook.get("url"):raise ValueError("این ربات webhook فعال دارد؛ ابتدا اتصال قبلی آن را قطع کنید")
++   put(c,"bot_username",me["username"]);return {"username":me["username"]}
++  if a=="inbounds":return inbound_list()
++  if a=="plan":
++   p=req["values"];proto=p["protocol"]
++   if proto not in ("xray","openvpn","openconnect"):raise ValueError("پروتکل نامعتبر")
++   ids=p.get("inbounds",[])
++   if not isinstance(ids,list):raise ValueError("اینباند نامعتبر")
++   ids=[integer(i,1) for i in ids]
++   gb=integer(p.get("gb",0),0,100000)
++   if proto!="xray" and gb:raise ValueError("محدودیت حجمی برای OpenVPN/OpenConnect هنوز پیاده نشده؛ حجم را صفر بگذارید")
++   if proto=="xray":
++    available={i["id"] for i in inbound_list() if i["enable"] and i["protocol"] in ("vless","vmess","trojan","shadowsocks","hysteria","tuic")}
++    if not ids or not set(ids)<=available:raise ValueError("اینباند فعال و پشتیبانی‌شده انتخاب کنید")
++   name=text(p["name"],100)
++   if not name:raise ValueError("نام پلن لازم است")
++   values=(name,text(p.get("category","عمومی"),100),proto,integer(p["price"]),integer(p["days"],1,3650),gb,json.dumps(ids),integer(p.get("capacity",0)),int(bool(p.get("active",True))))
++   if p.get("id"):c.execute("UPDATE plans SET name=?,category=?,protocol=?,price=?,days=?,gb=?,inbounds=?,capacity=?,active=? WHERE id=?",(*values,integer(p["id"],1)))
++   else:c.execute("INSERT INTO plans(name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(?,?,?,?,?,?,?,?,?)",values)
++  elif a=="user":
++   uid=integer(req["id"],1)
++   c.execute("UPDATE users SET blocked=?,reseller=? WHERE id=?",(int(bool(req.get("blocked"))),int(bool(req.get("reseller"))),uid))
++  elif a=="credit":
++   money(c,integer(req["id"],1),integer(req["amount"],-10**12),text(req.get("reason","admin")),text(req["reference"],100))
++  elif a=="topup":
++   r=c.execute("SELECT * FROM topups WHERE id=?",(integer(req["id"],1),)).fetchone()
++   if not r or r["status"]!="pending":raise ValueError("این درخواست قبلاً رسیدگی شده")
++   ok=req.get("approve") is True
++   if ok:money(c,r["user_id"],r["amount"],"topup","topup:"+str(r["id"]))
++   c.execute("UPDATE topups SET status=? WHERE id=?",("approved" if ok else "rejected",r["id"]))
++   enqueue(c,r["user_id"],"درخواست شارژ "+("تأیید" if ok else "رد")+" شد.")
++  elif a=="coupon":
++   v=req["values"];code=text(v["code"],40).upper()
++   if not re.fullmatch("[A-Z0-9_-]{3,40}",code):raise ValueError("کد فقط حروف انگلیسی و عدد")
++   c.execute("INSERT INTO coupons VALUES(?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET percent=excluded.percent,credit=excluded.credit,uses=excluded.uses,expires=excluded.expires",(code,integer(v.get("percent",0),0,100),integer(v.get("credit",0)),integer(v["uses"],0),integer(v.get("expires",0))))
++  elif a=="reply":
++   r=c.execute("SELECT * FROM tickets WHERE id=?",(integer(req["id"],1),)).fetchone()
++   if not r:raise ValueError("تیکت یافت نشد")
++   body=text(req["body"]);c.execute("UPDATE tickets SET reply=? WHERE id=?",(body,r["id"]));enqueue(c,r["user_id"],"پاسخ پشتیبانی: "+body)
++  elif a=="broadcast":
++   body=text(req["body"]);ref=text(req["reference"],100)
++   for u in c.execute("SELECT id FROM users WHERE blocked=0"):enqueue(c,u["id"],body,key="broadcast:"+ref+":"+str(u["id"]))
++  elif a=="retry":
++   c.execute("UPDATE orders SET status='paid' WHERE id=? AND status='review'",(text(req["id"]),))
++  else:raise ValueError("عملیات نامعتبر")
++  audit(c,a,"admin operation")
++ return True
++def gateway(method,payload):
++ try:
++  req=urllib.request.Request("https://payment.zarinpal.com/pg/v4/payment/"+method+".json",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json","Accept":"application/json"})
++  with urllib.request.urlopen(req,timeout=20) as r:return json.load(r).get("data") or {}
++ except Exception:raise ValueError("ارتباط با درگاه ناموفق است")
++def payment_create(c,uid,amount,reference):
++ s=settings(c)
++ if not s["zarinpal"] or not s["wallet"]:raise ValueError("درگاه غیرفعال است")
++ amount=integer(amount,1000,10**9)
++ row=c.execute("SELECT * FROM payments WHERE id=?",(reference,)).fetchone()
++ if row:return row["authority"]
++ r=gateway("request",{"merchant_id":s["merchant_id"],"amount":amount*10,"currency":"IRR","description":"Masiha wallet "+reference,"callback_url":"https://xu.chanelchat.ir/xui/sales-payment"})
++ if r.get("code")!=100 or not re.fullmatch(r"[A-Za-z0-9]{10,100}",r.get("authority","")):raise ValueError("درگاه درخواست را نپذیرفت")
++ c.execute("INSERT INTO payments VALUES(?,?,?,?,?,?,?)",(reference,uid,amount,r["authority"],"pending","",now()))
++ return r["authority"]
++def payment_verify(authority):
++ if not isinstance(authority,str) or not re.fullmatch(r"[A-Za-z0-9]{10,100}",authority):raise ValueError("شناسه پرداخت معتبر نیست")
++ with conn() as c:
++  c.execute("BEGIN IMMEDIATE")
++  p=c.execute("SELECT * FROM payments WHERE authority=?",(authority,)).fetchone()
++  if not p:raise ValueError("پرداخت یافت نشد")
++  if p["status"]=="paid":return "این پرداخت قبلاً تأیید و موجودی شارژ شده است."
++  s=settings(c);r=gateway("verify",{"merchant_id":s["merchant_id"],"amount":p["amount"]*10,"authority":authority})
++  if r.get("code") not in (100,101):raise ValueError("پرداخت تأیید نشد؛ در صورت کسر وجه با پشتیبانی تماس بگیرید")
++  money(c,p["user_id"],p["amount"],"zarinpal","payment:"+p["id"])
++  c.execute("UPDATE payments SET status='paid',ref=? WHERE id=?",(str(r.get("ref_id","")),p["id"]))
++  enqueue(c,p["user_id"],"پرداخت تأیید شد و کیف پول "+str(p["amount"])+" تومان شارژ شد.",[[("خرید اشتراک","plans")]],"payment:"+p["id"]+":notice")
++  return "پرداخت تأیید شد. به ربات تلگرام برگردید و اشتراک را انتخاب کنید."
++if __name__=="__main__":
++ os.umask(0o077)
++ try:
++  request=json.loads(sys.stdin.read(65537))
++  result=payment_verify(request.get("authority")) if len(sys.argv)>1 and sys.argv[1]=="payment" else admin(request)
++  print(json.dumps({"success":True,"obj":result},ensure_ascii=False))
++ except Exception as e:print(json.dumps({"success":False,"msg":str(e)},ensure_ascii=False))
+diff --git a/extensions/masiha-sales/sales_worker.py b/extensions/masiha-sales/sales_worker.py
+new file mode 100644
+index 0000000..f4c1ce1
+--- /dev/null
++++ b/extensions/masiha-sales/sales_worker.py
+@@ -0,0 +1,304 @@
++#!/usr/bin/python3
++import base64, contextlib, fcntl, hashlib, io, json, os, secrets, time, urllib.request
++from sales import *
++def quote(c,uid,pid,renew="",quantity=1):
++ p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
++ if not p:raise ValueError("پلن موجود نیست")
++ ident=secrets.token_hex(12)
++ c.execute("INSERT INTO quotes VALUES(?,?,?,?,?,?)",(ident,uid,pid,json.dumps({"plan":dict(p),"quantity":quantity}),renew,now()+900))
++ return ident
++def purchase_quote(c,uid,ident):
++ q=c.execute("SELECT * FROM quotes WHERE id=? AND user_id=?",(ident,uid)).fetchone()
++ if not q or q["expires"]<now():raise ValueError("پیش‌فاکتور منقضی شده؛ پلن را دوباره انتخاب کنید")
++ p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(q["plan_id"],)).fetchone()
++ snapshot=json.loads(q["plan"]);quantity=snapshot.get("quantity",1);s=settings(c)
++ if not p or dict(p)!=snapshot["plan"]:raise ValueError("پلن تغییر کرده؛ قیمت و شرایط جدید را دوباره بررسی کنید")
++ if quantity>1:
++  user=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
++  if not s["bulk"] or not s["reseller"] or not user["reseller"]:raise ValueError("خرید انبوه نماینده غیرفعال است")
++ for index in range(quantity):order(c,uid,q["plan_id"],"quote:"+ident+":"+str(index),renew=q["renew_id"])
++ return ident
++def home(c,uid):
++ s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
++ rows=[]
++ if s["buy"]:rows.append([("خرید اشتراک","plans")])
++ rows.append([("سرویس‌های من","services")])
++ if s["wallet"]:rows.append([("کیف پول","wallet")])
++ if s["trial"]:rows.append([("تست رایگان","trial")])
++ if s["discounts"]:rows.append([("کد تخفیف / هدیه","coupon")])
++ if s["referrals"]:rows.append([("دعوت دوستان","referral")])
++ rows.append([("پشتیبانی","support")])
++ if uid in s["admins"]:rows.append([("مدیریت فروش","admin")])
++ enqueue(c,uid,s["welcome"]+"\nموجودی: "+str(u["balance"])+" تومان",rows)
++def deliver(c,uid,sid):
++ r=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(sid,uid)).fetchone()
++ if not r:raise ValueError("سرویس پیدا نشد")
++ d=json.loads(r["data"]);p=json.loads(r["plan"]);s=settings(c)
++ rows=[]
++ if s["renew"]:rows.append([("تمدید همین پلن","renew:"+sid)])
++ if s["rename"]:rows.append([("نام دلخواه","rename:"+sid)])
++ if s["self_delete"]:rows.append([("حذف اشتراک","deleteask:"+sid)])
++ if r["protocol"]=="xray":
++  if s["rotate"]:rows.append([("تعویض لینک و قطع لینک قبلی","rotateask:"+sid)])
++  details=Panel().call("/panel/api/clients/get/"+r["username"])
++  body=p["name"]+"\nمصرف: "+str(round(details["usedTraffic"]/1024**3,2))+" GB\nانقضا: "+time.strftime("%Y-%m-%d",time.gmtime(r["expires"]))
++  enqueue(c,uid,body,rows)
++  links=[subscription_url(d["subId"])]
++  if isinstance(links,dict):links=list(links.values())
++  if isinstance(links,str):links=[links]
++  for link in links:
++   if isinstance(link,str) and link.startswith("https://"):enqueue(c,uid,link,[[("QR ساب","qr:"+sid)]])
++  raw=Panel().call("/panel/api/clients/links/"+r["username"])
++  for link in (raw if isinstance(raw,list) else [raw]):
++   if isinstance(link,str):enqueue(c,uid,link)
++ else:
++  cfg=vpn({"action":"config","protocol":r["protocol"],"username":r["username"]})
++  if r["protocol"]=="openconnect":enqueue(c,uid,cfg["content"]+"\nPassword: "+d["password"],rows)
++  else:
++   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"file",json.dumps({"filename":cfg["filename"],"content":cfg["content"]})))
++   enqueue(c,uid,p["name"]+"\nفایل اختصاصی اتصال شما",rows)
++def handle(c,up):
++ s=settings(c);q=up.get("callback_query");m=q.get("message",{}) if q else up.get("message",{})
++ who=q.get("from",{}) if q else m.get("from",{});uid=who.get("id")
++ if not uid or m.get("chat",{}).get("type")!="private":return
++ body=m.get("text","");cmd=q.get("data","") if q else body
++ new=not c.execute("SELECT 1 FROM users WHERE id=?",(uid,)).fetchone()
++ ref=0
++ if new and body.startswith("/start ref_"):
++  with contextlib.suppress(Exception):
++   candidate=int(body.split("ref_")[1])
++   if candidate!=uid and c.execute("SELECT 1 FROM users WHERE id=?",(candidate,)).fetchone():ref=candidate
++ c.execute("INSERT OR IGNORE INTO users(id,name,referrer,created) VALUES(?,?,?,?)",(uid,who.get("first_name","")[:100],ref,now()))
++ u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
++ if u["blocked"]:return
++ if s["channel"] and uid not in s["admins"]:
++  member=tg(s,"getChatMember",{"chat_id":s["channel"],"user_id":uid})
++  if member["status"] not in ("creator","administrator","member") and not member.get("is_member"):
++   enqueue(c,uid,"ابتدا در کانال "+s["channel"]+" عضو شوید.",[[("بررسی عضویت","home")]]);return
++ if s["require_contact"] and not u["phone"] and uid not in s["admins"]:
++  contact=m.get("contact",{})
++  if contact.get("user_id")==uid:c.execute("UPDATE users SET phone=? WHERE id=?",(contact["phone_number"],uid))
++  else:
++   payload={"chat_id":uid,"text":"شماره تماس متعلق به حساب خودتان را ارسال کنید.","reply_markup":{"keyboard":[[{"text":"ارسال شماره من","request_contact":True}]],"resize_keyboard":True,"one_time_keyboard":True}}
++   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"sendMessage",json.dumps(payload)));return
++ if new and s["new_user_notice"]:
++  for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
++ if not q and not body.startswith("/start") and u["state"]:
++  state=u["state"]
++  if (state=="transfer" and not s["transfer"]) or (state=="coupon" and not s["discounts"]) or ((state=="topup" or state.startswith("receipt:")) and (not s["wallet"] or not s["card"])):raise ValueError("این امکان غیرفعال شده است")
++  if state.startswith("rename:"):
++   if not s["rename"]:raise ValueError("تغییر نام غیرفعال")
++   sid=state.split(":")[1];r=c.execute("SELECT * FROM services WHERE id=? AND user_id=?",(sid,uid)).fetchone()
++   if not r:raise ValueError("سرویس پیدا نشد")
++   data=json.loads(r["data"]);data["label"]=text(body,80)
++   c.execute("UPDATE services SET data=? WHERE id=?",(json.dumps(data),sid));c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
++   enqueue(c,uid,"نام نمایشی ثبت شد.");return
++  if state=="online":
++   authority=payment_create(c,uid,integer(int(body),1000,10**9),"tg:"+str(up["update_id"]))
++   c.execute("UPDATE users SET state=\'\' WHERE id=?",(uid,))
++   enqueue(c,uid,"لینک پرداخت امن زرین‌پال:\nhttps://payment.zarinpal.com/pg/StartPay/"+authority+"\nپس از پرداخت به همین ربات برگردید.");return
++  if state=="topup":
++   amount=integer(int(body),1000,10**9)
++   c.execute("UPDATE users SET state=? WHERE id=?",("receipt:"+str(amount),uid))
++   enqueue(c,uid,"رسید پرداخت را به صورت تصویر یا متن ارسال کنید.\n"+s["card"]);return
++  if state.startswith("receipt:"):
++   receipt="photo:"+m["photo"][-1]["file_id"] if m.get("photo") else text(body,2000)
++   if not receipt:raise ValueError("رسید ارسال نشده")
++   amount=int(state.split(":")[1])
++   ident=c.execute("INSERT INTO topups(user_id,amount,receipt,created) VALUES(?,?,?,?)",(uid,amount,receipt,now())).lastrowid
++   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
++   enqueue(c,uid,"رسید ثبت شد؛ پس از تأیید مدیر موجودی شارژ می‌شود.")
++   for aid in s["admins"]:
++    enqueue(c,aid,"رسید شماره "+str(ident)+"؛ کاربر "+str(uid)+"؛ مبلغ "+str(amount)+" تومان",[[("تأیید","approve:"+str(ident)),("رد","reject:"+str(ident))]])
++    if receipt.startswith("photo:"):
++     c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),aid,"sendPhoto",json.dumps({"chat_id":aid,"photo":receipt[6:]})))
++    else:enqueue(c,aid,receipt)
++   return
++  if state=="coupon":
++   code=text(body,40).upper();cp=c.execute("SELECT * FROM coupons WHERE code=? AND uses>0 AND (expires=0 OR expires>?)",(code,now())).fetchone()
++   if not cp or c.execute("SELECT 1 FROM redeemed WHERE code=? AND user_id=?",(code,uid)).fetchone():raise ValueError("کد نامعتبر یا مصرف‌شده")
++   if cp["credit"]:
++    money(c,uid,cp["credit"],"gift","gift:"+code+":"+str(uid))
++    c.execute("INSERT INTO redeemed VALUES(?,?)",(code,uid));c.execute("UPDATE coupons SET uses=uses-1 WHERE code=?",(code,))
++    c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
++   else:c.execute("UPDATE users SET state=? WHERE id=?",("coupon:"+code,uid))
++   enqueue(c,uid,"کد ثبت شد.",[[("خرید","plans")]]);return
++  if state=="support":
++   c.execute("INSERT INTO tickets(user_id,body,created) VALUES(?,?,?)",(uid,text(body,3000),now()))
++   c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,"پیام پشتیبانی ثبت شد.");return
++  if state=="transfer":
++   target,amount=map(int,body.split());integer(target,1);integer(amount,1,10**9)
++   if target==uid:raise ValueError("گیرنده باید متفاوت باشد")
++   ref="transfer:"+str(up["update_id"])
++   money(c,uid,-amount,"transfer",ref+":out");money(c,target,amount,"transfer",ref+":in")
++   c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,"انتقال انجام شد.");enqueue(c,target,"اعتبار دریافتی: "+str(amount)+" تومان");return
++ if cmd.startswith("/start") or cmd=="home":home(c,uid)
++ elif cmd=="plans":
++  rows=[[ (p["category"]+" / "+p["name"]+" — "+str(p["price"])+" تومان","choose:"+str(p["id"])) ] for p in c.execute("SELECT * FROM plans WHERE active=1 LIMIT 70")]
++  enqueue(c,uid,"پلن موردنظر را انتخاب کنید." if rows else "فعلاً پلنی برای فروش وجود ندارد.",rows)
++ elif cmd.startswith("bulk:"):
++  if not s["bulk"] or not s["reseller"] or not u["reseller"]:raise ValueError("دسترسی نماینده لازم است")
++  _,pid,qty=cmd.split(":");qty=integer(int(qty),2,20);pid=int(pid)
++  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
++  if not p:raise ValueError("پلن یافت نشد")
++  price=p["price"]*(100-s["reseller_discount"])//100
++  enqueue(c,uid,"خرید "+str(qty)+" اشتراک؛ جمع پیش از کد تخفیف "+str(price*qty)+" تومان.",[[("تأیید خرید انبوه","buy:"+quote(c,uid,pid,quantity=qty))]])
++ elif cmd.startswith("rename:"):
++  if not s["rename"]:raise ValueError("تغییر نام غیرفعال")
++  sid=cmd.split(":")[1]
++  if not c.execute("SELECT 1 FROM services WHERE id=? AND user_id=?",(sid,uid)).fetchone():raise ValueError("سرویس یافت نشد")
++  c.execute("UPDATE users SET state=? WHERE id=?",(cmd,uid));enqueue(c,uid,"نام دلخواه سرویس را ارسال کنید.")
++ elif cmd.startswith("choose:"):
++  pid=int(cmd.split(":")[1]);p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
++  if not p:raise ValueError("پلن یافت نشد")
++  enqueue(c,uid,p["name"]+"\nمدت: "+str(p["days"])+" روز\nحجم: "+(str(p["gb"])+" GB" if p["gb"] else "نامحدود")+"\nقیمت: "+str(p["price"])+" تومان",[[("تأیید خرید از کیف پول","buy:"+quote(c,uid,pid))]])
++  if s["bulk"] and s["reseller"] and u["reseller"]:enqueue(c,uid,"خرید انبوه نماینده",[[("۵ اشتراک","bulk:"+str(pid)+":5"),("۱۰ اشتراک","bulk:"+str(pid)+":10")]])
++ elif cmd.startswith("buy:"):
++  purchase_quote(c,uid,cmd.split(":")[1]);enqueue(c,uid,"سفارش ثبت شد؛ در حال ساخت اشتراک.")
++ elif cmd=="trial":
++  order(c,uid,s["trial_plan"],"trial:"+str(uid),trial=True);enqueue(c,uid,"درخواست تست ثبت شد.")
++ elif cmd=="services":
++  rows=[[(json.loads(r["data"]).get("label",json.loads(r["plan"])["name"])+" / "+r["username"],"service:"+r["id"])] for r in c.execute("SELECT * FROM services WHERE user_id=? AND deleted=0 ORDER BY expires DESC LIMIT 70",(uid,))]
++  enqueue(c,uid,"سرویس‌های شما" if rows else "هنوز سرویسی ندارید.",rows)
++ elif cmd.startswith("service:"):deliver(c,uid,cmd.split(":")[1])
++ elif cmd.startswith("renew:"):
++  sid=cmd.split(":")[1];r=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(sid,uid)).fetchone()
++  if not r:raise ValueError("سرویس پیدا نشد")
++  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(json.loads(r["plan"])["id"],)).fetchone()
++  if not p:raise ValueError("پلن تمدید فعال نیست")
++  enqueue(c,uid,"تمدید: "+str(p["days"])+" روز؛ قیمت "+str(p["price"])+" تومان.",[[("تأیید تمدید","renewok:"+quote(c,uid,p["id"],sid))]])
++ elif cmd.startswith("renewok:"):
++  purchase_quote(c,uid,cmd.split(":")[1]);enqueue(c,uid,"تمدید ثبت شد.")
++ elif cmd=="wallet":
++  if not s["wallet"]:raise ValueError("کیف پول غیرفعال")
++  rows=[]
++  if s["card"]:rows.append([("شارژ با کارت‌به‌کارت","topup")])
++  if s["zarinpal"]:rows.append([("پرداخت آنلاین زرین‌پال","online")])
++  if s["transfer"]:rows.append([("انتقال موجودی","transfer")])
++  enqueue(c,uid,"موجودی: "+str(u["balance"])+" تومان",rows)
++ elif cmd=="online":
++  if not s["zarinpal"] or not s["wallet"]:raise ValueError("درگاه غیرفعال")
++  c.execute("UPDATE users SET state=\'online\' WHERE id=?",(uid,));enqueue(c,uid,"مبلغ شارژ به تومان را وارد کنید.")
++ elif cmd in ("topup","transfer","coupon","support"):
++  if cmd=="topup" and (not s["wallet"] or not s["card"]):raise ValueError("پرداخت دستی فعال نیست")
++  if cmd=="transfer" and not s["transfer"]:raise ValueError("انتقال غیرفعال")
++  if cmd=="coupon" and not s["discounts"]:raise ValueError("کد تخفیف غیرفعال")
++  c.execute("UPDATE users SET state=? WHERE id=?",(cmd,uid))
++  enqueue(c,uid,{"topup":"مبلغ شارژ به تومان را وارد کنید.","transfer":"آیدی عددی گیرنده و مبلغ تومان را با فاصله ارسال کنید.","coupon":"کد تخفیف یا هدیه را بفرستید.","support":s["support"]}[cmd])
++ elif cmd=="referral":
++  if not s["referrals"]:raise ValueError("زیرمجموعه غیرفعال")
++  enqueue(c,uid,"لینک دعوت شما:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+str(uid)+"\nکمیسیون: "+str(s["commission"])+"٪")
++ elif cmd=="admin":
++  if uid not in s["admins"]:raise ValueError("دسترسی مدیر لازم است")
++  enqueue(c,uid,"مدیریت کامل فروش:\nhttps://xu.chanelchat.ir/xui/panel/sales-bot\nرسیدهای در انتظار:")
++  for r in c.execute("SELECT * FROM topups WHERE status='pending' LIMIT 30"):
++   enqueue(c,uid,str(r["id"])+" — "+str(r["amount"])+" تومان",[[("تأیید","approve:"+str(r["id"])),("رد","reject:"+str(r["id"]))]])
++ elif cmd.startswith(("approve:","reject:")):
++  if uid not in s["admins"]:raise ValueError("دسترسی مدیر لازم است")
++  ident=int(cmd.split(":")[1]);r=c.execute("SELECT * FROM topups WHERE id=?",(ident,)).fetchone()
++  if not r or r["status"]!="pending":raise ValueError("قبلاً رسیدگی شده")
++  ok=cmd.startswith("approve:")
++  if ok:money(c,r["user_id"],r["amount"],"topup","topup:"+str(ident))
++  c.execute("UPDATE topups SET status=? WHERE id=?",("approved" if ok else "rejected",ident))
++  enqueue(c,r["user_id"],"درخواست شارژ "+("تأیید" if ok else "رد")+" شد.");enqueue(c,uid,"ثبت شد.")
++ elif cmd.startswith("rotateask:"):
++  if not s["rotate"]:raise ValueError("تعویض لینک غیرفعال")
++  enqueue(c,uid,"لینک‌ها و اطلاعات اتصال قبلی از کار می‌افتند. ادامه؟",[[("تأیید تعویض","rotate:"+cmd.split(":")[1])]])
++ elif cmd.startswith("rotate:"):
++  if not s["rotate"]:raise ValueError("تعویض لینک غیرفعال")
++  sid=cmd.split(":")[1];r=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND protocol='xray' AND deleted=0",(sid,uid)).fetchone()
++  if not r:raise ValueError("سرویس یافت نشد")
++  api=Panel();current=api.call("/panel/api/clients/get/"+r["username"]);client={k:v for k,v in current["client"].items() if k in ("email","security","flow","limitIp","totalGB","expiryTime","enable","tgId","subId","comment","group","reset","limitHwid")};data=json.loads(r["data"])
++  data.update(uuid=str(uuid.uuid4()),password=secrets.token_urlsafe(24),subId=secrets.token_urlsafe(18))
++  client.update(id=data["uuid"],password=data["password"],auth=data["password"],subId=data["subId"])
++  api.call("/panel/api/clients/update/"+r["username"],client)
++  data["subscription"]=[];data["links"]=[]
++  c.execute("UPDATE services SET data=? WHERE id=?",(json.dumps(data),sid))
++  enqueue(c,uid,"اطلاعات قبلی باطل شد. لینک جدید را دریافت کنید.",[[("دریافت","service:"+sid)]])
++ elif cmd.startswith("qr:"):
++  r=c.execute("SELECT * FROM services WHERE id=? AND user_id=?",(cmd.split(":")[1],uid)).fetchone()
++  if not r:raise ValueError("سرویس یافت نشد")
++  links=[subscription_url(json.loads(r["data"])["subId"])]
++  if isinstance(links,dict):links=list(links.values())
++  if isinstance(links,str):links=[links]
++  link=next((x for x in links if isinstance(x,str) and x.startswith("https://")),"")
++  if not link:raise ValueError("ساب موجود نیست")
++  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"qr",json.dumps({"text":link})))
++ elif cmd.startswith("deleteask:"):
++  if not s["self_delete"]:raise ValueError("حذف غیرفعال")
++  enqueue(c,uid,"اشتراک بدون بازگشت وجه حذف شود؟",[[("بله، حذف شود","delete:"+cmd.split(":")[1])]])
++ elif cmd.startswith("delete:"):
++  if not s["self_delete"]:raise ValueError("حذف غیرفعال")
++  sid=cmd.split(":")[1];r=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(sid,uid)).fetchone()
++  if not r:raise ValueError("سرویس یافت نشد")
++  if r["protocol"]=="xray":Panel().call("/panel/api/clients/del/"+r["username"],{})
++  else:vpn({"action":"delete","protocol":r["protocol"],"username":r["username"]})
++  c.execute("UPDATE services SET deleted=1 WHERE id=?",(sid,));enqueue(c,uid,"حذف شد.")
++ else:home(c,uid)
++def upload(s,chat,filename,content,photo=False):
++ boundary="Masiha"+secrets.token_hex(12);field="photo" if photo else "document"
++ body=("--"+boundary+'\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n'+str(chat)+"\r\n--"+boundary+'\r\nContent-Disposition: form-data; name="'+field+'"; filename="'+filename+'"\r\nContent-Type: application/octet-stream\r\n\r\n').encode()+content+("\r\n--"+boundary+"--\r\n").encode()
++ req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+("/sendPhoto" if photo else "/sendDocument"),data=body,headers={"Content-Type":"multipart/form-data; boundary="+boundary})
++ with urllib.request.urlopen(req,timeout=35) as r:
++  if not json.load(r).get("ok"):raise ValueError("upload failed")
++def tick():
++ with conn() as c:
++  s=settings(c);put(c,"heartbeat",now());c.commit()
++  if not s["enabled"]:return
++  if not s.get("bot_username"):
++   me=tg(s,"getMe",{});put(c,"bot_username",me["username"]);c.commit()
++  updates=tg(s,"getUpdates",{"offset":s.get("offset",0),"timeout":1,"limit":20,"allowed_updates":["message","callback_query"]})
++  for up in updates:
++   if c.execute("SELECT 1 FROM updates WHERE id=?",(up["update_id"],)).fetchone():continue
++   try:
++    c.execute("BEGIN IMMEDIATE");handle(c,up)
++    c.execute("INSERT INTO updates VALUES(?,?)",(up["update_id"],now()));put(c,"offset",up["update_id"]+1);c.commit()
++   except Exception as e:
++    c.rollback()
++    m=up.get("message") or up.get("callback_query",{}).get("message",{})
++    if m.get("chat",{}).get("type")=="private":enqueue(c,m["chat"]["id"],str(e) if isinstance(e,ValueError) else "عملیات ناموفق بود؛ دوباره تلاش کنید.")
++    c.execute("INSERT OR IGNORE INTO updates VALUES(?,?)",(up["update_id"],now()));put(c,"offset",up["update_id"]+1);c.commit()
++   if up.get("callback_query"):
++    with contextlib.suppress(Exception):tg(s,"answerCallbackQuery",{"callback_query_id":up["callback_query"]["id"]})
++  for o in c.execute("SELECT * FROM orders WHERE status='paid' LIMIT 5").fetchall():
++   try:provision(c,o);c.commit()
++   except Exception:
++    c.rollback();c.execute("UPDATE orders SET status='review' WHERE id=?",(o["id"],))
++    for aid in s["admins"]:enqueue(c,aid,"سفارش "+o["id"]+" نیاز به بررسی دارد. موجودی مجدد کسر نمی‌شود.")
++    c.commit()
++  if s["notifications"]:
++   for r in c.execute("SELECT * FROM services WHERE deleted=0 AND expires BETWEEN ? AND ?",(now(),now()+s["warning_days"]*86400)).fetchall():
++    enqueue(c,r["user_id"],"اشتراک شما نزدیک انقضاست.",[[("مشاهده / تمدید","service:"+r["id"])]],"expiry:"+r["id"]+":"+str(r["expires"]))
++   if now()-s.get("usage_checked",0)>300:
++    for r in c.execute("SELECT * FROM services WHERE deleted=0 AND protocol='xray' ORDER BY id LIMIT 100").fetchall():
++     try:
++      info=Panel().call("/panel/api/clients/get/"+r["username"]);total=info["client"]["totalGB"];used=info["usedTraffic"]
++      if total and total-used<=total*s["usage_warning_percent"]//100:
++       enqueue(c,r["user_id"],"حجم اشتراک شما رو به اتمام است.",[[("مشاهده / تمدید","service:"+r["id"])]],"usage:"+r["id"]+":"+str(total))
++     except Exception:pass
++    put(c,"usage_checked",now())
++   c.commit()
++  for row in c.execute("SELECT * FROM outbox WHERE done=0 AND next_try<=? ORDER BY id LIMIT 15",(now(),)).fetchall():
++   try:
++    p=json.loads(row["payload"])
++    if row["method"]=="file":upload(s,row["chat"],p["filename"],p["content"].encode())
++    elif row["method"]=="qr":
++     import qrcode
++     buf=io.BytesIO();qrcode.make(p["text"]).save(buf,format="PNG");upload(s,row["chat"],"subscription.png",buf.getvalue(),True)
++    else:tg(s,row["method"],p)
++    c.execute("UPDATE outbox SET done=1,payload='{}' WHERE id=?",(row["id"],))
++   except Exception:
++    c.execute("UPDATE outbox SET attempts=attempts+1,next_try=?,done=? WHERE id=?",(now()+min(3600,2**min(row["attempts"]+1,11)),int(row["attempts"]>=15),row["id"]))
++   c.commit();time.sleep(.08)
++  put(c,"last_error","");c.commit()
++def main():
++ os.umask(0o077);BASE.mkdir(parents=True,exist_ok=True,mode=0o700)
++ with open(BASE/"worker.lock","a") as lock:
++  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
++  except BlockingIOError:return
++  while True:
++   try:tick()
++   except Exception:
++    with conn() as c:put(c,"last_error","ارتباط یا پردازش ربات ناموفق است؛ اتصال تلگرام و تنظیمات را بررسی کنید")
++   time.sleep(3)
++if __name__=="__main__":main()
+diff --git a/extensions/masiha-sales/test_sales.py b/extensions/masiha-sales/test_sales.py
+new file mode 100644
+index 0000000..d9aec52
+--- /dev/null
++++ b/extensions/masiha-sales/test_sales.py
+@@ -0,0 +1,77 @@
++import os,tempfile,sys,json,unittest,secrets
++from unittest.mock import patch
++tmp=tempfile.TemporaryDirectory(prefix="sales-test-")
++os.environ["MASIHA_SALES_DIR"]=tmp.name
++sys.path.insert(0,"/opt/masiha-vpn-extension")
++import sales as s
++import sales_worker as w
++class Commerce(unittest.TestCase):
++ def setUp(self):
++  with s.conn() as c:
++   for t in ("settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes"):c.execute("DELETE FROM "+t)
++   c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
++   c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
++   c.execute("INSERT INTO plans VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
++ def test_duplicate_purchase_and_balance(self):
++  with s.conn() as c:
++   a=s.order(c,101,1,"same");b=s.order(c,101,1,"same")
++   self.assertEqual(a,b);self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],90000)
++   self.assertEqual(c.execute("SELECT COUNT(*) FROM orders").fetchone()[0],1)
++ def test_insufficient_funds_rolls_back(self):
++  with self.assertRaises(ValueError):
++   with s.conn() as c:s.order(c,102,1,"no-funds")
++  with s.conn() as c:self.assertEqual(c.execute("SELECT COUNT(*) FROM orders").fetchone()[0],0)
++ def test_transfer_failure_rolls_back(self):
++  with self.assertRaises(ValueError):
++   with s.conn() as c:
++    s.money(c,101,-5000,"transfer","a");s.money(c,999,5000,"transfer","b")
++  with s.conn() as c:self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],100000)
++ def test_admin_callback_not_forgeable(self):
++  with s.conn() as c:
++   s.put(c,"admins",[102]);c.execute("INSERT INTO topups(user_id,amount,receipt,created) VALUES(101,20000,'receipt',0)")
++   with self.assertRaises(ValueError):w.handle(c,{"update_id":1,"callback_query":{"from":{"id":101},"message":{"chat":{"id":101,"type":"private"}},"data":"approve:1"}})
++ def test_secret_not_returned(self):
++  s.admin({"action":"settings","values":{"admins":[101],"token":"123456:"+("x"*30)}})
++  result=s.admin({"action":"get"})
++  self.assertTrue(result["settings"]["token_set"]);self.assertNotIn("token",result["settings"])
++ def test_trial_once(self):
++  with s.conn() as c:
++   s.put(c,"trial",True);s.put(c,"trial_plan",1);s.order(c,101,1,"trial",trial=True)
++   with self.assertRaises(ValueError):s.order(c,101,1,"trial2",trial=True)
++ def test_provision_retry_target_stable(self):
++  with s.conn() as c:
++   s.order(c,101,1,"retry");c.commit()
++   def fake(req):
++    if req["action"]=="list":return {"users":[]}
++    return {}
++   with patch.object(s,"vpn",side_effect=fake):
++    s.provision(c,c.execute("SELECT * FROM orders").fetchone());c.commit()
++   self.assertEqual(c.execute("SELECT status FROM orders").fetchone()[0],"fulfilled")
++   self.assertEqual(c.execute("SELECT COUNT(*) FROM services").fetchone()[0],1)
++ def test_quote_changes_rejected(self):
++  with s.conn() as c:
++   q=w.quote(c,101,1);c.execute("UPDATE plans SET price=20000 WHERE id=1")
++   with self.assertRaises(ValueError):w.purchase_quote(c,101,q)
++ def test_bulk_atomic(self):
++  with s.conn() as c:
++   s.put(c,"bulk",True);s.put(c,"reseller",True);s.put(c,"reseller_discount",10)
++   c.execute("UPDATE users SET reseller=1 WHERE id=101")
++   q=w.quote(c,101,1,quantity=5);w.purchase_quote(c,101,q);w.purchase_quote(c,101,q)
++   self.assertEqual(c.execute("SELECT COUNT(*) FROM orders").fetchone()[0],5)
++   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],55000)
++ def test_gateway_verification_exact_amount_once(self):
++  with s.conn() as c:
++   c.execute("INSERT INTO payments VALUES('p1',101,1234,'A12345678901234567890','pending','',0)")
++  with patch.object(s,"gateway",return_value={"code":100,"ref_id":55}) as gateway:
++   s.payment_verify("A12345678901234567890")
++   self.assertEqual(gateway.call_args.args[1]["amount"],12340)
++   s.payment_verify("A12345678901234567890")
++   self.assertEqual(gateway.call_count,1)
++  with s.conn() as c:self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],101234)
++ def test_fake_payment_never_credits(self):
++  with self.assertRaises(ValueError):s.payment_verify("A00000000000000000000")
++  with s.conn() as c:self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],100000)
++ def test_ownership(self):
++  with s.conn() as c:
++   with self.assertRaises(ValueError):w.deliver(c,102,"nonexistent")
++if __name__=="__main__":unittest.main()
+diff --git a/extensions/masiha-vpn/check_live.py b/extensions/masiha-vpn/check_live.py
+new file mode 100644
+index 0000000..557378e
+--- /dev/null
++++ b/extensions/masiha-vpn/check_live.py
+@@ -0,0 +1,34 @@
++import json,urllib.request,http.cookiejar,shlex,secrets
++from pathlib import Path
++env={}
++for line in Path('/etc/x-ui/install-result.env').read_text().splitlines():
++ if '=' in line and not line.startswith('#'):
++  k,v=line.split('=',1)
++  env[k]=shlex.split(v)[0] if shlex.split(v) else ''
++base='https://xu.chanelchat.ir/xui'
++client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
++def req(path,body=None,token=None):
++ headers={'X-Requested-With':'XMLHttpRequest'}
++ if body is not None:headers['Content-Type']='application/json'
++ if token:headers['X-CSRF-Token']=token
++ with client.open(urllib.request.Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers=headers),timeout=65) as r:
++  return r.read()
++token=json.loads(req('/csrf-token'))['obj']
++assert json.loads(req('/login',{'username':env['XUI_USERNAME'],'password':env['XUI_PASSWORD']},token))['success']
++token=json.loads(req('/panel/csrf-token'))['obj']
++def api(protocol,action,**kw):
++ r=json.loads(req('/panel/api/masiha-vpn',dict(protocol=protocol,action=action,**kw),token))
++ assert r['success'],r.get('msg')
++ return r.get('obj')
++for protocol in ('openvpn','openconnect'):
++ assert api(protocol,'list')['status']['service']=='active'
++ assert b'<html' in req('/panel/'+protocol)
++ user='qa-live-'+secrets.token_hex(4)
++ try:
++  api(protocol,'create',username=user,password=secrets.token_urlsafe(24),enabled=True,expires=0)
++  profile=api(protocol,'config',username=user)
++  assert 'xu.chanelchat.ir' in profile['content']
++  api(protocol,'update',username=user,enabled=False,expires=0)
++ finally:api(protocol,'delete',username=user)
++ print(protocol,'HTTPS authenticated create/export/disable/delete PASS')
++print('Live panel validation PASS')
+diff --git a/extensions/masiha-vpn/manager.py b/extensions/masiha-vpn/manager.py
+new file mode 100644
+index 0000000..910c7cd
+--- /dev/null
++++ b/extensions/masiha-vpn/manager.py
+@@ -0,0 +1,157 @@
++#!/usr/bin/python3
++"""Local-only VPN administration helper. Called by the authenticated 3x-ui API."""
++import base64, contextlib, datetime, fcntl, json, os, re, secrets, socket, sqlite3, subprocess, sys, time
++from pathlib import Path
++BASE=Path("/etc/masiha-vpn-extension")
++PKI=Path("/etc/openvpn/masiha/pki")
++EASY="/usr/share/easy-rsa/easyrsa"
++UNITS={"openvpn":"openvpn-server@masiha.service","openconnect":"ocserv.service"}
++HOST="xu.chanelchat.ir"
++def run(args, data=None, check=True):
++    p=subprocess.run(args,input=data,text=True,capture_output=True,timeout=45)
++    if check and p.returncode: raise RuntimeError("Command failed: "+Path(args[0]).name+" "+p.stderr[-700:])
++    return p.stdout
++def easy(*args):
++    env=os.environ.copy()
++    env.update(EASYRSA_PKI=str(PKI),EASYRSA_BATCH="1",EASYRSA_ALGO="ec",EASYRSA_CURVE="prime256v1",EASYRSA_CERT_EXPIRE="3650",EASYRSA_CRL_DAYS="3650")
++    p=subprocess.run([EASY,*args],env=env,text=True,capture_output=True,timeout=45)
++    if p.returncode: raise RuntimeError("Certificate operation failed: "+p.stderr[-500:])
++def db():
++    c=sqlite3.connect(BASE/"users.db",timeout=20)
++    c.row_factory=sqlite3.Row
++    c.execute("CREATE TABLE IF NOT EXISTS users (protocol TEXT, username TEXT, enabled INTEGER, expires INTEGER, cert TEXT, created INTEGER, PRIMARY KEY(protocol,username))")
++    c.execute("CREATE TABLE IF NOT EXISTS audit (at INTEGER, action TEXT, protocol TEXT, username TEXT)")
++    return c
++def valid_user(s):
++    if not isinstance(s,str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{2,39}",s): raise ValueError("نام کاربری باید ۳ تا ۴۰ حرف انگلیسی، عدد، خط تیره یا زیرخط باشد")
++    return s
++def management(command):
++    with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
++        s.settimeout(3); s.connect("/etc/openvpn/masiha/management.sock")
++        s.recv(4096); s.sendall((command+"\nquit\n").encode())
++        chunks=[]
++        while True:
++            b=s.recv(65536)
++            if not b: break
++            chunks.append(b)
++        return b"".join(chunks).decode(errors="replace")
++def disconnect(protocol,row):
++    if protocol=="openvpn":
++        with contextlib.suppress(Exception): management("kill "+row["cert"])
++    else:
++        run(["occtl","disconnect","user",row["username"]],check=False)
++def cert_new(name):
++    cn="mv-"+name+"-"+secrets.token_hex(5)
++    easy("build-client-full",cn,"nopass")
++    return cn
++def revoke(cn):
++    if cn:
++        index=(PKI/"index.txt").read_text()
++        if any(line.startswith("V\t") and ("/CN="+cn) in line for line in index.splitlines()):
++            easy("revoke",cn); easy("gen-crl")
++            os.chmod(PKI/"crl.pem",0o644)
++def public(row):
++    d=dict(row); d.pop("cert",None)
++    d["enabled"]=bool(d["enabled"])
++    d["expired"]=bool(d["expires"] and d["expires"]<=int(time.time()))
++    return d
++def status(protocol):
++    p=subprocess.run(["systemctl","is-active",UNITS[protocol]],text=True,capture_output=True)
++    online=[]
++    try:
++        if protocol=="openvpn":
++            for l in management("status 3").splitlines():
++                a=l.split("\t")
++                if a[0]=="CLIENT_LIST" and len(a)>5: online.append({"certificate":a[1],"address":a[2],"bytes_in":a[5],"bytes_out":a[6]})
++        else:
++            raw=run(["occtl","--json","show","users"])
++            data=json.loads(raw)
++            online=data if isinstance(data,list) else data.get("Users",[])
++    except Exception: pass
++    return {"service":p.stdout.strip(),"online":online,"endpoint":HOST+(":1194" if protocol=="openvpn" else ":4443")}
++def expire(c):
++    for row in c.execute("SELECT * FROM users WHERE enabled=1 AND expires>0 AND expires<=?",(int(time.time()),)).fetchall():
++        disable(c,row)
++def disable(c,row):
++    if row["protocol"]=="openvpn": revoke(row["cert"])
++    else: run(["ocpasswd","-c","/etc/ocserv/masiha.passwd","-l",row["username"]])
++    c.execute("UPDATE users SET enabled=0 WHERE protocol=? AND username=?",(row["protocol"],row["username"]))
++    c.commit()
++    disconnect(row["protocol"],row)
++def profile(row):
++    if not row["enabled"] or row["expires"] and row["expires"]<=int(time.time()): raise ValueError("کاربر غیرفعال یا منقضی است")
++    if row["protocol"]=="openconnect":
++        return {"filename":row["username"]+"-openconnect.txt","content":"Server: https://"+HOST+":4443\nUsername: "+row["username"]+"\nProtocol: AnyConnect / OpenConnect\nPassword: use the password set by the administrator\n"}
++    cn=row["cert"]
++    cert=(PKI/"issued"/(cn+".crt")).read_text()
++    cert=cert[cert.index("-----BEGIN CERTIFICATE-----"):]
++    parts=["client","dev tun","proto udp","remote "+HOST+" 1194","resolv-retry infinite","nobind","persist-key","persist-tun","remote-cert-tls server","verify-x509-name masiha-openvpn name","tls-version-min 1.2","data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305","auth SHA256","verb 3"]
++    for tag,path in [("ca",PKI/"ca.crt"),("key",PKI/"private"/(cn+".key")),("tls-crypt",Path("/etc/openvpn/masiha/tls-crypt.key"))]:
++        parts.extend(["<"+tag+">",path.read_text().strip(),"</"+tag+">"])
++    parts.extend(["<cert>",cert.strip(),"</cert>"])
++    return {"filename":row["username"]+".ovpn","content":"\n".join(parts)+"\n"}
++def handle(req):
++    protocol=req.get("protocol")
++    if protocol not in UNITS: raise ValueError("Invalid protocol")
++    action=req.get("action")
++    with db() as c:
++        expire(c)
++        if action=="list":
++            return {"users":[public(x) for x in c.execute("SELECT * FROM users WHERE protocol=? ORDER BY created DESC",(protocol,))],"status":status(protocol)}
++        if action=="service":
++            op=req.get("operation")
++            if op not in ("start","stop","restart"): raise ValueError("Invalid service operation")
++            run(["systemctl",op,UNITS[protocol]])
++            return status(protocol)
++        name=valid_user(req.get("username"))
++        row=c.execute("SELECT * FROM users WHERE protocol=? AND username=?",(protocol,name)).fetchone()
++        if action=="config":
++            if row is None: raise ValueError("کاربر پیدا نشد")
++            return profile(row)
++        if action not in ("create","update","delete"): raise ValueError("Invalid action")
++        if action=="create" and row is not None: raise ValueError("این نام کاربری قبلاً ثبت شده")
++        if action!="create" and row is None: raise ValueError("کاربر پیدا نشد")
++        if action=="delete":
++            disable(c,row)
++            if protocol=="openconnect": run(["ocpasswd","-c","/etc/ocserv/masiha.passwd","-d",name])
++            c.execute("DELETE FROM users WHERE protocol=? AND username=?",(protocol,name))
++        else:
++            expires=req.get("expires",0)
++            if type(expires) is not int or expires<0 or expires>4102444800: raise ValueError("تاریخ انقضا نامعتبر است")
++            enabled=req.get("enabled",True)
++            if type(enabled) is not bool: raise ValueError("وضعیت نامعتبر است")
++            if enabled and expires and expires<=int(time.time()): raise ValueError("تاریخ انقضا باید در آینده باشد")
++            password=req.get("password","")
++            if not isinstance(password,str): raise ValueError("رمز نامعتبر است")
++            if protocol=="openconnect" and (action=="create" or password):
++                if len(password)<12 or len(password)>128 or any(x in password for x in "\r\n\x00"):
++                    raise ValueError("رمز باید ۱۲ تا ۱۲۸ کاراکتر و بدون خط جدید باشد")
++            cn=row["cert"] if row else ""
++            if protocol=="openvpn" and enabled and (not row or not row["enabled"]):
++                cn=cert_new(name)
++            if protocol=="openconnect":
++                if action=="create" or password: run(["ocpasswd","-c","/etc/ocserv/masiha.passwd",name],password+"\n"+password+"\n")
++                run(["ocpasswd","-c","/etc/ocserv/masiha.passwd","-u" if enabled else "-l",name])
++            if action=="create":
++                c.execute("INSERT INTO users VALUES(?,?,?,?,?,?)",(protocol,name,int(enabled),expires,cn,int(time.time())))
++            else:
++                c.execute("UPDATE users SET enabled=?,expires=?,cert=? WHERE protocol=? AND username=?",(int(enabled),expires,cn,protocol,name))
++            c.commit()
++            if not enabled:
++                current=c.execute("SELECT * FROM users WHERE protocol=? AND username=?",(protocol,name)).fetchone()
++                disable(c,current)
++        c.execute("INSERT INTO audit VALUES(?,?,?,?)",(int(time.time()),action,protocol,name))
++        c.commit()
++        return {"username":name}
++def main():
++    BASE.mkdir(mode=0o700,parents=True,exist_ok=True)
++    os.umask(0o077)
++    with open(BASE/"manager.lock","a") as lock:
++        fcntl.flock(lock,fcntl.LOCK_EX)
++        if len(sys.argv)>1 and sys.argv[1]=="expire":
++            with db() as c: expire(c)
++            return
++        req=json.loads(sys.stdin.read(65537))
++        try: print(json.dumps({"success":True,"obj":handle(req)},ensure_ascii=False))
++        except Exception as e: print(json.dumps({"success":False,"msg":str(e)},ensure_ascii=False))
++if __name__=="__main__": main()
+diff --git a/extensions/masiha-vpn/masiha-vpn-extension.service b/extensions/masiha-vpn/masiha-vpn-extension.service
+new file mode 100644
+index 0000000..0f418f4
+--- /dev/null
++++ b/extensions/masiha-vpn/masiha-vpn-extension.service
+@@ -0,0 +1,17 @@
++[Unit]
++Description=Masiha VPN expiration and network manager
++After=network-online.target
++Wants=network-online.target
++Before=openvpn-server@masiha.service ocserv.service
++
++[Service]
++Type=simple
++ExecStart=/usr/bin/python3 /opt/masiha-vpn-extension/worker.py
++Restart=on-failure
++RestartSec=5
++UMask=0077
++PrivateTmp=true
++ProtectHome=true
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/extensions/masiha-vpn/ocserv.conf b/extensions/masiha-vpn/ocserv.conf
+new file mode 100644
+index 0000000..04c937a
+--- /dev/null
++++ b/extensions/masiha-vpn/ocserv.conf
+@@ -0,0 +1,35 @@
++auth = "plain[passwd=/etc/ocserv/masiha.passwd]"
++tcp-port = 4443
++udp-port = 4443
++run-as-user = nobody
++run-as-group = nogroup
++socket-file = /run/ocserv-socket
++server-cert = /etc/letsencrypt/live/xu.chanelchat.ir/fullchain.pem
++server-key = /etc/letsencrypt/live/xu.chanelchat.ir/privkey.pem
++isolate-workers = true
++max-clients = 128
++max-same-clients = 2
++keepalive = 300
++dpd = 90
++mobile-dpd = 1800
++switch-to-tcp-timeout = 25
++try-mtu-discovery = true
++auth-timeout = 60
++min-reauth-time = 300
++max-ban-score = 50
++ban-reset-time = 300
++cookie-timeout = 300
++deny-roaming = false
++rekey-time = 172800
++rekey-method = ssl
++use-occtl = true
++pid-file = /run/ocserv.pid
++device = vpns
++ipv4-network = 10.82.0.0
++ipv4-netmask = 255.255.255.0
++dns = 1.1.1.1
++dns = 8.8.8.8
++route = default
++tunnel-all-dns = true
++cisco-client-compat = true
++tls-priorities = "NORMAL:%SERVER_PRECEDENCE:-VERS-SSL3.0:-VERS-TLS1.0:-VERS-TLS1.1"
+diff --git a/extensions/masiha-vpn/openvpn.conf b/extensions/masiha-vpn/openvpn.conf
+new file mode 100644
+index 0000000..cf0d614
+--- /dev/null
++++ b/extensions/masiha-vpn/openvpn.conf
+@@ -0,0 +1,28 @@
++port 1194
++proto udp
++multihome
++dev tun-masiha
++topology subnet
++server 10.81.0.0 255.255.255.0
++ca /etc/openvpn/masiha/pki/ca.crt
++cert /etc/openvpn/masiha/pki/issued/masiha-openvpn.crt
++key /etc/openvpn/masiha/pki/private/masiha-openvpn.key
++dh none
++ecdh-curve prime256v1
++tls-crypt /etc/openvpn/masiha/tls-crypt.key
++crl-verify /etc/openvpn/masiha/pki/crl.pem
++tls-version-min 1.2
++data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305
++auth SHA256
++allow-compression no
++push "redirect-gateway def1 bypass-dhcp"
++push "dhcp-option DNS 1.1.1.1"
++push "dhcp-option DNS 8.8.8.8"
++keepalive 10 120
++persist-key
++persist-tun
++explicit-exit-notify 1
++management /etc/openvpn/masiha/management.sock unix
++management-client-user root
++management-client-group root
++verb 3
+diff --git a/extensions/masiha-vpn/smoke_panel.py b/extensions/masiha-vpn/smoke_panel.py
+new file mode 100644
+index 0000000..724a5a8
+--- /dev/null
++++ b/extensions/masiha-vpn/smoke_panel.py
+@@ -0,0 +1,66 @@
++import os,sys,json,subprocess,time,tempfile,sqlite3,secrets,urllib.request,urllib.error,http.cookiejar
++from pathlib import Path
++binary=os.environ.get("MASIHA_TEST_BINARY","/opt/masiha-vpn-extension/x-ui-candidate")
++with tempfile.TemporaryDirectory(prefix="smoke-",dir="/opt/masiha-vpn-extension") as tmp:
++ env=os.environ.copy()
++ env.update(XUI_DB_FOLDER=tmp,XUI_BIN_FOLDER=tmp+"/bin",XUI_LOG_FOLDER=tmp+"/logs")
++ Path(tmp+"/bin").mkdir()
++ password=secrets.token_urlsafe(24)
++ subprocess.run([binary,"setting","-username","qatest","-password",password,"-port","62054","-listenIP","127.0.0.1","-webBasePath","/qa/"],env=env,capture_output=True,check=True)
++ with sqlite3.connect(tmp+"/x-ui.db") as c:
++  for k,v in {"subEnable":"false","subJsonEnable":"false","subClashEnable":"false"}.items():
++   c.execute("DELETE FROM settings WHERE key=?",(k,))
++   c.execute("INSERT INTO settings(key,value) VALUES(?,?)",(k,v))
++ with open(tmp+"/panel.log","w") as log:
++  p=subprocess.Popen([binary],env=env,cwd=tmp,stdout=log,stderr=log)
++  try:
++   base="http://127.0.0.1:62054/qa"
++   jar=http.cookiejar.CookieJar()
++   client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
++   def req(path,body=None,token=None,opener=client):
++    headers={"X-Requested-With":"XMLHttpRequest"}
++    if body is not None:headers["Content-Type"]="application/json"
++    if token:headers["X-CSRF-Token"]=token
++    r=urllib.request.Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers=headers)
++    try:
++     with opener.open(r,timeout=15) as response:return response.status,response.read()
++    except urllib.error.HTTPError as e:return e.code,e.read()
++   for _ in range(30):
++    try:
++     code,raw=req("/csrf-token")
++     if code==200:break
++    except OSError:pass
++    time.sleep(1)
++   token=json.loads(raw)["obj"]
++   code,raw=req("/login",{"username":"qatest","password":password},token)
++   assert json.loads(raw)["success"],raw
++   print("Admin login PASS")
++   _,raw=req("/panel/csrf-token");token=json.loads(raw)["obj"]
++   payload={"protocol":"openvpn","action":"list"}
++   code,raw=req("/panel/api/masiha-vpn",payload,opener=urllib.request.build_opener())
++   assert code in (401,403,404),(code,raw)
++   print("Unauthenticated rejected PASS")
++   code,raw=req("/panel/api/masiha-vpn",payload)
++   assert code==403,(code,raw)
++   print("Missing CSRF rejected PASS")
++   for proto in ("openvpn","openconnect"):
++    code,raw=req("/panel/api/masiha-vpn",{"protocol":proto,"action":"list"},token)
++    assert code==200 and json.loads(raw)["success"],(code,raw)
++    assert json.loads(raw)["obj"]["status"]["service"]=="active"
++    code,raw=req("/panel/"+proto)
++    assert code==200 and b"<html" in raw
++    print(proto,"authenticated API and page PASS")
++   code,raw=req("/panel/api/sales-bot",{"action":"get"},token)
++   assert code==200 and json.loads(raw)["success"]
++   assert "token" not in json.loads(raw)["obj"]["settings"]
++   code,raw=req("/panel/api/sales-bot",{"action":"get"})
++   assert code==403
++   code,raw=req("/panel/api/sales-bot",{"action":"get"},opener=urllib.request.build_opener())
++   assert code in (401,403,404)
++   code,raw=req("/panel/sales-bot")
++   assert code==200 and b"<html" in raw
++   print("Sales API authentication, CSRF, token masking and page PASS")
++  finally:
++   p.terminate()
++   try:p.wait(timeout=15)
++   except subprocess.TimeoutExpired:p.kill();p.wait()
+diff --git a/extensions/masiha-vpn/test-oc-route.sh b/extensions/masiha-vpn/test-oc-route.sh
+new file mode 100755
+index 0000000..b2cea9d
+--- /dev/null
++++ b/extensions/masiha-vpn/test-oc-route.sh
+@@ -0,0 +1,8 @@
++#!/bin/sh
++set -eu
++if [ "$reason" = connect ]; then
++ ip address add "$INTERNAL_IP4_ADDRESS/32" dev "$TUNDEV"
++ ip link set "$TUNDEV" up mtu 1300
++ ip route replace 91.107.136.84/32 via 10.203.71.1 dev mvqatest
++ ip route replace default dev "$TUNDEV"
++fi
+diff --git a/extensions/masiha-vpn/test_tunnels.py b/extensions/masiha-vpn/test_tunnels.py
+new file mode 100644
+index 0000000..3f1a13a
+--- /dev/null
++++ b/extensions/masiha-vpn/test_tunnels.py
+@@ -0,0 +1,58 @@
++import subprocess,sys,json,secrets,time,os,tempfile
++from pathlib import Path
++def run(*a,check=True):
++ return subprocess.run(a,text=True,capture_output=True,check=check,timeout=20)
++def call(proto,act,**kw):
++ p=run("python3","/opt/masiha-vpn-extension/manager.py") if False else subprocess.run(["python3","/opt/masiha-vpn-extension/manager.py"],input=json.dumps(dict(protocol=proto,action=act,**kw)),text=True,capture_output=True,timeout=60)
++ r=json.loads(p.stdout)
++ assert r["success"],r
++ return r["obj"]
++for proto in ("openvpn","openconnect"):
++ ns="mvqa-"+secrets.token_hex(3); name="qatunnel-"+secrets.token_hex(3); password=secrets.token_urlsafe(20)
++ proc=None;created=False
++ with tempfile.TemporaryDirectory(prefix="test-",dir="/opt/masiha-vpn-extension") as tmp:
++  try:
++   run("ip","netns","add",ns)
++   run("ip","link","add","mvqahost","type","veth","peer","name","mvqatest")
++   run("ip","link","set","mvqatest","netns",ns)
++   run("ip","addr","add","10.203.71.1/30","dev","mvqahost")
++   run("ip","link","set","mvqahost","up")
++   run("ip","netns","exec",ns,"ip","addr","add","10.203.71.2/30","dev","mvqatest")
++   run("ip","netns","exec",ns,"ip","link","set","mvqatest","up")
++   run("ip","netns","exec",ns,"ip","link","set","lo","up")
++   run("ip","netns","exec",ns,"ip","route","add","default","via","10.203.71.1")
++   call(proto,"create",username=name,password=password,enabled=True,expires=int(time.time())+600);created=True
++   logfile=Path(tmp)/"client.log"
++   with logfile.open("w") as log:
++    if proto=="openvpn":
++     cfg=call(proto,"config",username=name)["content"].replace("remote xu.chanelchat.ir 1194","remote 91.107.136.84 1194")
++     path=Path(tmp)/"test.ovpn";path.write_text(cfg);path.chmod(0o600)
++     args=["openvpn","--config",str(path),"--auth-nocache"]
++    else:
++     args=["openconnect","--protocol=anyconnect","--resolve=xu.chanelchat.ir:91.107.136.84","--user="+name,"--passwd-on-stdin","--non-inter","--script=/opt/masiha-vpn-extension/test-oc-route.sh","https://xu.chanelchat.ir:4443"]
++    proc=subprocess.Popen(["ip","netns","exec",ns,*args],stdin=subprocess.PIPE,stdout=log,stderr=log,text=True)
++    if proto=="openconnect": proc.stdin.write(password+"\n");proc.stdin.flush()
++    connected=False
++    for _ in range(25):
++     time.sleep(1)
++     txt=logfile.read_text()
++     if ("Initialization Sequence Completed" in txt if proto=="openvpn" else "Configured as" in txt):
++      connected=True;break
++     if proc.poll() is not None: break
++    if not connected:
++     print(txt[-3000:]);raise RuntimeError(proto+" tunnel did not connect")
++    print(proto,"TLS/auth/tunnel PASS",flush=True)
++    p=run("ip","netns","exec",ns,"curl","--max-time","15","-fsS","https://1.1.1.1/cdn-cgi/trace")
++    assert "ip=91.107.136.84" in p.stdout,p.stdout
++    print(proto,"Internet through VPN PASS",flush=True)
++    call(proto,"update",username=name,enabled=False,expires=0)
++    time.sleep(2)
++    print(proto,"disabled after active connection; online count",len(call(proto,"list")["status"]["online"]),flush=True)
++  finally:
++   if proc and proc.poll() is None:
++    proc.terminate()
++    try:proc.wait(timeout=8)
++    except subprocess.TimeoutExpired:proc.kill();proc.wait()
++   if created:call(proto,"delete",username=name)
++   run("ip","link","delete","mvqahost",check=False)
++   run("ip","netns","delete",ns,check=False)
+diff --git a/extensions/masiha-vpn/worker.py b/extensions/masiha-vpn/worker.py
+new file mode 100644
+index 0000000..b715f5b
+--- /dev/null
++++ b/extensions/masiha-vpn/worker.py
+@@ -0,0 +1,39 @@
++#!/usr/bin/python3
++import hashlib, subprocess, time
++from pathlib import Path
++from manager import BASE, db, expire
++import fcntl
++
++def ensure(args):
++    check=args.copy()
++    check[check.index("-A")]="-C"
++    if subprocess.run(check,capture_output=True).returncode:
++        subprocess.run(args,check=True)
++def network():
++    subprocess.run(["sysctl","-w","net.ipv4.ip_forward=1"],check=True)
++    for iface,subnet in [("tun-masiha","10.81.0.0/24"),("vpns+","10.82.0.0/24")]:
++        ensure(["iptables","-w","-t","nat","-A","POSTROUTING","-s",subnet,"-o","eth0","-j","MASQUERADE"])
++        ensure(["iptables","-w","-A","FORWARD","-i",iface,"-s",subnet,"-o","eth0","-j","ACCEPT"])
++        ensure(["iptables","-w","-A","FORWARD","-i","eth0","-o",iface,"-d",subnet,"-m","conntrack","--ctstate","RELATED,ESTABLISHED","-j","ACCEPT"])
++def main():
++    BASE.mkdir(mode=0o700,parents=True,exist_ok=True)
++    network()
++    cert=Path("/etc/letsencrypt/live/xu.chanelchat.ir/fullchain.pem")
++    last=hashlib.sha256(cert.read_bytes()).digest()
++    sales_process = None
++    while True:
++        try:
++            if sales_process is None or sales_process.poll() is not None:
++                sales_process = subprocess.Popen(["/usr/bin/python3", "/opt/masiha-vpn-extension/sales_worker.py"])
++            with open(BASE/"manager.lock","a") as lock:
++                fcntl.flock(lock,fcntl.LOCK_EX)
++                with db() as c: expire(c)
++            current=hashlib.sha256(cert.read_bytes()).digest()
++            if current!=last:
++                subprocess.run(["ocserv","-t","-c","/etc/ocserv/ocserv.conf"],check=True)
++                subprocess.run(["systemctl","reload","ocserv"],check=True)
++                last=current
++        except Exception as e:
++            print("Reconciliation error:",str(e),flush=True)
++        time.sleep(15)
++if __name__=="__main__": main()
+diff --git a/frontend/src/layouts/AppSidebar.tsx b/frontend/src/layouts/AppSidebar.tsx
+index a86dfe1..4b75a6e 100644
+--- a/frontend/src/layouts/AppSidebar.tsx
++++ b/frontend/src/layouts/AppSidebar.tsx
+@@ -224,6 +224,9 @@ export default function AppSidebar() {
+       { key: '/', icon: 'dashboard', title: t('menu.dashboard') },
+       { key: '/inbounds', icon: 'inbound', title: t('menu.inbounds') },
+       { key: '/clients', icon: 'team', title: t('menu.clients') },
++      { key: '/sales-bot', icon: 'setting', title: 'تنظیمات ربات فروش' },
++      { key: '/openvpn', icon: 'inbound', title: 'OpenVPN' },
++      { key: '/openconnect', icon: 'inbound', title: 'OpenConnect' },
+       { key: '/groups', icon: 'groups', title: t('menu.groups') },
+       { key: '/nodes', icon: 'cluster', title: t('menu.nodes') },
+       { key: '/hosts', icon: 'hosts', title: t('menu.hosts') },
+diff --git a/frontend/src/pages/sub/SubPage.tsx b/frontend/src/pages/sub/SubPage.tsx
+index 82acec7..74577d4 100644
+--- a/frontend/src/pages/sub/SubPage.tsx
++++ b/frontend/src/pages/sub/SubPage.tsx
+@@ -14,6 +14,7 @@ import { ClipboardManager, LanguageManager } from '@/utils';
+ import { setMessageInstance } from '@/utils/messageBus';
+ import { useTheme } from '@/hooks/useTheme';
+ import SubAppsTab from './SubAppsTab';
++import SubVPNProfiles from './SubVPNProfiles';
+ import SubConfigsTab from './SubConfigsTab';
+ import SubHeader from './SubHeader';
+ import SubHero from './SubHero';
+@@ -142,6 +143,7 @@ export default function SubPage() {
+         children: <SubConfigsTab links={links} onCopy={copy} />,
+       });
+     }
++    if (subUrl) items.push({key:'vpn-profiles', label:'OpenVPN / OpenConnect', children:<SubVPNProfiles subUrl={subUrl} />});
+     return items;
+   }, [t, copy, open]);
+ 
+diff --git a/frontend/src/pages/sub/SubVPNProfiles.tsx b/frontend/src/pages/sub/SubVPNProfiles.tsx
+new file mode 100644
+index 0000000..5181f3d
+--- /dev/null
++++ b/frontend/src/pages/sub/SubVPNProfiles.tsx
+@@ -0,0 +1,38 @@
++import { useEffect, useState } from 'react';
++import { Alert, Button, Card, Empty, Popover, QRCode, Space, Spin, Typography } from 'antd';
++import { ClipboardManager } from '@/utils';
++type Profile = { protocol: string; clientId: number; label: string; filename: string; content: string; expires: number };
++export default function SubVPNProfiles({ subUrl }: { subUrl: string }) {
++ const [items,setItems]=useState<Profile[]>([]);
++ const [loading,setLoading]=useState(true);
++ const [error,setError]=useState(false);
++ const [attempt,setAttempt]=useState(0);
++ const base=subUrl.replace(/\/$/,'')+'/vpn';
++ useEffect(()=>{
++  const ctrl=new AbortController();setLoading(true);setError(false);
++  fetch(base,{cache:'no-store',signal:ctrl.signal}).then(r=>{if(!r.ok)throw new Error();return r.json();})
++   .then(data=>{if(!Array.isArray(data))throw new Error();setItems(data);})
++   .catch(e=>{if(e.name!=='AbortError')setError(true);}).finally(()=>{if(!ctrl.signal.aborted)setLoading(false);});
++  return ()=>ctrl.abort();
++ },[base,attempt]);
++ if(loading)return <Spin />;
++ if(error)return <Alert type="warning" title="دریافت فایل‌های VPN انجام نشد" action={<Button onClick={()=>setAttempt(n=>n+1)}>تلاش مجدد</Button>} />;
++ if(!items.length)return <Empty description="فایل فعالی موجود نیست؛ ساخت حساب جدید ممکن است چند لحظه زمان ببرد."><Button onClick={()=>setAttempt(n=>n+1)}>تازه‌سازی</Button></Empty>;
++ return <Space orientation="vertical" style={{width:'100%'}}>
++  <Alert type="info" title="حجم و تاریخ انقضا بین همه اتصال‌های این اشتراک مشترک است. فایل و رمز را فقط نزد خودتان نگه دارید." />
++  {items.map(p=>{
++   const url=base+'/'+p.clientId+'/'+p.protocol;
++   return <Card key={p.clientId+':'+p.protocol} title={p.protocol==='openvpn'?'OpenVPN':'OpenConnect / AnyConnect'} extra={p.label}>
++    {p.protocol==='openconnect' && <Typography.Paragraph><pre dir="ltr" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{p.content}</pre></Typography.Paragraph>}
++    <Space wrap>
++     <Button type="primary" href={url} download={p.filename}>دانلود فایل اتصال</Button>
++     <Button onClick={()=>ClipboardManager.copyText(p.protocol==='openconnect'?p.content:url)}>کپی {p.protocol==='openconnect'?'اطلاعات':'لینک دانلود'}</Button>
++     <Popover content={<QRCode value={url} />} trigger="click"><Button>QR لینک دانلود</Button></Popover>
++    </Space>
++    <Typography.Paragraph type="secondary" style={{marginTop:12}}>
++     {p.protocol==='openvpn'?'فایل ovpn را در OpenVPN Connect وارد کنید.':'آدرس سرور، نام کاربری و رمز را در OpenConnect یا AnyConnect وارد کنید.'}
++    </Typography.Paragraph>
++   </Card>;
++  })}
++ </Space>;
++}
+diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
+new file mode 100644
+index 0000000..f4e4386
+--- /dev/null
++++ b/frontend/src/pages/vpn/SalesBotPage.tsx
+@@ -0,0 +1,56 @@
++import {useEffect,useState} from 'react';
++import {Alert,App,Button,Card,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography} from 'antd';
++import {HttpUtil} from '@/utils';
++type Row=Record<string,any>;
++export default function SalesBotPage(){
++ const {message}=App.useApp();const [data,setData]=useState<Row>();const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [inbounds,setInbounds]=useState<Row[]>([]);
++ const [settings]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
++ const [planOpen,setPlanOpen]=useState(false);
++ const call=async(action:string,values:Row={})=>{const r=await HttpUtil.post('/panel/api/sales-bot',{action,...values},{headers:{'Content-Type':'application/json'},silent:true,timeout:65000});if(!r?.success)throw new Error(r?.msg||'عملیات ناموفق');return r.obj as any;};
++ const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:''});setError('');}catch(e){setError(String(e))}};
++ useEffect(()=>{void load();call('inbounds').then(setInbounds).catch(()=>{});},[]);
++ const run=async(action:string,values:Row={})=>{setBusy(true);try{const r=await call(action,values);message.success(action==='test'?'اتصال تأیید شد: @'+r.username:'ذخیره شد');await load();return true;}catch(e){message.error(String(e));return false;}finally{setBusy(false)}};
++ const switches:Record<string,string>={enabled:'فعال‌بودن ربات',buy:'فروش اشتراک',renew:'تمدید اشتراک',wallet:'کیف پول و شارژ',transfer:'انتقال اعتبار',trial:'تست رایگان یک‌بار برای هر کاربر',discounts:'کد تخفیف و هدیه',referrals:'زیرمجموعه و کمیسیون',reseller:'قیمت ویژه نمایندگان',notifications:'هشدار انقضا',require_contact:'دریافت شماره متعلق به حساب تلگرام',self_delete:'اجازه حذف اشتراک توسط مشتری',bulk:'خرید انبوه نمایندگان',rename:'نام دلخواه سرویس',rotate:'تعویض لینک و اطلاعات Xray',new_user_notice:'اعلان عضو جدید به مدیر',zarinpal:'پرداخت آنلاین زرین‌پال'};
++ const editPlan=(p?:Row)=>{plan.resetFields();plan.setFieldsValue(p?{...p,inbounds:JSON.parse(p.inbounds),active:!!p.active}:{protocol:'xray',category:'عمومی',price:0,days:30,gb:0,capacity:0,active:true,inbounds:[]});setPlanOpen(true)};
++ const table=(rows:Row[],columns:any[])=> <Table rowKey={(r)=>String(r.id??r.code)} dataSource={rows} columns={columns} pagination={{pageSize:15}} scroll={{x:900}}/>;
++ const base=[
++ {title:'شناسه',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'مبلغ (تومان)',dataIndex:'price'},{title:'وضعیت',dataIndex:'status'}];
++ return <div dir="rtl" style={{padding:24}}><Space orientation="vertical" style={{width:'100%'}} size="large">
++ <Typography.Title level={2}>تنظیمات ربات فروش</Typography.Title>
++ {error&&<Alert type="error" title={error}/>}
++ <Space><Tag color={data?.settings.enabled?'green':'default'}>{data?.settings.enabled?'فعال':'خاموش'}</Tag><Typography.Text>{data?.runtime.username?'@'+data.runtime.username:'توکن هنوز بررسی نشده'}</Typography.Text><Button onClick={()=>void load()}>به‌روزرسانی</Button></Space>
++ {data?.runtime.error&&<Alert type="warning" title={data.runtime.error}/>}
++ <Alert type="info" title="راه‌اندازی" description="توکن BotFather و آیدی عددی مدیر را ذخیره کنید، «بررسی اتصال» را بزنید، پلن و اطلاعات پرداخت را تنظیم کنید و سپس ربات را فعال کنید. ربات از polling استفاده می‌کند و نباید webhook یا پردازشگر دیگری به همین توکن متصل باشد."/>
++ <Tabs items={[
++ {key:'settings',label:'اتصال و امکانات',children:<Card><Form form={settings} layout="vertical" onFinish={v=>void run('settings',{values:{...v,admins:String(v.admins).split(/[,،\s]+/).filter(Boolean).map(Number)}})}>
++ <Form.Item label={'توکن ربات'+(data?.settings.token_set?' (ذخیره شده؛ خالی یعنی بدون تغییر)':'')} name="token"><Input.Password autoComplete="new-password" dir="ltr"/></Form.Item>
++ <Form.Item label="آیدی عددی مدیران (با ویرگول جدا کنید)" name="admins" rules={[{required:true}]}><Input dir="ltr"/></Form.Item>
++ <Form.Item label={'مرچنت زرین‌پال'+(data?.settings.merchant_set?' (ذخیره شده؛ خالی یعنی بدون تغییر)':'')} name="merchant_id"><Input.Password autoComplete="new-password" dir="ltr"/></Form.Item>
++ <Form.Item label="پیام خوش‌آمد" name="welcome"><Input.TextArea/></Form.Item>
++ <Form.Item label="متن راهنمای پشتیبانی" name="support"><Input.TextArea/></Form.Item>
++ <Form.Item label="شماره کارت، نام صاحب حساب و راهنمای پرداخت (خالی: کارت‌به‌کارت خاموش)" name="card"><Input.TextArea/></Form.Item>
++ <Form.Item label="کانال عضویت اجباری؛ مثال @channel (ربات باید مدیر کانال باشد)" name="channel"><Input dir="ltr"/></Form.Item>
++ {Object.entries(switches).map(([key,label])=><Form.Item key={key} label={label} name={key} valuePropName="checked"><Switch/></Form.Item>)}
++ <Form.Item label="کانال گزارش فروش؛ مثال @sales_channel" name="report_channel"><Input dir="ltr"/></Form.Item>
++ <Form.Item label="هشدار حجم باقی‌مانده (درصد، Xray)" name="usage_warning_percent"><InputNumber min={0} max={100}/></Form.Item>
++ <Form.Item label="درصد کمیسیون دعوت" name="commission"><InputNumber min={0} max={100}/></Form.Item>
++ <Form.Item label="درصد تخفیف نمایندگان" name="reseller_discount"><InputNumber min={0} max={100}/></Form.Item>
++ <Form.Item label="پلن تست" name="trial_plan"><Select options={(data?.plans||[]).map((p:Row)=>({value:p.id,label:p.name}))}/></Form.Item>
++ <Form.Item label="هشدار چند روز پیش از انقضا" name="warning_days"><InputNumber min={0} max={100}/></Form.Item>
++ <Space><Button type="primary" htmlType="submit" loading={busy}>ذخیره تنظیمات</Button><Button loading={busy} onClick={()=>void run('test')}>بررسی اتصال تلگرام</Button></Space>
++ </Form></Card>},
++ {key:'plans',label:'پلن‌ها و ظرفیت',children:<Space orientation="vertical" style={{width:'100%'}}><Button type="primary" onClick={()=>editPlan()}>ساخت پلن</Button>{table(data?.plans||[],[{title:'نام',dataIndex:'name'},{title:'دسته',dataIndex:'category'},{title:'سرویس',dataIndex:'protocol'},{title:'قیمت',dataIndex:'price'},{title:'روز',dataIndex:'days'},{title:'GB',dataIndex:'gb'},{title:'ظرفیت',dataIndex:'capacity'},{title:'فعال',render:(_:unknown,r:Row)=>r.active?'بله':'خیر'},{title:'عملیات',render:(_:unknown,r:Row)=><Button onClick={()=>editPlan(r)}>ویرایش</Button>}])}</Space>},
++ {key:'users',label:'کاربران و نمایندگان',children:table(data?.users||[],[{title:'آیدی',dataIndex:'id'},{title:'نام',dataIndex:'name'},{title:'موجودی تومان',dataIndex:'balance'},{title:'شماره',dataIndex:'phone'},{title:'مسدود',render:(_:unknown,r:Row)=><Switch checked={!!r.blocked} onChange={v=>void run('user',{id:r.id,blocked:v,reseller:!!r.reseller})}/>},{title:'نماینده',render:(_:unknown,r:Row)=><Switch checked={!!r.reseller} onChange={v=>void run('user',{id:r.id,blocked:!!r.blocked,reseller:v})}/>},{title:'اعتبار',render:(_:unknown,r:Row)=><Button onClick={()=>{setEntry('');setDialog({action:'credit',id:r.id,title:'افزایش یا کاهش موجودی به تومان (عدد منفی: کاهش)',reference:crypto.randomUUID()})}}>اصلاح موجودی</Button>}])},
++ {key:'payments',label:'رسیدهای پرداخت',children:table(data?.topups||[],[{title:'شماره',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'مبلغ',dataIndex:'amount'},{title:'رسید',render:(_:unknown,r:Row)=>r.receipt.startsWith('photo:')?'تصویر به ربات مدیر ارسال شده':r.receipt},{title:'وضعیت',dataIndex:'status'},{title:'تصمیم',render:(_:unknown,r:Row)=>r.status==='pending'?<Space><Popconfirm title="مبلغ و رسید را بررسی کرده‌اید؟" onConfirm={()=>run('topup',{id:r.id,approve:true})}><Button>تأیید و شارژ</Button></Popconfirm><Button danger onClick={()=>void run('topup',{id:r.id,approve:false})}>رد</Button></Space>:null}])},
++ {key:'orders',label:'سفارش‌ها و درآمد',children:<><Typography.Title level={4}>فروش تحویل‌شده: {data?.revenue||0} تومان</Typography.Title>{table(data?.orders||[],[...base,{title:'عملیات',render:(_:unknown,r:Row)=>r.status==='review'?<Button onClick={()=>void run('retry',{id:r.id})}>تلاش مجدد تحویل</Button>:null}])}</>},
++ {key:'coupons',label:'تخفیف و هدیه',children:<Space orientation="vertical" style={{width:'100%'}}><Form form={coupon} layout="inline" onFinish={v=>void run('coupon',{values:v})}><Form.Item name="code" rules={[{required:true}]}><Input placeholder="کد"/></Form.Item><Form.Item name="percent" initialValue={0}><InputNumber placeholder="درصد تخفیف" min={0} max={100}/></Form.Item><Form.Item name="credit" initialValue={0}><InputNumber placeholder="هدیه تومان" min={0}/></Form.Item><Form.Item name="uses" initialValue={1}><InputNumber placeholder="تعداد استفاده" min={0}/></Form.Item><Form.Item><Button htmlType="submit">ثبت</Button></Form.Item></Form>{table(data?.coupons||[],[{title:'کد',dataIndex:'code'},{title:'تخفیف ٪',dataIndex:'percent'},{title:'هدیه تومان',dataIndex:'credit'},{title:'استفاده باقی‌مانده',dataIndex:'uses'}])}</Space>},
++ {key:'support',label:'پشتیبانی',children:table(data?.tickets||[],[{title:'کاربر',dataIndex:'user_id'},{title:'پیام',dataIndex:'body'},{title:'پاسخ',dataIndex:'reply'},{title:'عملیات',render:(_:unknown,r:Row)=><Button onClick={()=>{setEntry('');setDialog({action:'reply',id:r.id,title:'پاسخ به کاربر'})}}>پاسخ</Button>}])},
++ {key:'messages',label:'پیام همگانی',children:<Card><Typography.Paragraph>پیام برای کاربران ثبت‌شده و غیرمسدود در صف ارسال قرار می‌گیرد.</Typography.Paragraph><Button onClick={()=>{setEntry('');setDialog({action:'broadcast',title:'متن پیام همگانی',reference:crypto.randomUUID()})}}>نوشتن پیام</Button></Card>},
++ {key:'ledger',label:'دفتر تراکنش',children:table(data?.ledger||[],[{title:'شناسه',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'تغییر موجودی',dataIndex:'amount'},{title:'علت',dataIndex:'reason'},{title:'مرجع',dataIndex:'reference'}])},
++ {key:'scope',label:'وضعیت امکانات',children:<Alert type="info" title="محدوده نسخه فعلی" description="خرید و تمدید، کیف پول، کارت‌به‌کارت با تأیید مدیر، اتصال زرین‌پال (نیازمند مرچنت و تست واقعی)، QR ساب Xray، تست، تخفیف و هدیه، کمیسیون دعوت، قیمت و خرید انبوه نماینده، نام دلخواه، تعویض لینک Xray، گزارش کانال، عضویت اجباری، دریافت شماره، پشتیبانی و پیام همگانی پیاده‌سازی شده‌اند. درگاه‌های نکست‌پی و رمزارزی، مهاجرت خودکار بین سرورها، واردکردن کانفیگ خارج از ربات، سهمیه حجمی OpenVPN/OpenConnect هنوز آماده نیستند. فروش Xray فعلاً روی اینباندهای موجود همین پنل است."/>}
++ ]}/>
++ </Space>
++ <Modal open={planOpen} title="پلن فروش" onCancel={()=>setPlanOpen(false)} confirmLoading={busy} onOk={async()=>{try{const v=await plan.validateFields();if(await run('plan',{values:v}))setPlanOpen(false)}catch{}}} okText="ذخیره" cancelText="انصراف"><Form form={plan} layout="vertical"><Form.Item name="id" hidden><InputNumber/></Form.Item><Form.Item name="name" label="نام پلن" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="category" label="دسته"><Input/></Form.Item><Form.Item name="protocol" label="سرویس"><Select options={['xray','openvpn','openconnect'].map(x=>({value:x,label:x}))}/></Form.Item><Form.Item name="inbounds" label="اینباندهای Xray"><Select mode="multiple" options={inbounds.filter(i=>i.enable&&['vless','vmess','trojan','shadowsocks','hysteria','tuic'].includes(i.protocol)).map(i=>({value:i.id,label:i.name+' / '+i.protocol}))}/></Form.Item><Form.Item name="price" label="قیمت تومان"><InputNumber min={0}/></Form.Item><Form.Item name="days" label="مدت روز"><InputNumber min={1}/></Form.Item><Form.Item name="gb" label="حجم GB؛ صفر نامحدود (فقط Xray)"><InputNumber min={0}/></Form.Item><Form.Item name="capacity" label="ظرفیت کل فروش؛ صفر نامحدود"><InputNumber min={0}/></Form.Item><Form.Item name="active" label="فعال" valuePropName="checked"><Switch/></Form.Item></Form></Modal>
++ <Modal open={!!dialog} title={dialog?.title} onCancel={()=>setDialog(undefined)} confirmLoading={busy} okText="تأیید" cancelText="انصراف" onOk={async()=>{if(dialog&&await run(dialog.action,{...dialog,...(dialog.action==='credit'?{amount:Number(entry),reason:'اصلاح مدیر'}:{body:entry})}))setDialog(undefined)}}><Input.TextArea value={entry} onChange={e=>setEntry(e.target.value)}/></Modal>
++ </div>;
++}
+diff --git a/frontend/src/pages/vpn/VPNPage.tsx b/frontend/src/pages/vpn/VPNPage.tsx
+new file mode 100644
+index 0000000..6747662
+--- /dev/null
++++ b/frontend/src/pages/vpn/VPNPage.tsx
+@@ -0,0 +1,97 @@
++import { useCallback, useEffect, useState } from 'react';
++import { Alert, App, Button, Card, DatePicker, Descriptions, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from 'antd';
++import dayjs from 'dayjs';
++import { HttpUtil } from '@/utils';
++
++type User = { username: string; enabled: boolean; expired: boolean; expires: number; created: number };
++type Data = { users: User[]; status: { service: string; endpoint: string; online: Record<string, unknown>[] } };
++type Protocol = 'openvpn' | 'openconnect';
++export default function VPNPage({ protocol }: { protocol: Protocol }) {
++ const { message } = App.useApp();
++ const [data,setData]=useState<Data>();
++ const [busy,setBusy]=useState(false);
++ const [error,setError]=useState('');
++ const [editing,setEditing]=useState<User|null|undefined>(undefined);
++ const [form]=Form.useForm();
++ const title=protocol==='openvpn'?'OpenVPN':'OpenConnect';
++ const call=useCallback(async (action: string, values: Record<string,unknown>={}) => {
++   const r=await HttpUtil.post('/panel/api/masiha-vpn',{protocol,action,...values},{headers:{'Content-Type':'application/json'},silent:true,timeout:65000});
++   if(!r?.success) throw new Error(r?.msg || 'عملیات انجام نشد');
++   return r.obj;
++ },[protocol]);
++ const reload=useCallback(async()=>{
++   try {
++    const result=await call('list') as Data;
++    if(!result || !Array.isArray(result.users) || !result.status || !Array.isArray(result.status.online)) throw new Error('پاسخ سرویس معتبر نیست؛ دوباره تلاش کنید');
++    setData(result); setError('');
++   }
++   catch(e) {setError(e instanceof Error?e.message:'خطای ارتباط');}
++ },[call]);
++ useEffect(()=>{setData(undefined);setEditing(undefined);void reload();const t=setInterval(()=>void reload(),15000);return()=>clearInterval(t)},[reload]);
++ const execute=async(action:string,values:Record<string,unknown>)=>{
++   setBusy(true);
++   try {await call(action,values);message.success('انجام شد');await reload();return true;}
++   catch(e){message.error(e instanceof Error?e.message:'خطای عملیات');return false}
++   finally{setBusy(false)}
++ };
++ const edit=(u:User|null)=>{
++   setEditing(u);form.resetFields();
++   form.setFieldsValue({username:u?.username,enabled:u?.enabled??true,expires:u?.expires?dayjs.unix(u.expires):undefined,password:''});
++ };
++ const save=async()=>{
++   try {
++    const v=await form.validateFields();
++    if(await execute(editing?'update':'create',{...v,expires:v.expires?v.expires.unix():0}))setEditing(undefined);
++   }catch{/* Form displays field validation. */}
++ };
++ const download=async(u:User)=>{
++  setBusy(true);
++  try{
++   const r=await call('config',{username:u.username}) as {filename:string;content:string};
++   const url=URL.createObjectURL(new Blob([r.content],{type:'text/plain;charset=utf-8'}));
++   const a=document.createElement('a');a.href=url;a.download=r.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
++  }catch(e){message.error(e instanceof Error?e.message:'خطای دریافت')}finally{setBusy(false)}
++ };
++ return <div dir="rtl" style={{padding:24}}>
++  <Space orientation="vertical" size="large" style={{width:'100%'}}>
++   <Typography.Title level={2}>{title}</Typography.Title>
++   {error&&<Alert type="error" showIcon title={error} action={<Button onClick={()=>void reload()}>تلاش مجدد</Button>}/>}
++   <Card>
++    <Descriptions items={[
++     {key:'s',label:'وضعیت سرویس',children:<Tag color={data?.status.service==='active'?'green':'red'}>{data?.status.service||'در حال بررسی'}</Tag>},
++     {key:'a',label:'آدرس اتصال',children:<Typography.Text copyable>{data?.status.endpoint}</Typography.Text>},
++     {key:'c',label:'تعداد کاربران',children:data?.users.length??'—'},
++     {key:'o',label:'اتصال‌های آنلاین',children:data?.status.online.length??'—'}
++    ]}/>
++    <Space wrap>
++     <Button type="primary" onClick={()=>edit(null)}>ساخت کاربر</Button>
++     <Button onClick={()=>void reload()}>به‌روزرسانی</Button>
++     <Button disabled={busy||data?.status.service==='active'} onClick={()=>void execute('service',{operation:'start'})}>شروع سرویس</Button>
++     <Popconfirm title="اتصال کاربران این سرویس موقتاً قطع می‌شود. ادامه می‌دهید؟" onConfirm={()=>execute('service',{operation:'restart'})}><Button disabled={busy}>راه‌اندازی مجدد</Button></Popconfirm>
++     <Popconfirm title="سرویس متوقف و کاربران آن قطع شوند؟" onConfirm={()=>execute('service',{operation:'stop'})}><Button danger disabled={busy}>توقف</Button></Popconfirm>
++    </Space>
++   </Card>
++   <Alert type="info" showIcon title={protocol==='openvpn'?'اتصال با فایل اختصاصی .ovpn':'اتصال با برنامه OpenConnect یا AnyConnect'}
++    description={protocol==='openvpn'?'پس از ساخت کاربر، فایل اتصال را دانلود و وارد برنامه OpenVPN کنید. هر فایل شامل کلید خصوصی همان کاربر است. پس از فعال‌سازی دوباره کاربر غیرفعال، فایل جدید دریافت کنید.':'آدرس سرور https://xu.chanelchat.ir:4443 است. نام کاربری و رمز تعیین‌شده را در برنامه وارد کنید. رمز ذخیره‌شده نمایش داده نمی‌شود؛ برای تغییر آن از ویرایش استفاده کنید.'}/>
++   <Table<User> rowKey="username" dataSource={data?.users||[]} loading={!data&&!error} scroll={{x:850}} pagination={{pageSize:10}} columns={[
++    {title:'نام کاربری',dataIndex:'username'},
++    {title:'وضعیت',render:(_,u)=><Tag color={u.enabled&&!u.expired?'green':'red'}>{u.expired?'منقضی':u.enabled?'فعال':'غیرفعال'}</Tag>},
++    {title:'انقضا',render:(_,u)=>u.expires?new Date(u.expires*1000).toLocaleString('fa-IR'):'بدون انقضا'},
++    {title:'عملیات',render:(_,u)=><Space wrap>
++      <Button onClick={()=>edit(u)}>ویرایش / تمدید</Button>
++      <Button disabled={busy||!u.enabled||u.expired} onClick={()=>void download(u)}>{protocol==='openvpn'?'دریافت .ovpn':'اطلاعات اتصال'}</Button>
++      <Popconfirm title="کاربر حذف و اتصال او قطع شود؟" onConfirm={()=>execute('delete',{username:u.username})}><Button danger disabled={busy}>حذف</Button></Popconfirm>
++    </Space>}
++   ]}/>
++   <Typography.Text type="secondary">کاربران این دو سرویس در همین بخش مدیریت می‌شوند. حجم و سابسکریپشن Xray با این حساب‌ها مشترک نیست. انقضا حداکثر ظرف ۱۵ ثانیه اعمال می‌شود.</Typography.Text>
++  </Space>
++  <Modal title={(editing?'ویرایش کاربر ':'ساخت کاربر ')+title} open={editing!==undefined} onCancel={()=>setEditing(undefined)} onOk={()=>void save()} confirmLoading={busy} okText="ذخیره" cancelText="انصراف">
++   <Form form={form} layout="vertical" dir="rtl">
++    <Form.Item label="نام کاربری" name="username" rules={[{required:true,message:'نام کاربری را وارد کنید'},{pattern:/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,39}$/,message:'۳ تا ۴۰ حرف انگلیسی، عدد، خط تیره یا زیرخط'}]}><Input disabled={!!editing} dir="ltr" autoComplete="off"/></Form.Item>
++    {protocol==='openconnect'&&<Form.Item label={editing?'رمز جدید (خالی: بدون تغییر)':'رمز عبور'} name="password" rules={[{required:!editing,message:'رمز عبور الزامی است'},{min:12,message:'حداقل ۱۲ کاراکتر'}]}><Input.Password autoComplete="new-password" dir="ltr"/></Form.Item>}
++    <Form.Item label="تاریخ و ساعت انقضا (خالی: بدون انقضا)" name="expires"><DatePicker showTime style={{width:'100%'}}/></Form.Item>
++    <Form.Item label="فعال" name="enabled" valuePropName="checked"><Switch/></Form.Item>
++   </Form>
++  </Modal>
++ </div>;
++}
+diff --git a/frontend/src/routes.tsx b/frontend/src/routes.tsx
+index beb9a4e..5a3a493 100644
+--- a/frontend/src/routes.tsx
++++ b/frontend/src/routes.tsx
+@@ -4,6 +4,8 @@ import { Spin } from 'antd';
+ 
+ import PanelLayout from '@/layouts/PanelLayout';
+ 
++const SalesBotPage = lazy(() => import('@/pages/vpn/SalesBotPage'));
++const VPNPage = lazy(() => import('@/pages/vpn/VPNPage'));
+ const IndexPage = lazy(() => import('@/pages/index/IndexPage'));
+ const InboundsPage = lazy(() => import('@/pages/inbounds/InboundsPage'));
+ const ClientsPage = lazy(() => import('@/pages/clients/ClientsPage'));
+@@ -42,6 +44,9 @@ const routes: RouteObject[] = [
+     children: [
+       { index: true, element: withSuspense(<IndexPage />) },
+       { path: 'inbounds', element: withSuspense(<InboundsPage />) },
++      { path: 'sales-bot', element: withSuspense(<SalesBotPage />) },
++      { path: 'openvpn', element: withSuspense(<VPNPage protocol="openvpn" />) },
++      { path: 'openconnect', element: withSuspense(<VPNPage protocol="openconnect" />) },
+       { path: 'clients', element: withSuspense(<ClientsPage />) },
+       { path: 'groups', element: withSuspense(<GroupsPage />) },
+       { path: 'nodes', element: withSuspense(<NodesPage />) },
+diff --git a/frontend/src/test/sales-bot.test.tsx b/frontend/src/test/sales-bot.test.tsx
+new file mode 100644
+index 0000000..5122ca1
+--- /dev/null
++++ b/frontend/src/test/sales-bot.test.tsx
+@@ -0,0 +1,24 @@
++import {fireEvent,screen,waitFor} from '@testing-library/react';
++import {afterEach,expect,test,vi} from 'vitest';
++import {App} from 'antd';
++import SalesBotPage from '@/pages/vpn/SalesBotPage';
++import {renderWithProviders} from './test-utils';
++afterEach(()=>vi.unstubAllGlobals());
++test('sales settings send JSON and numeric admin IDs without disclosing stored token',async()=>{
++ vi.restoreAllMocks();
++ const calls:any[]=[];
++ vi.stubGlobal('fetch',vi.fn(async(url:string,opts:RequestInit={})=>{
++  if(String(url).endsWith('/csrf-token'))return new Response(JSON.stringify({success:true,obj:'test-token'}),{status:200});
++  const body=JSON.parse(String(opts.body));calls.push({body,contentType:new Headers(opts.headers).get('Content-Type')});
++  const obj=body.action==='inbounds'?[]:body.action==='get'?{settings:{admins:[123456],enabled:false,token_set:true},runtime:{},plans:[],users:[],orders:[],topups:[],coupons:[],tickets:[],ledger:[],revenue:0}:true;
++  return new Response(JSON.stringify({success:true,obj}),{status:200,headers:{'Content-Type':'application/json'}});
++ }));
++ renderWithProviders(<App><SalesBotPage/></App>);
++ await screen.findByDisplayValue('123456');
++ expect(screen.queryByDisplayValue('secret-token')).toBeNull();
++ fireEvent.click(screen.getByText('ذخیره تنظیمات'));
++ await waitFor(()=>expect(calls.some(c=>c.body.action==='settings')).toBe(true));
++ const save=calls.find(c=>c.body.action==='settings');
++ expect(save.contentType).toBe('application/json');
++ expect(save.body.values.admins).toEqual([123456]);
++});
+\ No newline at end of file
+diff --git a/frontend/src/test/vpn-page.test.tsx b/frontend/src/test/vpn-page.test.tsx
+new file mode 100644
+index 0000000..ad45849
+--- /dev/null
++++ b/frontend/src/test/vpn-page.test.tsx
+@@ -0,0 +1,25 @@
++import { fireEvent, screen, waitFor } from '@testing-library/react';
++import { afterEach, expect, test, vi } from 'vitest';
++import { App } from 'antd';
++import VPNPage from '@/pages/vpn/VPNPage';
++import { renderWithProviders } from './test-utils';
++
++afterEach(()=>vi.unstubAllGlobals());
++
++test('VPN UI sends JSON through the real HTTP utility and renders returned users',async()=>{
++ vi.restoreAllMocks();
++ const calls: { url:string; body:Record<string,unknown>; contentType:string }[]=[];
++ vi.stubGlobal('fetch',vi.fn(async(url:string,opts:RequestInit={})=>{
++  if(String(url).endsWith('/csrf-token'))return new Response(JSON.stringify({success:true,obj:'test-token'}),{status:200});
++  const headers=new Headers(opts.headers);
++  const body=JSON.parse(String(opts.body));
++  calls.push({url:String(url),body,contentType:headers.get('Content-Type')||''});
++  return new Response(JSON.stringify({success:true,obj:{users:[{username:'demo-vpn',enabled:true,expired:false,expires:0,created:1}],status:{service:'active',endpoint:'xu.chanelchat.ir:1194',online:[]}}}),{status:200,headers:{'Content-Type':'application/json'}});
++ }));
++ renderWithProviders(<App><VPNPage protocol="openvpn"/></App>);
++ await screen.findByText('demo-vpn');
++ expect(calls[0].body).toEqual({protocol:'openvpn',action:'list'});
++ expect(calls[0].contentType).toBe('application/json');
++ fireEvent.click(screen.getByText('ساخت کاربر'));
++ await waitFor(()=>expect(screen.getByLabelText('نام کاربری')).not.toBeNull());
++});
+diff --git a/internal/sub/controller.go b/internal/sub/controller.go
+index 5f5b2ae..d7722eb 100644
+--- a/internal/sub/controller.go
++++ b/internal/sub/controller.go
+@@ -327,6 +327,8 @@ func (a *SUBController) initRouter(g *gin.RouterGroup) {
+ 	gLink.GET(":subid", a.subs)
+ 	gLink.HEAD(":subid", a.subs)
+ 	gLink.GET(":subid/hwid-status", a.hwidStatus)
++	gLink.GET(":subid/vpn", a.masihaProfiles)
++	gLink.GET(":subid/vpn/:client/:protocol", a.masihaProfiles)
+ 	gLink.HEAD(":subid/hwid-status", a.hwidStatus)
+ 	if a.jsonEnabled {
+ 		gJson := g.Group(a.subJsonPath)
+diff --git a/internal/sub/masiha_profiles.go b/internal/sub/masiha_profiles.go
+new file mode 100644
+index 0000000..33eca19
+--- /dev/null
++++ b/internal/sub/masiha_profiles.go
+@@ -0,0 +1,65 @@
++package sub
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"github.com/gin-gonic/gin"
++	"net/http"
++	"os/exec"
++	"strconv"
++	"time"
++)
++
++var masihaProfileSlots = make(chan struct{}, 4)
++
++type masihaProfile struct {
++	Protocol string `json:"protocol"`
++	ClientID int    `json:"clientId"`
++	Label    string `json:"label"`
++	Filename string `json:"filename"`
++	Content  string `json:"content"`
++	Expires  int64  `json:"expires"`
++}
++
++func (a *SUBController) masihaProfiles(c *gin.Context) {
++	c.Header("Cache-Control", "no-store, private")
++	c.Header("Referrer-Policy", "no-referrer")
++	c.Header("X-Content-Type-Options", "nosniff")
++	if _, ok := a.buildSubPageData(c); !ok {
++		return
++	}
++	select {
++	case masihaProfileSlots <- struct{}{}:
++		defer func() { <-masihaProfileSlots }()
++	default:
++		c.Status(http.StatusTooManyRequests)
++		return
++	}
++	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
++	defer cancel()
++	input, _ := json.Marshal(map[string]string{"subId": c.Param("subid")})
++	cmd := exec.CommandContext(ctx, "/usr/bin/python3", "/opt/masiha-vpn-extension/unified.py")
++	cmd.Stdin = bytes.NewReader(input)
++	out, err := cmd.Output()
++	var result struct {
++		Success bool            `json:"success"`
++		Obj     []masihaProfile `json:"obj"`
++	}
++	if err != nil || json.Unmarshal(out, &result) != nil || !result.Success {
++		c.Status(http.StatusServiceUnavailable)
++		return
++	}
++	if c.Param("protocol") != "" {
++		for _, p := range result.Obj {
++			if p.Protocol == c.Param("protocol") && strconv.Itoa(p.ClientID) == c.Param("client") {
++				c.Header("Content-Disposition", `attachment; filename="`+p.Filename+`"`)
++				c.Data(http.StatusOK, "application/octet-stream", []byte(p.Content))
++				return
++			}
++		}
++		c.Status(http.StatusNotFound)
++		return
++	}
++	c.JSON(http.StatusOK, result.Obj)
++}
+diff --git a/internal/web/controller/api.go b/internal/web/controller/api.go
+index c02eb2c..1d94ae9 100644
+--- a/internal/web/controller/api.go
++++ b/internal/web/controller/api.go
+@@ -177,6 +177,9 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
+ 	api.Use(middleware.ConfigEnvelopeMiddleware())
+ 	api.Use(middleware.CSRFMiddleware())
+ 
++	api.POST("/masiha-vpn", masihaVPN)
++	api.POST("/masiha-reconcile", masihaReconcile)
++	api.POST("/sales-bot", masihaSales)
+ 	api.GET("/openapi.json", ServeOpenAPISpec)
+ 
+ 	// Inbounds API
+diff --git a/internal/web/controller/masiha_reconcile.go b/internal/web/controller/masiha_reconcile.go
+new file mode 100644
+index 0000000..fae8c7e
+--- /dev/null
++++ b/internal/web/controller/masiha_reconcile.go
+@@ -0,0 +1,36 @@
++package controller
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/mhsanaei/3x-ui/v3/internal/database"
++	"github.com/mhsanaei/3x-ui/v3/internal/web/service"
++	"github.com/mhsanaei/3x-ui/v3/internal/xray"
++)
++
++// Runs native delayed-start, quota and expiration maintenance for external VPN
++// usage already atomically credited by the local adapter. Never adds bytes twice.
++func masihaReconcile(c *gin.Context) {
++	var emails []string
++	err := database.GetDB().Table("clients AS c").
++		Joins("JOIN masiha_accounts a ON a.client_id = c.id AND a.generation = c.created_at").
++		Joins("JOIN client_traffics t ON t.email = c.email").
++		Where("t.last_online > 0").Pluck("c.email", &emails).Error
++	if err != nil {
++		jsonObj(c, nil, err)
++		return
++	}
++	samples := make([]*xray.ClientTraffic, 0, len(emails))
++	for _, email := range emails {
++		samples = append(samples, &xray.ClientTraffic{Email: email})
++	}
++	svc := service.InboundService{}
++	restart, disabled, err := svc.AddTraffic(nil, samples)
++	if restart {
++		x := service.XrayService{}
++		x.SetToNeedRestart()
++	}
++	if disabled {
++		notifyClientsChanged()
++	}
++	jsonObj(c, true, err)
++}
+diff --git a/internal/web/controller/masiha_sales.go b/internal/web/controller/masiha_sales.go
+new file mode 100644
+index 0000000..e3127f1
+--- /dev/null
++++ b/internal/web/controller/masiha_sales.go
+@@ -0,0 +1,75 @@
++package controller
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"github.com/gin-gonic/gin"
++	"net/http"
++	"os/exec"
++	"time"
++)
++
++func masihaSales(c *gin.Context) {
++	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 65536)
++	body, err := c.GetRawData()
++	if err != nil || !json.Valid(body) {
++		c.JSON(400, gin.H{"success": false, "msg": "Invalid request"})
++		return
++	}
++	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
++	defer cancel()
++	cmd := exec.CommandContext(ctx, "/usr/bin/python3", "/opt/masiha-vpn-extension/sales.py")
++	cmd.Stdin = bytes.NewReader(body)
++	out, err := cmd.Output()
++	if err != nil || !json.Valid(out) {
++		c.JSON(500, gin.H{"success": false, "msg": "Sales operation failed"})
++		return
++	}
++	c.Header("Cache-Control", "no-store")
++	c.Data(200, "application/json; charset=utf-8", out)
++}
++
++var salesPaymentSlots = make(chan struct{}, 4)
++
++// This public return endpoint accepts only a gateway authority. It never trusts
++// a browser-provided amount, user ID, status or request action for crediting.
++func MasihaPaymentReturn(c *gin.Context) {
++	if c.Query("Status") != "OK" {
++		c.String(200, "پرداخت لغو شد یا کامل نشد. به ربات برگردید.")
++		return
++	}
++	authority := c.Query("Authority")
++	if len(authority) < 10 || len(authority) > 100 {
++		c.String(400, "شناسه نامعتبر")
++		return
++	}
++	select {
++	case salesPaymentSlots <- struct{}{}:
++		defer func() { <-salesPaymentSlots }()
++	default:
++		c.String(429, "کمی بعد دوباره تلاش کنید")
++		return
++	}
++	body, _ := json.Marshal(map[string]string{"authority": authority})
++	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
++	defer cancel()
++	cmd := exec.CommandContext(ctx, "/usr/bin/python3", "/opt/masiha-vpn-extension/sales.py", "payment")
++	cmd.Stdin = bytes.NewReader(body)
++	out, err := cmd.Output()
++	var r struct {
++		Success bool   `json:"success"`
++		Obj     string `json:"obj"`
++		Msg     string `json:"msg"`
++	}
++	if err != nil || json.Unmarshal(out, &r) != nil {
++		c.String(502, "بررسی پرداخت انجام نشد. دوباره تلاش کنید یا به پشتیبانی اطلاع دهید.")
++		return
++	}
++	c.Header("Cache-Control", "no-store")
++	if !r.Success {
++		c.String(400, r.Msg)
++		return
++	}
++	c.String(200, r.Obj)
++}
+diff --git a/internal/web/controller/masiha_vpn.go b/internal/web/controller/masiha_vpn.go
+new file mode 100644
+index 0000000..30a7688
+--- /dev/null
++++ b/internal/web/controller/masiha_vpn.go
+@@ -0,0 +1,33 @@
++package controller
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"github.com/gin-gonic/gin"
++	"net/http"
++	"os/exec"
++	"time"
++)
++
++// This endpoint is registered inside the panel API's authentication, token-scope
++// and CSRF middleware. No shell interpolation or caller-supplied executable.
++func masihaVPN(c *gin.Context) {
++	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16384)
++	body, err := c.GetRawData()
++	if err != nil || len(body) > 16384 || !json.Valid(body) {
++		c.JSON(http.StatusBadRequest, gin.H{"success": false, "msg": "Invalid request"})
++		return
++	}
++	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
++	defer cancel()
++	cmd := exec.CommandContext(ctx, "/usr/bin/python3", "/opt/masiha-vpn-extension/manager.py")
++	cmd.Stdin = bytes.NewReader(body)
++	out, err := cmd.Output()
++	if err != nil || !json.Valid(out) {
++		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "msg": "VPN management operation failed. Check service logs."})
++		return
++	}
++	c.Header("Cache-Control", "no-store")
++	c.Data(http.StatusOK, "application/json; charset=utf-8", out)
++}
+diff --git a/internal/web/web.go b/internal/web/web.go
+index d726039..90afefd 100644
+--- a/internal/web/web.go
++++ b/internal/web/web.go
+@@ -250,6 +250,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
+ 	controller.SetDistFS(distFS)
+ 
+ 	g := engine.Group(basePath)
++	g.GET("/sales-payment", controller.MasihaPaymentReturn)
+ 	g.GET("/manifest.webmanifest", controller.ServePWAManifest)
+ 	g.GET("/pwa-register.js", controller.ServePWARegister)
+ 	g.GET("/service-worker.js", controller.ServePWAServiceWorker)
