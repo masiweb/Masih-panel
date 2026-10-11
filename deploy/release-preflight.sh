@@ -9,14 +9,15 @@ for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/b
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py deploy/bootstrap-inbounds.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
  ast.parse(handle.read(),filename=sys.argv[1])
 PY
 done
-echo "Python syntax OK"
+sh -n runtime/test-oc-route.sh
+echo "Python syntax and portable tunnel route shell syntax OK"
 echo "=== Isolated Xray presets test (no server changes) ==="
 python3 -m unittest -q deploy/test_bootstrap_inbounds.py
 git apply --stat deploy/3x-ui.patch >/dev/null
