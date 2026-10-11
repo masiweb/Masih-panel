@@ -54,10 +54,49 @@ else
   npm run build
   cd ..
 fi
-# Download the two large dependencies independently, with bounded attempts.
-# Go's chained GOPROXY fallbacks handle HTTP errors but an HTTP connection
-# that never finishes streaming a zip can otherwise appear frozen indefinitely.
-# Go still checks go.sum and the upstream checksum database, as normal.
+# Download all dependencies of the actual x-ui binary, with a bounded timeout
+# per proxy. The Go build must run OFFLINE after prefetch: otherwise a partial
+# cache will result in an apparently frozen "go: downloading" build.
+# Module authenticity is still verified against go.sum and GOSUMDB.
+prefetch_build_dependencies() {
+  local mirror exitcode
+  local -a mirrors=(
+    "https://mirrors.aliyun.com/goproxy"
+    "https://goproxy.cn"
+    "https://proxy.golang.org"
+  )
+  if [[ -n "${MASIHA_GOPROXY:-}" ]]; then
+    mirrors=("$MASIHA_GOPROXY" "${mirrors[@]}")
+  fi
+  # Avoid repeating identical proxy requests when custom proxy matches default.
+  local -A visited=()
+  local attempt=0
+  for mirror in "${mirrors[@]}"; do
+    [[ ! -v 'visited[$mirror]' ]] || continue
+    visited["$mirror"]=1
+    attempt=$((attempt+1))
+    echo "=== Go dependency prefetch $attempt: $mirror (max 180 seconds) ==="
+    echo "Cached downloads are reused across attempts and installer restarts."
+    # 'go list -deps .' requests exactly the modules imported by this binary.
+    # -mod=readonly ensures the signed, pinned go.mod/go.sum never change.
+    # Do not use '-e': it can turn unresolved imports into a false success.
+    # Keep output visible (go: downloading ...) for useful progress diagnostics.
+    if timeout --kill-after=10s 180s env GOPROXY="$mirror" \
+      GOTOOLCHAIN=local go list -mod=readonly -deps . >/dev/null; then
+      echo "All x-ui Go dependencies downloaded and verified."
+      return 0
+    else
+      exitcode=$?
+      echo "Go prefetch failed or timed out (exit $exitcode) through $mirror; trying next proxy." >&2
+    fi
+  done
+  echo "ERROR: Go dependencies could not be fully downloaded from available proxies." >&2
+  echo "Inspect DNS/outbound HTTPS; use MASIHA_GOPROXY for a reachable Go proxy." >&2
+  echo "This is safe to retry: no existing module cache or customer data is deleted." >&2
+  return 1
+}
+# Individual high-bandwidth modules can be cached early to make partial
+# failures visible, but they are not sufficient to build the full binary.
 prefetch_go_module() {
   local module="$1" mirror
   local -a mirrors=(
@@ -89,9 +128,13 @@ if [[ -s "$BUILD_ROOT/x-ui" && -s "$BUILD_ROOT/x-ui.sha256" ]] &&
 else
   prefetch_go_module github.com/cloudflare/circl@v1.6.5
   prefetch_go_module github.com/klauspost/compress@v1.20.0
-  echo "Building Masiha x-ui Go backend; the first compilation may take several minutes."
+  prefetch_build_dependencies
+  echo "=== Building Masiha x-ui Go backend from VERIFIED OFFLINE cache ==="
+  echo "No network downloads are permitted during compilation. On first build, compilation can take several minutes."
   rm -f "$BUILD_ROOT/x-ui.new"
-  go build -o "$BUILD_ROOT/x-ui.new" .
+  # If a dependency is still missing, Go now reports it immediately instead
+  # of retrying an unreachable remote server for an unbounded period.
+  env GOPROXY=off GOTOOLCHAIN=local go build -mod=readonly -o "$BUILD_ROOT/x-ui.new" .
   chmod 0755 "$BUILD_ROOT/x-ui.new"
   mv -f "$BUILD_ROOT/x-ui.new" "$BUILD_ROOT/x-ui"
   (cd "$BUILD_ROOT" && sha256sum x-ui > x-ui.sha256)
