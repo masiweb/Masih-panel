@@ -3,16 +3,32 @@
 # Can safely finish the partial install caused by Easy-RSA CN conflicts.
 # Deliberately NOT a general repair/re-install tool for live deployments.
 set -Eeuo pipefail
+# Include a failed command's line and exit code without printing credentials.
+trap 'rc=$?; echo "ERROR: Masiha finalization failed at line ${LINENO} (exit $rc)." >&2' ERR
 umask 077
 [[ "$EUID" -eq 0 ]] || { echo "Run as root." >&2; exit 1; }
 [[ "${1:-}" == "--resume" || "${1:-}" == "--from-installer" ]] ||
   { echo "Usage: sudo bash deploy/finalize-ubuntu-24.04.sh --resume" >&2; exit 2; }
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-20261011}"
-# No replacing existing production settings/services in this completion step.
+# A root-owned interrupted-install marker is installed BEFORE modifying
+# service files. It enables an idempotent --resume after failures during
+# service start or verification, but never reconfigures a healthy production
+# installation or a legacy deployment without such a marker.
+FINALIZE_MARKER=/etc/masiha-vpn-extension/.finalize-in-progress
 if [[ -e /etc/systemd/system/masiha-vpn-extension.service ]]; then
-  echo "Masiha extension already installed. Refusing to re-finalize a working/partial deployment." >&2
-  exit 1
+  if [[ "${1:-}" != "--resume" || ! -f "$FINALIZE_MARKER" ||
+        "$(stat -c '%u:%a' "$FINALIZE_MARKER")" != "0:600" ]]; then
+    echo "Masiha service exists, but no verified interrupted-install marker was found." >&2
+    echo "Refusing to modify an existing deployment; do not rerun the fresh installer." >&2
+    exit 1
+  fi
+  echo "Found verified incomplete-finalization marker; resuming safely."
+elif [[ -e "$FINALIZE_MARKER" ]]; then
+  [[ "$(stat -c '%u:%a' "$FINALIZE_MARKER")" == "0:600" ]] || {
+    echo "Invalid interrupted-install marker ownership/mode." >&2
+    exit 1
+  }
 fi
 for required in "$BUILD_ROOT/x-ui" \
   "$BUILD_ROOT/src/extensions/masiha-vpn/openvpn.conf" \
@@ -60,6 +76,14 @@ if [[ ! -e /etc/x-ui/.masiha-initial-token-rotated ]]; then
   echo "Upstream install API token rotated."
 fi
 echo "Resuming verified installation for $DOMAIN; existing CA/database/SSL retained."
+# Marker is deliberately created only after every sensitive identity, domain,
+# certificate and binary prerequisite passes. Restarting the service is safe
+# only while this exact root-owned marker exists.
+install -d -m 0700 /etc/masiha-vpn-extension
+if [[ ! -e "$FINALIZE_MARKER" ]]; then
+  printf 'incomplete-finalization-v1\\n' > "$FINALIZE_MARKER"
+  chmod 0600 "$FINALIZE_MARKER"
+fi
 # Per-server CA & TLS-crypt; do not reuse keys from production unless migrating.
 install -d -m 0700 /etc/openvpn/masiha
 export EASYRSA_PKI=/etc/openvpn/masiha/pki EASYRSA_BATCH=1 EASYRSA_ALGO=ec \
@@ -193,6 +217,9 @@ systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
 systemctl enable --now masiha-vpn-extension.service
 MASIHA_EXPECT_DEFAULT_INBOUNDS=1 bash "$REPO_ROOT/deploy/verify-install.sh"
+# This is the ONLY point where the marker can be removed; verification proves
+# service health. Subsequent --resume calls must refuse normal installations.
+rm -f "$FINALIZE_MARKER"
 # Print credentials immediately on the terminal, ONLY after health checks pass.
 # Keep a 0600 copy for recovery; do not print during partial/failed installs.
 printf '\n===============================================\n'
