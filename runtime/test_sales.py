@@ -393,4 +393,30 @@ class Commerce(unittest.TestCase):
    final=c.execute("SELECT * FROM services WHERE id=?",(service["id"],)).fetchone()
    self.assertEqual(json.loads(final["data"])["label"],"My Company")
    self.assertEqual(json.loads(final["plan"])["_display_name"],"My Company")
+ def test_xray_provision_keeps_display_name_and_internal_email_separate(self):
+  with s.conn() as c:
+   c.execute("""INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active)
+     VALUES(2,'Paid Xray','QA','xray',5000,30,5,'[7,8]',0,1)""")
+   s.order(c,101,2,"named-xray",label="دفتر مرکزی")
+   order=c.execute("SELECT * FROM orders WHERE id='named-xray'").fetchone()
+   class FakePanel:
+    def __init__(self):self.client=None;self.inbound_ids=[]
+    def call(self,path,data=None):
+     if path.startswith("/panel/api/clients/get/"):
+      if not self.client:raise ValueError("not found")
+      return {"client":self.client,"inboundIds":self.inbound_ids}
+     if path=="/panel/api/clients/add":
+      self.client=data["client"];self.inbound_ids=data["inboundIds"];return {}
+     if path.startswith("/panel/api/clients/links/"):return ["vless://example#QA"]
+     raise AssertionError("Unexpected endpoint "+path)
+   panel=FakePanel()
+   with patch.object(s,"Panel",return_value=panel), patch.object(s,"subscription_url",return_value="https://domain/sub/demo"):
+    s.provision(c,order)
+   record=c.execute("SELECT * FROM services WHERE user_id=101 AND protocol='xray'").fetchone()
+   self.assertEqual(json.loads(record["data"])["label"],"دفتر مرکزی")
+   self.assertEqual(panel.client["comment"],"Masiha sales | دفتر مرکزی")
+   self.assertRegex(record["username"],r"^ms-[a-f0-9]{20}$")
+   self.assertNotEqual(record["username"],"دفتر مرکزی")
+   self.assertEqual(panel.inbound_ids,[7,8])
+   self.assertEqual(c.execute("SELECT status FROM orders WHERE id='named-xray'").fetchone()[0],"fulfilled")
 if __name__=="__main__":unittest.main()
