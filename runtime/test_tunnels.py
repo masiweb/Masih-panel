@@ -1,9 +1,16 @@
-import subprocess,sys,json,secrets,time,os,tempfile
+import subprocess,sys,json,secrets,time,os,tempfile,re,socket
 from pathlib import Path
+# Tests intentionally create disposable users/network namespaces. NEVER reuse a
+# production host's fixed IP: the actual TLS domain is read from this server.
+DOMAIN=json.loads(Path("/etc/masiha-vpn-extension/config.json").read_text())["domain"]
+SERVER_IP=socket.gethostbyname(DOMAIN)
+assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]+",DOMAIN)
+assert re.fullmatch(r"(?:[0-9]{1,3}\\.){3}[0-9]{1,3}",SERVER_IP)
 def run(*a,check=True):
  return subprocess.run(a,text=True,capture_output=True,check=check,timeout=20)
 def call(proto,act,**kw):
- p=run("python3","/opt/masiha-vpn-extension/manager.py") if False else subprocess.run(["python3","/opt/masiha-vpn-extension/manager.py"],input=json.dumps(dict(protocol=proto,action=act,**kw)),text=True,capture_output=True,timeout=60)
+ p=subprocess.run(["python3","/opt/masiha-vpn-extension/manager.py"],input=json.dumps(dict(protocol=proto,action=act,**kw)),text=True,capture_output=True,timeout=60)
+ if p.returncode:raise RuntimeError("VPN manager command failed for "+proto+"/"+act+" (exit "+str(p.returncode)+")")
  r=json.loads(p.stdout)
  assert r["success"],r
  return r["obj"]
@@ -25,12 +32,16 @@ for proto in ("openvpn","openconnect"):
    logfile=Path(tmp)/"client.log"
    with logfile.open("w") as log:
     if proto=="openvpn":
-     cfg=call(proto,"config",username=name)["content"].replace("remote xu.chanelchat.ir 1194","remote 91.107.136.84 1194")
+     cfg=call(proto,"config",username=name)["content"]
+     # Bypass namespace DNS but retain the real PKI/server certificate checks.
+     expected="remote "+DOMAIN+" 1194"
+     assert expected in cfg,"OpenVPN profile does not use this server's configured domain"
+     cfg=cfg.replace(expected,"remote "+SERVER_IP+" 1194")
      path=Path(tmp)/"test.ovpn";path.write_text(cfg);path.chmod(0o600)
      args=["openvpn","--config",str(path),"--auth-nocache"]
     else:
-     args=["openconnect","--protocol=anyconnect","--resolve=xu.chanelchat.ir:91.107.136.84","--user="+name,"--passwd-on-stdin","--non-inter","--script=/opt/masiha-vpn-extension/test-oc-route.sh","https://xu.chanelchat.ir:4443"]
-    proc=subprocess.Popen(["ip","netns","exec",ns,*args],stdin=subprocess.PIPE,stdout=log,stderr=log,text=True)
+     args=["openconnect","--protocol=anyconnect","--resolve="+DOMAIN+":"+SERVER_IP,"--user="+name,"--passwd-on-stdin","--non-inter","--script=/opt/masiha-vpn-extension/test-oc-route.sh","https://"+DOMAIN+":4443"]
+    proc=subprocess.Popen(["ip","netns","exec",ns,*args],stdin=subprocess.PIPE,stdout=log,stderr=log,text=True,env={**os.environ,"MASIHA_QA_SERVER_IP":SERVER_IP})
     if proto=="openconnect": proc.stdin.write(password+"\n");proc.stdin.flush()
     connected=False
     for _ in range(25):
@@ -43,7 +54,7 @@ for proto in ("openvpn","openconnect"):
      print(txt[-3000:]);raise RuntimeError(proto+" tunnel did not connect")
     print(proto,"TLS/auth/tunnel PASS",flush=True)
     p=run("ip","netns","exec",ns,"curl","--max-time","15","-fsS","https://1.1.1.1/cdn-cgi/trace")
-    assert "ip=91.107.136.84" in p.stdout,p.stdout
+    assert "ip="+SERVER_IP in p.stdout,"Tunnel public egress IP differs from this server"
     print(proto,"Internet through VPN PASS",flush=True)
     call(proto,"update",username=name,enabled=False,expires=0)
     time.sleep(2)
