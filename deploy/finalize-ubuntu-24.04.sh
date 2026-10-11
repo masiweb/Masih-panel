@@ -147,6 +147,9 @@ ufw allow 4443/udp >/dev/null
 systemctl daemon-reload
 # The native panel binary is already installed and has its final credentials.
 systemctl enable --now x-ui.service
+# Native upstream installer had already started x-ui before its binary was replaced.
+# Restart explicitly to load the patched Masiha executable into memory.
+systemctl restart x-ui.service
 systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
 systemctl enable --now masiha-vpn-extension.service
