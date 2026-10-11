@@ -68,6 +68,6 @@ sudo bash deploy/finalize-ubuntu-24.04.sh --resume
 
 ## وضعیت کیفیت نسخه
 
-- آزمایش ۴۳ تست جداگانه Telegram/commerce/naming/shared-quota تا زمان نگارش موفق بوده است (عدد نهایی را با `bash deploy/release-preflight.sh` روی commit خودتان مجدداً بررسی کنید).
+- آزمایش ۴۴ تست جداگانه Telegram/commerce/naming/shared-quota تا زمان نگارش موفق بوده است (عدد نهایی را با `bash deploy/release-preflight.sh` روی commit خودتان مجدداً بررسی کنید).
 - checkout تمیز از upstream پین‌شده همراه patch ۳۰ فایل و CSS جدید با `npm ci`، typecheck، Vite build و کامپایل Go بازسازی شد؛ **باینری جدید قابل تولید است**.
 - این آزمون، نصب کامل خالی Ubuntu، اتصال واقعی همه تونل‌ها و درگاه زنده را تأیید نمی‌کند. هر یک را قبل از استفاده به‌عنوان سرور اصلی تکمیل کنید.
