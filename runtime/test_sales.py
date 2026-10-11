@@ -189,4 +189,38 @@ class Commerce(unittest.TestCase):
     "days":30,"gb":0,"inbounds":[],"capacity":0,"active":True}})
   p=s.admin({"action":"get"})["plans"][0]
   self.assertIsNone(p["remaining"])
+ def test_rejected_card_receipt_restores_reserved_coupon(self):
+  with s.conn() as c:
+   s.put(c,"card","test-card")
+   c.execute("INSERT INTO coupons VALUES('SAVE20',20,0,1,0)")
+   c.execute("UPDATE users SET state='coupon:SAVE20' WHERE id=101")
+   s.order(c,101,1,"card-reject",card=True)
+   o=c.execute("SELECT * FROM orders WHERE id='card-reject'").fetchone()
+   self.assertEqual(o["price"],8000)
+   self.assertEqual(json.loads(o["plan"])["_coupon_code"],"SAVE20")
+   self.assertEqual(c.execute("SELECT uses FROM coupons WHERE code='SAVE20'").fetchone()[0],0)
+   c.execute("UPDATE orders SET status='receipt_review' WHERE id='card-reject'")
+   rid=c.execute("INSERT INTO topups(user_id,amount,receipt,created) VALUES(101,8000,'file',0)").lastrowid
+   c.execute("INSERT INTO receipt_orders VALUES(?,?)",(rid,"card-reject"))
+   s.decide_receipt(c,rid,False)
+   self.assertEqual(c.execute("SELECT uses FROM coupons WHERE code='SAVE20'").fetchone()[0],1)
+   self.assertEqual(c.execute("SELECT count(*) FROM redeemed WHERE code='SAVE20'").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT status FROM orders WHERE id='card-reject'").fetchone()[0],"cancelled")
+ def test_admin_cancel_pending_order_and_refund_coupon(self):
+  with s.conn() as c:
+   c.execute("INSERT INTO coupons VALUES('SALE',10,0,1,0)")
+   c.execute("UPDATE users SET state='coupon:SALE' WHERE id=101")
+   s.order(c,101,1,"pending-card",card=True)
+  s.admin({"action":"cancel_order","id":"pending-card"})
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT status FROM orders WHERE id='pending-card'").fetchone()[0],"cancelled")
+   self.assertEqual(c.execute("SELECT uses FROM coupons WHERE code='SALE'").fetchone()[0],1)
+   self.assertEqual(c.execute("SELECT count(*) FROM redeemed WHERE code='SALE'").fetchone()[0],0)
+  with self.assertRaises(ValueError):s.admin({"action":"cancel_order","id":"pending-card"})
+ def test_pending_receipt_blocks_second_renewal(self):
+  with s.conn() as c:
+   c.execute("INSERT INTO services VALUES('service',101,'openvpn','name','{}',1999999999,'{}',0)")
+   s.order(c,101,1,"pending-renew",renew="service",card=True)
+   with self.assertRaises(ValueError):
+    s.order(c,101,1,"another-renew",renew="service",card=True)
 if __name__=="__main__":unittest.main()
