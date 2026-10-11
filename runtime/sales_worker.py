@@ -103,12 +103,10 @@ def handle(c,up):
  if not q and not body.startswith("/start") and u["state"]:
   state=u["state"]
   if state.startswith("planname:"):
-   parts=state.split(":")
+   parts=state.split(":",3)
    if len(parts) not in (3,4):raise ValueError("درخواست خرید نامعتبر است؛ دوباره پلن را انتخاب کنید")
    pid=integer(int(parts[1]),1);qty=integer(int(parts[2]),1,20)
-   carried_coupon=parts[3] if len(parts)==4 else ""
-   if carried_coupon and not re.fullmatch(r"[A-Za-z0-9_-]{1,40}",carried_coupon):
-    raise ValueError("کد تخفیف نامعتبر است")
+   carried_coupon=text(parts[3],40) if len(parts)==4 else ""
    chosen=subscription_label(body)
    ident=quote(c,uid,pid,quantity=qty,label=chosen)
    assigned=json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(ident,)).fetchone()["plan"])["label"]
