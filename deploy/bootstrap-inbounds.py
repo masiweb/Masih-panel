@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create five safe Xray inbounds on *new* Masiha installs only.
+"""Create six safe Xray inbounds on *new* Masiha installs only.
 
 Idempotent: if the database already has any inbound, it makes no changes.
 No customers, credentials or private keys are stored in Git.
