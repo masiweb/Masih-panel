@@ -204,6 +204,7 @@ printf ' Password  : %s\n' "$ADMIN_PASS"
 printf ' HTTPS SSL : Let\047s Encrypt (%s)\n' "$DOMAIN"
 printf ' Recovery  : /root/masiha-vpn-initial-login.env (root only)\n'
 printf '===============================================\n'
-printf 'Next: set the native subscription URI to https://%s/sub and\n' "$DOMAIN"
-printf 'bind subscriptions to 127.0.0.1:2096. Configure Telegram in the sales UI.\n'
+printf ' Subscription : https://%s/sub/ (configured automatically)\n' "$DOMAIN"
+printf ' Xray Presets : 6 TCP inbounds (8443-8448), firewall rules created\n'
+printf ' Next         : Configure Telegram BotFather token/admins/plans in the sales UI.\n'
 
