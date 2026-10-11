@@ -1326,10 +1326,10 @@ index 0000000..5181f3d
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 0000000..f4e4386
+index 0000000..38ac1ab
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,60 @@
 +import {useEffect,useState} from 'react';
 +import {Alert,App,Button,Card,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography} from 'antd';
 +import {HttpUtil} from '@/utils';
@@ -1378,6 +1378,10 @@ index 0000000..f4e4386
 + {key:'coupons',label:'تخفیف و هدیه',children:<Space orientation="vertical" style={{width:'100%'}}><Form form={coupon} layout="inline" onFinish={v=>void run('coupon',{values:v})}><Form.Item name="code" rules={[{required:true}]}><Input placeholder="کد"/></Form.Item><Form.Item name="percent" initialValue={0}><InputNumber placeholder="درصد تخفیف" min={0} max={100}/></Form.Item><Form.Item name="credit" initialValue={0}><InputNumber placeholder="هدیه تومان" min={0}/></Form.Item><Form.Item name="uses" initialValue={1}><InputNumber placeholder="تعداد استفاده" min={0}/></Form.Item><Form.Item><Button htmlType="submit">ثبت</Button></Form.Item></Form>{table(data?.coupons||[],[{title:'کد',dataIndex:'code'},{title:'تخفیف ٪',dataIndex:'percent'},{title:'هدیه تومان',dataIndex:'credit'},{title:'استفاده باقی‌مانده',dataIndex:'uses'}])}</Space>},
 + {key:'support',label:'پشتیبانی',children:table(data?.tickets||[],[{title:'کاربر',dataIndex:'user_id'},{title:'پیام',dataIndex:'body'},{title:'پاسخ',dataIndex:'reply'},{title:'عملیات',render:(_:unknown,r:Row)=><Button onClick={()=>{setEntry('');setDialog({action:'reply',id:r.id,title:'پاسخ به کاربر'})}}>پاسخ</Button>}])},
 + {key:'messages',label:'پیام همگانی',children:<Card><Typography.Paragraph>پیام برای کاربران ثبت‌شده و غیرمسدود در صف ارسال قرار می‌گیرد.</Typography.Paragraph><Button onClick={()=>{setEntry('');setDialog({action:'broadcast',title:'متن پیام همگانی',reference:crypto.randomUUID()})}}>نوشتن پیام</Button></Card>},
++ {key:'telegram-queue',label:'صف ارسال تلگرام',children:<Space orientation="vertical" style={{width:'100%'}}>
++  <Alert type={data?.outbox_failed?.length?'warning':'info'} title={'در انتظار ارسال: '+(data?.outbox_pending||0)+' / ناموفق: '+(data?.outbox_failed?.length||0)} description="پیام‌های ناموفق حذف نمی‌شوند. در صورت اطمینان از اتصال تلگرام، تلاش مجدد را انتخاب کنید."/>
++  {table(data?.outbox_failed||[],[{title:'شناسه',dataIndex:'id'},{title:'گیرنده',dataIndex:'chat'},{title:'روش ارسال',dataIndex:'method'},{title:'تلاش‌ها',dataIndex:'attempts'},{title:'عملیات',render:(_:unknown,r:Row)=><Popconfirm title="ارسال دوباره همین پیام؟" onConfirm={()=>void run('retry_outbox',{id:r.id})}><Button>تلاش مجدد ارسال</Button></Popconfirm>}])}
++ </Space>},
 + {key:'ledger',label:'دفتر تراکنش',children:table(data?.ledger||[],[{title:'شناسه',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'تغییر موجودی',dataIndex:'amount'},{title:'علت',dataIndex:'reason'},{title:'مرجع',dataIndex:'reference'}])},
 + {key:'scope',label:'وضعیت امکانات',children:<Alert type="info" title="محدوده نسخه فعلی" description="خرید و تمدید، کیف پول، کارت‌به‌کارت با تأیید مدیر، اتصال زرین‌پال (نیازمند مرچنت و تست واقعی)، QR ساب Xray، تست، تخفیف و هدیه، کمیسیون دعوت، قیمت و خرید انبوه نماینده، نام دلخواه، تعویض لینک Xray، گزارش کانال، عضویت اجباری، دریافت شماره، پشتیبانی و پیام همگانی پیاده‌سازی شده‌اند. درگاه‌های نکست‌پی و رمزارزی، مهاجرت خودکار بین سرورها، واردکردن کانفیگ خارج از ربات، سهمیه حجمی OpenVPN/OpenConnect هنوز آماده نیستند. فروش Xray فعلاً روی اینباندهای موجود همین پنل است."/>}
 + ]}/>
