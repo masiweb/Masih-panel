@@ -149,9 +149,12 @@ fi
 # Module authenticity is still verified against go.sum and GOSUMDB.
 prefetch_build_dependencies() {
   local mirror exitcode
+  # On the exon installation (2026-10-11), Aliyun returned a 404 for
+  # github.com/sagernet/sing-shadowsocks@v0.2.9, while goproxy.cn succeeded.
+  # Prefer the verified mirror; still fall back to Aliyun and Google.
   local -a mirrors=(
-    "https://mirrors.aliyun.com/goproxy"
     "https://goproxy.cn"
+    "https://mirrors.aliyun.com/goproxy"
     "https://proxy.golang.org"
   )
   if [[ -n "${MASIHA_GOPROXY:-}" ]]; then
