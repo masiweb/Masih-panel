@@ -4,6 +4,7 @@ from sales import *
 def quote(c,uid,pid,renew="",quantity=1):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
+ if p["is_trial"]:raise ValueError("پلن تست رایگان نیازی به پیش‌فاکتور یا پرداخت ندارد")
  ident=secrets.token_hex(12)
  c.execute("INSERT INTO quotes VALUES(?,?,?,?,?,?)",(ident,uid,pid,json.dumps({"plan":dict(p),"quantity":quantity}),renew,now()+900))
  return ident
@@ -13,6 +14,7 @@ def purchase_quote(c,uid,ident,card=False):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(q["plan_id"],)).fetchone()
  snapshot=json.loads(q["plan"]);quantity=snapshot.get("quantity",1);s=settings(c)
  if not p or dict(p)!=snapshot["plan"]:raise ValueError("پلن تغییر کرده؛ قیمت و شرایط جدید را دوباره بررسی کنید")
+ if p["is_trial"]:raise ValueError("پلن تست فقط از مسیر دریافت رایگان قابل فعال‌سازی است")
  if quantity>1:
   user=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
   if not s["bulk"] or not s["reseller"] or not user["reseller"]:raise ValueError("خرید انبوه نماینده غیرفعال است")
@@ -25,7 +27,9 @@ def home(c,uid):
  if s["buy"]:rows.append([("خرید اشتراک","plans")])
  rows.append([("سرویس‌های من","services")])
  if s["wallet"]:rows.append([("کیف پول","wallet")])
- if s["trial"]:rows.append([("تست رایگان","trial")])
+ if s["trial"] and c.execute("SELECT 1 FROM plans WHERE active=1 AND is_trial=1 LIMIT 1").fetchone() and not c.execute(
+    "SELECT 1 FROM orders WHERE user_id=? AND trial=1 LIMIT 1",(uid,)).fetchone():
+  rows.append([("🎁 دریافت تست رایگان","trial")])
  if s["discounts"]:rows.append([("کد تخفیف / هدیه","coupon")])
  if s["referrals"]:rows.append([("دعوت دوستان","referral")])
  rows.append([("پشتیبانی","support")])
@@ -157,13 +161,13 @@ def handle(c,up):
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,"انتقال انجام شد.");enqueue(c,target,"اعتبار دریافتی: "+str(amount)+" تومان");return
  if cmd.startswith("/start") or cmd=="home":home(c,uid)
  elif cmd=="plans":
-  rows=[[ (p["category"]+" / "+p["name"]+" — "+str(p["price"])+" تومان","choose:"+str(p["id"])) ] for p in c.execute("SELECT * FROM plans WHERE active=1 LIMIT 70")]
+  rows=[[ (p["category"]+" / "+p["name"]+" — "+str(p["price"])+" تومان","choose:"+str(p["id"])) ] for p in c.execute("SELECT * FROM plans WHERE active=1 AND is_trial=0 LIMIT 70")]
   enqueue(c,uid,"پلن موردنظر را انتخاب کنید." if rows else "فعلاً پلنی برای فروش وجود ندارد.",rows)
  elif cmd.startswith("bulk:"):
   if not s["bulk"] or not s["reseller"] or not u["reseller"]:raise ValueError("دسترسی نماینده لازم است")
   _,pid,qty=cmd.split(":");qty=integer(int(qty),2,20);pid=int(pid)
   p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
-  if not p:raise ValueError("پلن یافت نشد")
+  if not p or p["is_trial"]:raise ValueError("پلن فروش عمده معتبر نیست")
   price=p["price"]*(100-s["reseller_discount"])//100
   enqueue(c,uid,"خرید "+str(qty)+" اشتراک؛ جمع پیش از کد تخفیف "+str(price*qty)+" تومان.",[[("تأیید خرید انبوه","buy:"+quote(c,uid,pid,quantity=qty))]])
  elif cmd.startswith("rename:"):
@@ -174,6 +178,10 @@ def handle(c,up):
  elif cmd.startswith("choose:"):
   pid=int(cmd.split(":")[1]);p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
   if not p:raise ValueError("پلن یافت نشد")
+  if p["is_trial"]:
+   enqueue(c,uid,"این پلن تست رایگان است؛ برای دریافت بدون پرداخت ادامه دهید.",
+      [[("🎁 دریافت رایگان","trialpick:"+str(pid))]])
+   return
   ident=quote(c,uid,pid)
   keys=[[("تأیید خرید از کیف پول","buy:"+ident)]]
   if s["card"]:keys.append([("پرداخت کارت‌به‌کارت","cardbuy:"+ident)])
@@ -188,7 +196,20 @@ def handle(c,up):
  elif cmd.startswith("buy:"):
   purchase_quote(c,uid,cmd.split(":")[1]);enqueue(c,uid,"سفارش ثبت شد؛ در حال ساخت اشتراک.")
  elif cmd=="trial":
-  order(c,uid,s["trial_plan"],"trial:"+str(uid),trial=True);enqueue(c,uid,"درخواست تست ثبت شد.")
+  if not s["trial"]:raise ValueError("دریافت تست رایگان غیرفعال است")
+  if c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1",(uid,)).fetchone():
+   raise ValueError("شما قبلاً تست رایگان دریافت کرده‌اید")
+  rows=[[("🎁 "+p["name"]+" — "+str(p["days"])+" روز، "+str(p["gb"])+" گیگابایت",
+          "trialpick:"+str(p["id"]))] for p in c.execute(
+            "SELECT * FROM plans WHERE active=1 AND is_trial=1 ORDER BY id LIMIT 40")]
+  enqueue(c,uid,"پلن تست رایگان خود را انتخاب کنید؛ هیچ پرداختی لازم نیست." if rows else
+    "در حال حاضر پلن تست فعالی وجود ندارد.",rows)
+ elif cmd.startswith("trialpick:"):
+  if not s["trial"]:raise ValueError("تست رایگان غیرفعال است")
+  pid=int(cmd.partition(":")[2])
+  order(c,uid,pid,"trial:"+str(uid),trial=True)
+  enqueue(c,uid,"تست رایگان ثبت شد و بدون پرداخت در حال فعال‌سازی است.",
+          key="trial:accepted:"+str(uid))
  elif cmd=="services":
   rows=[[(json.loads(r["data"]).get("label",json.loads(r["plan"])["name"])+" / "+r["username"],"service:"+r["id"])] for r in c.execute("SELECT * FROM services WHERE user_id=? AND deleted=0 ORDER BY expires DESC LIMIT 70",(uid,))]
   enqueue(c,uid,"سرویس‌های شما" if rows else "هنوز سرویسی ندارید.",rows)
