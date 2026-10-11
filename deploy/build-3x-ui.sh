@@ -16,7 +16,7 @@ command -v npm >/dev/null
 # Go's '|' separator (not ',') falls back on ALL HTTP failures including 403.
 # Existing go.sum entries and the default checksum database remain enforced.
 # Supply MASIHA_GOPROXY to override on an unusual network.
-DEFAULT_GOPROXY='https://goproxy.cn|https://mirrors.aliyun.com/goproxy|https://proxy.golang.org|direct'
+DEFAULT_GOPROXY='https://mirrors.aliyun.com/goproxy|https://goproxy.cn|https://proxy.golang.org|direct'
 export GOPROXY="${MASIHA_GOPROXY:-${GOPROXY:-$DEFAULT_GOPROXY}}"
 echo "Go module proxy chain: $GOPROXY"
 mkdir -p "$BUILD_ROOT"
@@ -54,12 +54,42 @@ else
   npm run build
   cd ..
 fi
-# Incomplete Go downloads are cached by Go and resumed from alternate mirrors.
+# Download the two large dependencies independently, with bounded attempts.
+# Go's chained GOPROXY fallbacks handle HTTP errors but an HTTP connection
+# that never finishes streaming a zip can otherwise appear frozen indefinitely.
+# Go still checks go.sum and the upstream checksum database, as normal.
+prefetch_go_module() {
+  local module="$1" mirror
+  local -a mirrors=(
+    "https://mirrors.aliyun.com/goproxy"
+    "https://goproxy.cn"
+    "https://proxy.golang.org"
+  )
+  # Respect explicit user-supplied Go proxy configuration as first candidate.
+  if [[ -n "${MASIHA_GOPROXY:-}" ]]; then
+    mirrors=("$MASIHA_GOPROXY" "${mirrors[@]}")
+  fi
+  for mirror in "${mirrors[@]}"; do
+    echo "Fetching Go module $module (timeout 120s) via $mirror"
+    if timeout --kill-after=5s 120s env GOPROXY="$mirror" \
+       go mod download "$module"; then
+      echo "Go module ready and verified: $module"
+      return 0
+    fi
+    echo "Module fetch failed or timed out: $mirror; trying next mirror." >&2
+  done
+  echo "Failed to download $module from all configured mirrors." >&2
+  return 1
+}
+# Incomplete Go downloads are cached and reused on retry.
 # Only the final binary is replaced; a failed build leaves the source intact.
 if [[ -s "$BUILD_ROOT/x-ui" && -s "$BUILD_ROOT/x-ui.sha256" ]] &&
    (cd "$BUILD_ROOT" && sha256sum -c --status x-ui.sha256); then
   echo "Using previously verified built binary: $BUILD_ROOT/x-ui"
 else
+  prefetch_go_module github.com/cloudflare/circl@v1.6.5
+  prefetch_go_module github.com/klauspost/compress@v1.20.0
+  echo "Building Masiha x-ui Go backend; the first compilation may take several minutes."
   rm -f "$BUILD_ROOT/x-ui.new"
   go build -o "$BUILD_ROOT/x-ui.new" .
   chmod 0755 "$BUILD_ROOT/x-ui.new"
