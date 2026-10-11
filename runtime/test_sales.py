@@ -1,8 +1,9 @@
 import os,tempfile,sys,json,unittest,secrets
+from pathlib import Path
 from unittest.mock import patch
 tmp=tempfile.TemporaryDirectory(prefix="sales-test-")
 os.environ["MASIHA_SALES_DIR"]=tmp.name
-sys.path.insert(0,"/opt/masiha-vpn-extension")
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 import sales as s
 import sales_worker as w
 class Commerce(unittest.TestCase):
@@ -104,4 +105,42 @@ class Commerce(unittest.TestCase):
  def test_ownership(self):
   with s.conn() as c:
    with self.assertRaises(ValueError):w.deliver(c,102,"nonexistent")
+ def test_transient_update_failure_does_not_acknowledge(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True)
+   s.put(c,"token","123456:"+("x"*30))
+   s.put(c,"admins",[101])
+   s.put(c,"bot_username","test_bot")
+  update={"update_id":991,"message":{"from":{"id":101},"chat":{"id":101,"type":"private"},"text":"/start"}}
+  def fake_tg(conf,method,payload):
+   if method=="getUpdates":return [update]
+   return True
+  with patch.object(w,"tg",side_effect=fake_tg), patch.object(w,"handle",side_effect=RuntimeError("temporary upstream outage")):
+   with self.assertRaises(RuntimeError):w.tick()
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT count(*) FROM updates").fetchone()[0],0)
+   self.assertEqual(s.settings(c).get("offset",0),0)
+ def test_dead_letter_is_visible_and_retryable(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True)
+   s.put(c,"token","123456:"+("x"*30))
+   s.put(c,"admins",[101])
+   s.put(c,"bot_username","test_bot")
+   rid=c.execute("INSERT INTO outbox(dedupe,chat,method,payload,attempts) VALUES('dead',101,'sendMessage','{}',15)").lastrowid
+  def fake_tg(conf,method,payload):
+   if method=="getUpdates":return []
+   raise ConnectionError("simulated Telegram network outage")
+  with patch.object(w,"tg",side_effect=fake_tg):
+   w.tick()
+  with s.conn() as c:
+   status=c.execute("SELECT done,attempts FROM outbox WHERE id=?",(rid,)).fetchone()
+   self.assertEqual(tuple(status),(-1,16))
+   self.assertTrue(s.settings(c)["last_error"])
+  info=s.admin({"action":"get"})
+  self.assertEqual(info["outbox_failed"][0]["id"],rid)
+  self.assertEqual(info["outbox_failed"][0]["attempts"],16)
+  s.admin({"action":"retry_outbox","id":rid})
+  with s.conn() as c:
+   self.assertEqual(tuple(c.execute("SELECT done,attempts,next_try FROM outbox WHERE id=?",(rid,)).fetchone()),(0,0,0))
+   with self.assertRaises(ValueError):s.admin({"action":"retry_outbox","id":rid})
 if __name__=="__main__":unittest.main()
