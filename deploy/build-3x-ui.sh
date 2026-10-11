@@ -20,39 +20,123 @@ DEFAULT_GOPROXY='https://mirrors.aliyun.com/goproxy|https://goproxy.cn|https://p
 export GOPROXY="${MASIHA_GOPROXY:-${GOPROXY:-$DEFAULT_GOPROXY}}"
 echo "Go module proxy chain: $GOPROXY"
 mkdir -p "$BUILD_ROOT"
+verify_or_apply_masiha_patch() {
+  echo "=== Verifying pinned Masiha source patch ==="
+  if timeout --kill-after=5s 60s git -C "$SRC" apply --reverse --check "$PATCH" >/dev/null 2>&1; then
+    echo "Masiha patch is already fully applied; source is ready."
+  elif timeout --kill-after=5s 60s git -C "$SRC" apply --check "$PATCH"; then
+    echo "Masiha patch has not yet been applied; applying it now."
+    timeout --kill-after=5s 60s git -C "$SRC" apply "$PATCH"
+    echo "Masiha patch applied."
+  else
+    echo "ERROR: Masiha source is neither clean nor fully patched." >&2
+    echo "Refusing to reset/overwrite partial changes. Inspect: git -C '$SRC' status --short" >&2
+    return 1
+  fi
+  echo "=== Checking source patch integrity ==="
+  timeout --kill-after=5s 60s git -C "$SRC" apply --reverse --check "$PATCH"
+  timeout --kill-after=5s 60s git -C "$SRC" diff --check
+  echo "Masiha source integrity verified."
+}
 if [[ -d "$SRC/.git" ]]; then
-  echo "Existing build source found; checking pinned commit and Masiha patch before resuming."
+  echo "=== Resuming existing build checkout ==="
   actual="$(git -C "$SRC" rev-parse HEAD)"
   [[ "$actual" == "$PIN" ]] || {
     echo "Build checkout HEAD $actual does not match pinned $PIN; refusing to modify." >&2
     exit 1
   }
-  git -C "$SRC" apply --reverse --check "$PATCH" || {
-    echo "Existing build source does not match the expected Masiha patch; refusing to resume." >&2
-    exit 1
-  }
-  echo "Verified pinned source and applied patch. Resuming existing build."
+  verify_or_apply_masiha_patch
 elif [[ -e "$SRC" ]]; then
   echo "Existing source directory is not a valid git checkout: $SRC" >&2
   exit 1
 else
+  echo "=== Downloading pinned upstream 3x-ui source ==="
   git clone --filter=blob:none "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$PIN"
-  git -C "$SRC" apply --check "$PATCH"
-  git -C "$SRC" apply "$PATCH"
-  git -C "$SRC" diff --check
+  echo "Pinned upstream checkout complete: $PIN"
+  verify_or_apply_masiha_patch
 fi
 cd "$SRC"
+# Installing many npm packages from a blocked registry previously looked like a
+# frozen installer. Show the exact stage, try verified-integrity npm registries,
+# and enforce a per-registry timeout. package-lock integrity hashes remain active.
+run_npm_ci_with_fallback() {
+  local registry logfile attempt=0 status
+  local -a registries=(
+    "https://registry.npmjs.org/"
+    "https://registry.npmmirror.com/"
+    "https://mirrors.cloud.tencent.com/npm/"
+  )
+  if [[ -n "${MASIHA_NPM_REGISTRY:-}" ]]; then
+    [[ "$MASIHA_NPM_REGISTRY" == https://* ]] || {
+      echo "MASIHA_NPM_REGISTRY must use HTTPS." >&2
+      return 1
+    }
+    registries=("$MASIHA_NPM_REGISTRY" "${registries[@]}")
+  fi
+  local -A visited=()
+  for registry in "${registries[@]}"; do
+    [[ ! -v 'visited[$registry]' ]] || continue
+    visited["$registry"]=1
+    attempt=$((attempt+1))
+    logfile="$BUILD_ROOT/npm-ci-attempt-$attempt.log"
+    echo "=== Frontend npm install: attempt $attempt using $registry (max 420 seconds) ==="
+    echo "Progress messages appear every 15 seconds; npm logs: $logfile"
+    # npm ci checks every package against the lockfile's integrity hashes.
+    # Unlike npm install, it never updates package-lock.json.
+    timeout --kill-after=10s 420s \
+      env npm_config_registry="$registry" npm_config_fetch_retries=1 \
+      npm_config_fetch_timeout=20000 npm_config_fetch_retry_mintimeout=1000 \
+      npm_config_fetch_retry_maxtimeout=5000 \
+      npm ci --no-audit --no-fund --cache "$BUILD_ROOT/npm-cache" \
+      >"$logfile" 2>&1 &
+    local pid=$! start_time=$SECONDS
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 15
+      if kill -0 "$pid" 2>/dev/null; then
+        echo "npm ci still running: $((SECONDS-start_time))s elapsed; registry $registry"
+      fi
+    done
+    if wait "$pid"; then
+      [[ -x node_modules/.bin/vite && -x node_modules/.bin/tsc ]] || {
+        echo "npm ci ended but required frontend dependencies are missing." >&2
+        return 1
+      }
+      sha256sum package-lock.json > "$BUILD_ROOT/npm-lock.sha256"
+      echo "Frontend dependencies installed and lockfile recorded successfully."
+      return 0
+    else
+      status=$?
+      echo "npm install attempt $attempt failed or timed out (exit $status)." >&2
+      echo "Last npm log lines (paths and errors only):" >&2
+      tail -n 12 "$logfile" >&2 || true
+      echo "Switching to next npm registry without deleting the shared npm cache." >&2
+    fi
+  done
+  echo "ERROR: frontend dependencies could not be installed using available npm registries." >&2
+  echo "Check $BUILD_ROOT/npm-ci-attempt-*.log, then retry with a reachable MASIHA_NPM_REGISTRY." >&2
+  return 1
+}
 if [[ -s internal/web/dist/index.html && -d frontend/node_modules &&
       -x frontend/node_modules/.bin/vite &&
       -n "$(find internal/web/dist/assets -maxdepth 1 -type f -name '*.js' -print -quit 2>/dev/null)" ]]; then
   echo "Frontend assets already compiled in verified patched source; retaining them."
 else
+  echo "=== Preparing frontend dependencies (Node + npm) ==="
   cd frontend
-  npm ci --no-audit --no-fund
-  npm run typecheck
-  npm run build
+  if [[ -x node_modules/.bin/vite && -x node_modules/.bin/tsc &&
+        -s "$BUILD_ROOT/npm-lock.sha256" ]] &&
+       sha256sum -c --status "$BUILD_ROOT/npm-lock.sha256"; then
+    echo "Reusing verified frontend node_modules from previous successful npm ci."
+  else
+    run_npm_ci_with_fallback
+  fi
+  echo "=== Frontend TypeScript validation ==="
+  timeout --kill-after=5s 300s npm run typecheck
+  echo "=== Frontend Vite production build ==="
+  timeout --kill-after=5s 420s npm run build
   cd ..
+  echo "Frontend assets built successfully."
 fi
 # Download all dependencies of the actual x-ui binary, with a bounded timeout
 # per proxy. The Go build must run OFFLINE after prefetch: otherwise a partial
