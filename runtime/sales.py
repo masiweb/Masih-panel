@@ -200,7 +200,7 @@ def admin(req):
   a=req.get("action");s=settings(c)
   if a=="get":
    safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"])
-   return {"settings":safe,"plans":[dict(r) for r in c.execute("SELECT * FROM plans ORDER BY id DESC")],"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0]}
+   return {"settings":safe,"plans":[dict(r) for r in c.execute("SELECT * FROM plans ORDER BY id DESC")],"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0]}
   if a=="settings":return save_settings(c,req["values"])
   if a=="test":
    me=tg(s,"getMe",{});hook=tg(s,"getWebhookInfo",{})
@@ -243,6 +243,11 @@ def admin(req):
    for u in c.execute("SELECT id FROM users WHERE blocked=0"):enqueue(c,u["id"],body,key="broadcast:"+ref+":"+str(u["id"]))
   elif a=="retry":
    c.execute("UPDATE orders SET status='paid' WHERE id=? AND status='review'",(text(req["id"]),))
+  elif a=="retry_outbox":
+   # Admin-only local panel RPC. Message payload stays private in SQLite.
+   ident=integer(req["id"],1)
+   if not c.execute("UPDATE outbox SET done=0,attempts=0,next_try=0 WHERE id=? AND done=-1",(ident,)).rowcount:
+    raise ValueError("پیام ناموفق برای تلاش مجدد یافت نشد")
   else:raise ValueError("عملیات نامعتبر")
   audit(c,a,"admin operation")
  return True
