@@ -35,6 +35,8 @@ echo "=== Extension Python syntax ==="
 python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,runtime_config}.py
 echo "=== Shared quota and Telegram commerce tests (isolated temporary SQLite) ==="
 (cd /opt/masiha-vpn-extension && python3 -m unittest -q test_unified.py test_sales.py)
+echo "=== Actual saved administrator login ==="
+python3 "$(cd "$(dirname "$0")/.." && pwd)/deploy/check-panel-login.py"
 echo "=== Isolated native x-ui authenticated API smoke ==="
 (cd /opt/masiha-vpn-extension && MASIHA_TEST_BINARY=/usr/local/x-ui/x-ui python3 smoke_panel.py)
 echo "=== OpenConnect syntax ==="
