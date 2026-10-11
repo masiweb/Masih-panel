@@ -209,9 +209,27 @@ PY
 python3 "$REPO_ROOT/deploy/bootstrap-inbounds.py" \
   --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
   --xray /usr/local/x-ui/bin/xray-linux-amd64
+# The upstream installer creates a RANDOM admin account. An earlier 'setting'
+# invocation may report success while the final database still contains that
+# random username. Reassert the saved credentials while the database is
+# offline, and inspect persisted SQLite state before ANY extension starts.
+echo "=== Final admin credentials: persist and validate ==="
+/usr/local/x-ui/x-ui setting -username "$ADMIN_USER" -password "$ADMIN_PASS" >/dev/null
+python3 - "$ADMIN_USER" <<'PY'
+import sqlite3,sys
+with sqlite3.connect("file:/etc/x-ui/x-ui.db?mode=ro",uri=True) as db:
+ row=db.execute("SELECT username FROM users ORDER BY id LIMIT 1").fetchone()
+if row is None or row[0]!=sys.argv[1]:
+ raise SystemExit("ERROR: installed x-ui admin username differs from saved credentials")
+print("Native x-ui administrator persisted in SQLite: PASS")
+PY
 # Starting here also loads the patched Masiha binary instead of the
 # original upstream installer process.
 systemctl enable --now x-ui.service
+# Verify the LIVE login before the commerce worker starts: repeated failed
+# internal logins otherwise block the localhost IP for several minutes.
+echo "=== Verify real administrator login before enabling commerce ==="
+python3 "$REPO_ROOT/deploy/check-panel-login.py"
 # Native upstream installer had already started x-ui before its binary was replaced.
 systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
@@ -220,8 +238,9 @@ MASIHA_EXPECT_DEFAULT_INBOUNDS=1 bash "$REPO_ROOT/deploy/verify-install.sh"
 # This is the ONLY point where the marker can be removed; verification proves
 # service health. Subsequent --resume calls must refuse normal installations.
 rm -f "$FINALIZE_MARKER"
-# Print credentials immediately on the terminal, ONLY after health checks pass.
-# Keep a 0600 copy for recovery; do not print during partial/failed installs.
+# Print credentials immediately on the terminal, ONLY after the LIVE login
+# succeeds and all service health checks pass. Keep a root-only recovery copy.
+# This is deliberately NOT printed during partial/failed installs.
 printf '\n===============================================\n'
 printf ' MASIHA VPN INSTALLED SUCCESSFULLY\n'
 printf '===============================================\n'
