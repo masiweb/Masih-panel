@@ -247,6 +247,9 @@ class Commerce(unittest.TestCase):
    self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],original)
    self.assertEqual(c.execute("SELECT COUNT(*) FROM ledger WHERE user_id=102").fetchone()[0],0)
    with self.assertRaises(ValueError):s.order(c,102,pid,"any:second",trial=True)
+   with self.assertRaisesRegex(ValueError,"قبلاً تست رایگان"):
+    w.handle(c,{"update_id":301,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"trialpick:"+str(pid)}})
    with self.assertRaises(ValueError):s.order(c,101,pid,"try:charged",trial=False,card=True)
  def test_trial_cannot_be_paid_or_quoted_even_when_its_price_is_zero(self):
   with patch.object(s,"inbound_list",return_value=[{"id":1,"enable":True,"protocol":"vless"}]):
