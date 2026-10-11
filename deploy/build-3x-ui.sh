@@ -134,7 +134,23 @@ else
   rm -f "$BUILD_ROOT/x-ui.new"
   # If a dependency is still missing, Go now reports it immediately instead
   # of retrying an unreachable remote server for an unbounded period.
-  env GOPROXY=off GOTOOLCHAIN=local go build -mod=readonly -o "$BUILD_ROOT/x-ui.new" .
+  # Emit a heartbeat during CPU-heavy first compilation; no network access is
+  # allowed, and the 20-minute watchdog prevents a stuck compiler running forever.
+  timeout --kill-after=10s 1200s env GOPROXY=off GOTOOLCHAIN=local \
+    go build -mod=readonly -o "$BUILD_ROOT/x-ui.new" . &
+  build_pid=$!
+  start_time=$SECONDS
+  while kill -0 "$build_pid" 2>/dev/null; do
+    sleep 15
+    if kill -0 "$build_pid" 2>/dev/null; then
+      echo "Go compilation in progress: $((SECONDS-start_time))s elapsed (no network downloads)"
+    fi
+  done
+  if ! wait "$build_pid"; then
+    echo "ERROR: offline Go compilation failed or exceeded 20 minutes." >&2
+    echo "All fetched modules stay cached. Fix the reported error and rerun." >&2
+    exit 1
+  fi
   chmod 0755 "$BUILD_ROOT/x-ui.new"
   mv -f "$BUILD_ROOT/x-ui.new" "$BUILD_ROOT/x-ui"
   (cd "$BUILD_ROOT" && sha256sum x-ui > x-ui.sha256)
