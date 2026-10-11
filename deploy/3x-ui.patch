@@ -1718,7 +1718,7 @@ index 5f5b2ae..d7722eb 100644
  	gLink.GET(":subid", a.subs)
  	gLink.HEAD(":subid", a.subs)
  	gLink.GET(":subid/hwid-status", a.hwidStatus)
-+	gink.GET(":subid/vpn", a.masihaProfiles)
++	gLink.GET(":subid/vpn", a.masihaProfiles)
 +	gLink.GET(":subid/vpn/:client/:protocol", a.masihaProfiles)
  	gLink.HEAD(":subid/hwid-status", a.hwidStatus)
  	if a.jsonEnabled {
