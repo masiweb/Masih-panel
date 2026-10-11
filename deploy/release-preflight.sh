@@ -5,11 +5,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 PIN='7ef22f94c950ff09f0870e2295fa65ad5968742c'
 echo "=== Masiha release preflight ==="
-for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/build-3x-ui.sh deploy/verify-install.sh; do
+for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/build-3x-ui.sh deploy/verify-install.sh deploy/repair-panel-login.sh; do
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/check-panel-login.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -43,7 +43,8 @@ for f in runtime/manager.py runtime/unified.py runtime/worker.py runtime/sales.p
          runtime/sales_worker.py runtime/runtime_config.py \
          runtime/vpn-account-hook.sh runtime/smoke_panel.py \
          runtime/test_sales.py runtime/test_unified.py \
-         deploy/bootstrap-inbounds.py deploy/finalize-ubuntu-24.04.sh \
+         deploy/bootstrap-inbounds.py deploy/check-panel-login.py \
+         deploy/repair-panel-login.sh deploy/finalize-ubuntu-24.04.sh \
          deploy/3x-ui.patch; do
   [[ -s "$f" ]] || { echo "Missing essential release file: $f" >&2;exit 2; }
 done
