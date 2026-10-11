@@ -17,16 +17,20 @@ sudo apt-get install -y git ca-certificates curl
 git clone https://github.com/masiweb/Masih-panel.git
 cd Masih-panel
 git log -1 --oneline
-sudo env DOMAIN="vpn.example.com" EMAIL="admin@example.com" \
-  PANEL_PATH="/xui/" PANEL_ADMIN_USER="admin" \
-  bash deploy/install-ubuntu-24.04.sh
+# شیوه پیشنهادی: نصب تعاملی؛ دامنه و ایمیل در ترمینال پرسیده می‌شوند.
+sudo bash deploy/install-ubuntu-24.04.sh
+
+# یا برای اتوماسیون (بدون سؤال):
+# sudo env DOMAIN="vpn.example.com" EMAIL="admin@example.com" \
+#   PANEL_PATH="/xui/" PANEL_ADMIN_USER="admin" \
+#   bash deploy/install-ubuntu-24.04.sh
 ```
 
-نام دامنه و ایمیل را جایگزین کنید. این دستور **تنها روی سیستم تازه** مجاز است؛ اگر `/etc/x-ui/x-ui.db` یا x-ui نصب باشد، برنامه به‌جای بازنویسی آن متوقف می‌شود.
+در نصب تعاملی، نام دامنه (با رکورد A که به IP همین سرور اشاره می‌کند) و ایمیل صدور گواهی SSL از شما پرسیده می‌شوند. نصب‌کننده تلاش می‌کند گواهی Let's Encrypt را خودکار با Certbot دریافت کند، سپس تمدید خودکار را برای Nginx و ocserv تنظیم می‌کند. پورت عمومی TCP/80 برای HTTP-01 لازم است. این دستور **تنها روی سیستم تازه** مجاز است؛ اگر `/etc/x-ui/x-ui.db` یا x-ui نصب باشد، برنامه به‌جای بازنویسی آن متوقف می‌شود.
 
 عملیات نصب: دریافت Go 1.27.1 و Node 24.21.0، واکشی upstream از `MHSanaei/3x-ui` در commit `7ef22f94c950ff09f0870e2295fa65ad5968742c`، اعمال patch اختصاصی، typecheck و build؛ نصب وابستگی‌ها و Xray با نصب‌کننده upstream؛ جایگزینی باینری اختصاصی؛ دریافت SSL با Certbot؛ تنظیم Nginx و پنل loopback؛ تولید CA اختصاصی EasyRSA و کانفیگ OpenVPN؛ پیکربندی ocserv؛ فعال‌سازی سرویس مشترک سهمیه/انقضا/ربات.
 
-رمز اولیه پنل به‌صورت تصادفی روی **همان سرور** ایجاد و فقط در `/root/masiha-vpn-initial-login.env` با دسترسی root ذخیره می‌شود:
+**بعد از نصب موفق، نصب‌کننده آدرس پنل، نام کاربری و رمز عبور تصادفی را خودکار در همان ترمینال نشان می‌دهد.** برای بازیابی بعدی، همان اطلاعات در `/root/masiha-vpn-initial-login.env` با دسترسی root ذخیره می‌شود:
 
 ```bash
 sudo cat /root/masiha-vpn-initial-login.env
@@ -42,6 +46,10 @@ sudo cat /root/masiha-vpn-initial-login.env
 ۴. کاربر جدید را در پنل ایجاد و لینک ساب او را باز کنید. پردازشگر مشترک باید حساب‌های OpenVPN و OpenConnect را برای همان مشتری تولید کند؛ حجم و تاریخ انقضا از اشتراک Xray خوانده می‌شود، نه سهمیه مستقل. فایل OpenVPN و اطلاعات OpenConnect در صفحه اشتراک / VPN Profiles قرار می‌گیرند.
 
 **نکته:** اتصال واقعی از اینترنت خارجی، QR code، فایل‌ها، ترافیک مشترک و دریافت پیام ربات را با حساب آزمایشی بررسی کنید. عبور تست‌های کامپایل جای این تست‌ها را نمی‌گیرد.
+
+### نصب ناقص و خطای دانلود ۴۰۴
+
+اگر بعد از `apt-get` خطای `curl: (22) 404` دیدید و `x-ui: command not found` یا نبود فایل رمز اولیه را مشاهده کردید، نصب به مرحله ایجاد حساب نرسیده است. فایل رمز را با `nano` دستی نسازید؛ رمز واقعی وجود ندارد. اسکریپت جدید برای دانلود Go و Node از آدرس جایگزین استفاده می‌کند و SHA-256 آرشیو را بررسی می‌کند. ابتدا در پوشه مخزن `git pull --ff-only origin main` و سپس `sudo bash deploy/install-ubuntu-24.04.sh` اجرا کنید. **اگر هشدار نصب قبلی دریافت شد، اسکریپت را دور نزنید** و سرور را بدون پشتیبان پاک‌سازی نکنید. نصب کامل روی یک سرور تازه هنوز به‌صورت عملی تأیید نشده است.
 
 ## ۴. آزمون، لاگ و عیب‌یابی
 
