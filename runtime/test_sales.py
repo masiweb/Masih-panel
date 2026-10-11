@@ -378,4 +378,19 @@ class Commerce(unittest.TestCase):
    name=json.loads(c.execute("SELECT data FROM services WHERE id='existing-two'").fetchone()[0])["label"]
    self.assertRegex(name,r"^sales-[a-z0-9]{5}$")
    self.assertNotEqual(name.casefold(),"sales")
+ def test_name_persists_after_provision_and_renewal(self):
+  with s.conn() as c:
+   s.order(c,101,1,"new-service",label="My Company")
+   def fake(req):
+    return {"users":[]} if req["action"]=="list" else {}
+   with patch.object(s,"vpn",side_effect=fake):
+    s.provision(c,c.execute("SELECT * FROM orders WHERE id='new-service'").fetchone())
+    c.commit()
+    service=c.execute("SELECT * FROM services").fetchone()
+    self.assertEqual(json.loads(service["data"])["label"],"My Company")
+    s.order(c,101,1,"renew-service",renew=service["id"])
+    s.provision(c,c.execute("SELECT * FROM orders WHERE id='renew-service'").fetchone())
+   final=c.execute("SELECT * FROM services WHERE id=?",(service["id"],)).fetchone()
+   self.assertEqual(json.loads(final["data"])["label"],"My Company")
+   self.assertEqual(json.loads(final["plan"])["_display_name"],"My Company")
 if __name__=="__main__":unittest.main()
