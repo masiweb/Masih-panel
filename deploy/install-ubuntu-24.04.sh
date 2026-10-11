@@ -41,6 +41,16 @@ ADMIN_USER="${PANEL_ADMIN_USER:-admin}"
   { echo "Invalid PANEL_PATH" >&2; exit 1; }
 [[ "$ADMIN_USER" =~ ^[a-zA-Z0-9_-]{3,30}$ ]] ||
   { echo "Invalid PANEL_ADMIN_USER" >&2; exit 1; }
+# DNS validation belongs BEFORE source downloads and before installing x-ui.
+# If DNS is missing, the operator can fix it and retry without risking a
+# half-installed panel that the fresh-server guard would then refuse.
+echo "=== Preflight: validating DNS A record for $DOMAIN ==="
+if ! timeout 20s getent ahostsv4 "$DOMAIN" >/dev/null; then
+  echo "ERROR: No resolvable IPv4 DNS A record for $DOMAIN." >&2
+  echo "Point this domain to the new server and rerun before installing x-ui." >&2
+  exit 1
+fi
+echo "DNS A record resolves for $DOMAIN. Ensure TCP/80 and TCP/443 reach this host."
 for path in /etc/x-ui/x-ui.db /etc/masiha-vpn-extension/users.db /usr/local/x-ui/x-ui; do
   [[ ! -e "$path" ]] || { echo "Existing installation detected at $path; do NOT run this fresh-host installer. See migration guide." >&2; exit 1; }
 done
@@ -174,10 +184,7 @@ p.write_text(json.dumps({'domain':sys.argv[1],'panel_path':sys.argv[2]},indent=2
 p.chmod(0o600)
 PY
 # ACME HTTP-01 needs public TCP/80 and the DNS A record to target this host.
-getent ahostsv4 "$DOMAIN" >/dev/null || {
-  echo "The domain has no resolvable A record. Update DNS before requesting SSL." >&2
-  exit 1
-}
+# Domain was validated before performing any installation changes.
 systemctl enable --now nginx
 echo "=== Stage 3/5: Obtain Let's Encrypt certificate for $DOMAIN ==="
 certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos \
