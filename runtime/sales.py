@@ -219,6 +219,7 @@ def plan_overview(c):
    SUM(CASE WHEN status IN ('awaiting_receipt','receipt_review','paid','review') THEN 1 ELSE 0 END) AS pending
    FROM orders
    WHERE json_extract(plan,'$.id')=? AND renew_id='' AND status!='cancelled'""",(p["id"],)).fetchone()
+  p["has_history"]=bool(c.execute("SELECT 1 FROM orders WHERE json_extract(plan,'$.id')=? LIMIT 1",(p["id"],)).fetchone())
   p["sold"]=totals["committed"]
   p["delivered"]=totals["fulfilled"] or 0
   p["pending"]=totals["pending"] or 0
