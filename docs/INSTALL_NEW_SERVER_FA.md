@@ -79,6 +79,27 @@ sudo bash deploy/finalize-ubuntu-24.04.sh --resume
 
 **محدودیت تست:** صدور واقعی CA، گواهی سرور و CRL با Easy-RSA و شرط محافظت از سرور فعال جداگانه تأیید شده‌اند؛ اجرای end-to-end روی همان سرور تازه هنوز از راه دور تأیید نشده است.
 
+### خروج بی‌صدا پس از `=== Checking source patch integrity ===`
+
+اگر پیام‌های `Masiha patch is already fully applied; source is ready.` و `=== Checking source patch integrity ===` را می‌بینید و بدون هیچ خروجی خطایی فوراً به `root@ubuntu:...#` برمی‌گردید، **patch اختصاصی نصب شده اما build متوقف شده است**. در نسخه قبلی یک `git diff --check` اضافی با timeout اجرا می‌شد؛ این دستور برای تأیید صحت patch لازم نیست و می‌تواند با خروجی ناموفق یا timeout، زیر `set -e` نصب را بدون پیام مناسب قطع کند. نسخه اصلاح‌شده با یک `git apply --reverse --check` صحت patch را کنترل می‌کند، بررسی تکراری را حذف می‌کند و برای خطاهای دیگر شماره خط و کد خروج ثبت می‌کند.
+
+روی یک سرور تازه که نصب آن هنوز به مرحله ایجاد پنل نرسیده است، از همان checkout GitHub اجرا کنید:
+
+```bash
+cd ~/Masih-panel
+git pull --ff-only origin main
+sudo bash deploy/install-ubuntu-24.04.sh
+```
+
+پوشه `/opt/masiha-vpn-build-20261011` را حذف نکنید. انتظار می‌رود پس از `Masiha source integrity verified.`، پیام `=== Preparing frontend dependencies (Node + npm) ===` را ببینید. اگر دوباره نصب بی‌صدا قطع شد، وضعیت آخرین مرحله را با کد خروج و خطای نصب جمع‌آوری کنید:
+
+```bash
+sudo bash deploy/install-ubuntu-24.04.sh 2>&1 | tee /root/masiha-installer-debug.log
+echo "installer_exit=${PIPESTATUS[0]}"
+```
+
+**هشدار:** لاگ نصب ممکن است در پایان شامل رمز/توکن اولیه باشد؛ کل لاگ را به‌صورت عمومی ارسال نکنید. فقط خطوط مربوط به نخستین خطا، بدون اطلاعات محرمانه، کافی هستند.
+
 ### توقف پس از `HEAD is now at 7ef22f94` و دانلود frontend
 
 اگر خروجی پس از `HEAD is now at 7ef22f94` بدون خطا و بدون پیشرفت می‌ماند، دانلود سورس و checkout پایان یافته‌اند؛ مراحل بعدی نصب‌کننده **اعمال patch اختصاصی، نصب بسته‌های npm، بررسی TypeScript و ساخت Vite** هستند. در نسخه قبلی هیچ پیام مرحله‌ای پیش از `npm ci` چاپ نمی‌شد و دانلود بسته‌ها ممکن بود مدت زیادی بدون خروجی متوقف بماند.
