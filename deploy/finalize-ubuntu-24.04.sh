@@ -152,6 +152,36 @@ systemctl daemon-reload
 # briefly so SQLite is offline while the default Xray inbounds are initialized.
 # If any inbound is already present, the initializer leaves all inbounds alone.
 systemctl stop x-ui.service
+# The upstream installer chooses a random subscription path that does NOT
+# match our Nginx /sub/ proxy. Configure the complete HTTPS subscription URL
+# before opening the Xray services, and listen only on loopback.
+python3 - "$DOMAIN" <<'PY'
+import sqlite3,sys
+domain=sys.argv[1]
+db=sqlite3.connect('/etc/x-ui/x-ui.db',timeout=30)
+try:
+ db.execute('BEGIN IMMEDIATE')
+ # Fresh-install protection; existing customers must never lose old URLs.
+ ct=db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='client_traffics'").fetchone()
+ if ct and db.execute("SELECT count(*) FROM client_traffics").fetchone()[0]:
+  raise RuntimeError('Existing clients detected; refusing to change subscription URI')
+ values={
+  'subEnable':'true','subListen':'127.0.0.1','subPort':'2096',
+  'subPath':'/sub/','subDomain':domain,'subURI':'https://'+domain+'/sub/',
+ }
+ for key,value in values.items():
+  if db.execute('SELECT 1 FROM settings WHERE key=?',(key,)).fetchone():
+   db.execute('UPDATE settings SET value=? WHERE key=?',(value,key))
+  else:
+   db.execute('INSERT INTO settings(key,value) VALUES(?,?)',(key,value))
+ db.commit()
+ print('HTTPS subscription configured: https://'+domain+'/sub/')
+except Exception:
+ db.rollback()
+ raise
+finally:
+ db.close()
+PY
 python3 "$REPO_ROOT/deploy/bootstrap-inbounds.py" \
   --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
   --xray /usr/local/x-ui/bin/xray-linux-amd64
