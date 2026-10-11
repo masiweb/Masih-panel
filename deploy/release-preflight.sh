@@ -17,6 +17,8 @@ with open(sys.argv[1],encoding="utf-8") as handle:
 PY
 done
 echo "Python syntax OK"
+echo "=== Isolated Xray presets test (no server changes) ==="
+python3 -m unittest -q deploy/test_bootstrap_inbounds.py
 git apply --stat deploy/3x-ui.patch >/dev/null
 test -s deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/SalesBotPage.css' deploy/3x-ui.patch
