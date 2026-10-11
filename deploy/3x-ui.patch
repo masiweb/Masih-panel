@@ -1324,65 +1324,168 @@ index 0000000..5181f3d
 +  })}
 + </Space>;
 +}
+diff --git a/frontend/src/pages/vpn/SalesBotPage.css b/frontend/src/pages/vpn/SalesBotPage.css
+new file mode 100644
+index 0000000..66e9ae5
+--- /dev/null
++++ b/frontend/src/pages/vpn/SalesBotPage.css
+@@ -0,0 +1,79 @@
++/* Dedicated accessible light surfaces: the parent x-ui can be in dark mode. */
++.masiha-sales {
++  --masiha-text: #172b48;
++  --masiha-muted: #52637b;
++  --masiha-border: #d4dfea;
++  background: linear-gradient(145deg,#f1f6fd 0%,#eaf2ff 56%,#f5f8fc 100%);
++  color: var(--masiha-text);
++  border: 1px solid #d7e2f1;
++  border-radius: 20px;
++  padding: clamp(14px,2.4vw,30px);
++  min-height: 72vh;
++  width: 100%;
++  direction: rtl;
++}
++.masiha-sales .ant-typography,
++.masiha-sales .ant-form-item-label > label,
++.masiha-sales .ant-card-head-title,
++.masiha-sales .ant-table,
++.masiha-sales .ant-table-cell,
++.masiha-sales .ant-tabs-tab-btn {color: var(--masiha-text);}
++.masiha-sales .ant-typography-secondary,
++.masiha-sales .ant-form-item-extra {color:var(--masiha-muted)!important;}
++.masiha-sales-hero {
++  background:#fff;
++  border:1px solid var(--masiha-border);
++  border-radius:18px;
++  padding:22px 25px;
++  display:flex;gap:20px;justify-content:space-between;align-items:center;flex-wrap:wrap;
++  box-shadow:0 6px 24px rgba(36,68,115,.06);
++}
++.masiha-sales-eyebrow {display:block;color:#2563eb!important;letter-spacing:.1em;font-size:11px;font-weight:800;margin-bottom:6px;}
++.masiha-sales-hero-status {display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:#f2f7ff;border:1px solid #d9e7fb;border-radius:14px;padding:10px 14px;}
++.masiha-sales .ant-tabs-nav {
++  background:#fff!important;
++  border:1px solid var(--masiha-border); border-radius:14px;
++  padding:10px!important;margin:0 0 20px!important;
++  box-shadow:0 4px 20px rgba(36,68,115,.05);
++}
++.masiha-sales .ant-tabs-nav::before {border-bottom:0!important;}
++.masiha-sales .ant-tabs-nav-list {flex-wrap:wrap;gap:6px;transform:none!important;}
++.masiha-sales .ant-tabs-tab {padding:10px 13px!important;margin:0!important;background:#f2f6fb!important;border:1px solid #dbe5f1;border-radius:10px;transition:background .2s ease;}
++.masiha-sales .ant-tabs-tab .ant-tabs-tab-btn {color:#1f344f!important;font-size:13px;font-weight:700;opacity:1!important;}
++.masiha-sales .ant-tabs-tab:hover {background:#e3eeff!important;}
++.masiha-sales .ant-tabs-tab.ant-tabs-tab-active {background:#1d4ed8!important;border-color:#1d4ed8;box-shadow:0 4px 14px rgba(29,78,216,.18);}
++.masiha-sales .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {color:#fff!important;text-shadow:none!important;}
++.masiha-sales .ant-tabs-ink-bar {display:none;}
++.masiha-sales .ant-tabs-content-holder {min-height:160px;color:var(--masiha-text);}
++.masiha-sales .ant-card,.masiha-sales .ant-table-wrapper {background:#fff;border:1px solid var(--masiha-border);border-radius:14px;overflow:hidden;}
++.masiha-sales .ant-card-head {background:#f8fbff!important;border-bottom:1px solid #e5edf5;}
++.masiha-sales .ant-alert {border:1px solid #b8d9f6;border-radius:12px;}
++.masiha-sales .ant-alert-message {font-weight:800;color:#15477d!important;}
++.masiha-sales .ant-alert-description {color:#2b5276!important;line-height:1.9;}
++.masiha-sales .ant-table-thead>tr>th {background:#eaf1fa!important;color:#162c48!important;font-weight:800!important;}
++.masiha-sales .ant-table-tbody>tr>td {background:#fff!important;color:#263750!important;border-bottom:1px solid #e6edf5;}
++.masiha-sales .ant-table-tbody>tr:hover>td {background:#eef6ff!important;}
++.masiha-sales .ant-table-tbody .ant-typography {color:#1d3350;}
++.masiha-sales .ant-input,.masiha-sales .ant-input-number,.masiha-sales .ant-select-selector,.masiha-sales textarea {
++  background:#fff!important;color:#172b48!important;border-color:#bdcde0!important;
++}
++.masiha-sales .ant-tag {font-weight:700;}
++.masiha-sales-form-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start;}
++.masiha-sales-section {height:100%;}
++.masiha-sales-section-wide {grid-column:1/-1;}
++.masiha-sales-switches {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;}
++.masiha-sales-switches .ant-form-item {margin:0;background:#f5f8ff;border:1px solid #e0e9f5;border-radius:11px;padding:10px 12px;}
++.masiha-sales-switches .ant-form-item-label {padding-bottom:6px!important;}
++.masiha-sales-numbers {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;}
++.masiha-sales-numbers .ant-input-number {width:100%;}
++.masiha-sales-form-actions {display:flex;justify-content:flex-start;margin-top:20px;padding:15px;background:#fff;border:1px solid var(--masiha-border);border-radius:12px;}
++@media(max-width:1100px) {
++ .masiha-sales-form-grid {grid-template-columns:1fr;}
++ .masiha-sales-numbers {grid-template-columns:repeat(2,minmax(0,1fr));}
++}
++@media(max-width:640px) {
++ .masiha-sales {padding:12px;border-radius:12px;}
++ .masiha-sales-hero {padding:14px;}
++ .masiha-sales-switches,.masiha-sales-numbers {grid-template-columns:1fr;}
++ .masiha-sales .ant-tabs-tab {padding:8px 10px!important;}
++}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 0000000..2f7b1b4
+index 0000000..6b25038
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,107 @@
 +import {useEffect,useState} from 'react';
-+import {Alert,App,Button,Card,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography} from 'antd';
++import {Alert,App,Button,Card,ConfigProvider,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography,theme} from 'antd';
++import './SalesBotPage.css';
 +import {HttpUtil} from '@/utils';
 +type Row=Record<string,any>;
 +export default function SalesBotPage(){
 + const {message}=App.useApp();const [data,setData]=useState<Row>();const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [inbounds,setInbounds]=useState<Row[]>([]);
 + const [settings]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
-+ const [planOpen,setPlanOpen]=useState(false);const chosenProtocol=Form.useWatch('protocol',plan);
++ const [planOpen,setPlanOpen]=useState(false);const chosenProtocol=Form.useWatch('protocol',plan);const chosenTrial=Form.useWatch('is_trial',plan);
 + const call=async(action:string,values:Row={})=>{const r=await HttpUtil.post('/panel/api/sales-bot',{action,...values},{headers:{'Content-Type':'application/json'},silent:true,timeout:65000});if(!r?.success)throw new Error(r?.msg||'عملیات ناموفق');return r.obj as any;};
 + const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:''});setError('');}catch(e){setError(String(e))}};
 + useEffect(()=>{void load();call('inbounds').then(setInbounds).catch(()=>{});},[]);
 + const run=async(action:string,values:Row={})=>{setBusy(true);try{const r=await call(action,values);message.success(action==='test'?'اتصال تأیید شد: @'+r.username:'ذخیره شد');await load();return true;}catch(e){message.error(String(e));return false;}finally{setBusy(false)}};
 + const switches:Record<string,string>={enabled:'فعال‌بودن ربات',buy:'فروش اشتراک',renew:'تمدید اشتراک',wallet:'کیف پول و شارژ',transfer:'انتقال اعتبار',trial:'تست رایگان یک‌بار برای هر کاربر',discounts:'کد تخفیف و هدیه',referrals:'زیرمجموعه و کمیسیون',reseller:'قیمت ویژه نمایندگان',notifications:'هشدار انقضا',require_contact:'دریافت شماره متعلق به حساب تلگرام',self_delete:'اجازه حذف اشتراک توسط مشتری',bulk:'خرید انبوه نمایندگان',rename:'نام دلخواه سرویس',rotate:'تعویض لینک و اطلاعات Xray',new_user_notice:'اعلان عضو جدید به مدیر',zarinpal:'پرداخت آنلاین زرین‌پال'};
-+ const editPlan=(p?:Row,duplicate=false)=>{plan.resetFields();plan.setFieldsValue(p?{...p,id:duplicate?undefined:p.id,name:duplicate?p.name+' — کپی':p.name,inbounds:typeof p.inbounds==='string'?JSON.parse(p.inbounds):p.inbounds,active:duplicate?false:!!p.active}:{protocol:'xray',category:'عمومی',price:0,days:30,gb:0,capacity:0,active:true,inbounds:[]});setPlanOpen(true)};
++ const editPlan=(p?:Row,duplicate=false)=>{plan.resetFields();plan.setFieldsValue(p?{...p,id:duplicate?undefined:p.id,name:duplicate?p.name+' — کپی':p.name,inbounds:typeof p.inbounds==='string'?JSON.parse(p.inbounds):p.inbounds,active:duplicate?false:!!p.active,is_trial:!!p.is_trial}:{protocol:'xray',category:'عمومی',price:0,days:30,gb:1,capacity:0,active:true,is_trial:false,inbounds:[]});setPlanOpen(true)};
 + const table=(rows:Row[],columns:any[])=> <Table rowKey={(r)=>String(r.id??r.code)} dataSource={rows} columns={columns} pagination={{pageSize:15}} scroll={{x:900}}/>;
 + const base=[
 + {title:'شناسه',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'مبلغ (تومان)',dataIndex:'price'},{title:'وضعیت',dataIndex:'status'}];
-+ return <div dir="rtl" style={{padding:24}}><Space orientation="vertical" style={{width:'100%'}} size="large">
-+ <Typography.Title level={2}>تنظیمات ربات فروش</Typography.Title>
++ return <ConfigProvider direction="rtl" theme={{algorithm:theme.defaultAlgorithm,token:{colorPrimary:'#1d4ed8',colorText:'#16243b',colorTextSecondary:'#52627a',colorBgBase:'#ffffff',colorBgContainer:'#ffffff',colorBorder:'#cbd5e1',colorFillAlter:'#f2f6fc',fontSize:14,borderRadius:10},components:{Tabs:{inkBarColor:'#2563eb',itemColor:'#334155',itemSelectedColor:'#1d4ed8',itemHoverColor:'#1d4ed8'},Table:{headerBg:'#eef3f9',headerColor:'#172a44',rowHoverBg:'#eff6ff'},Card:{headerBg:'#f7faff'}}}}>
++ <div dir="rtl" className="masiha-sales"><Space orientation="vertical" style={{width:'100%'}} size="large">
++ <header className="masiha-sales-hero"><div><Typography.Text className="masiha-sales-eyebrow">MASIHA VPN MANAGER</Typography.Text><Typography.Title level={2} style={{margin:0,color:'#132a48'}}>مدیریت ربات فروش تلگرام</Typography.Title><Typography.Text style={{color:'#475569'}}>مدیریت اشتراک‌ها، تست رایگان، تراکنش‌ها و پیام‌های ربات از یک محل</Typography.Text></div><div className="masiha-sales-hero-status"><Tag color={data?.settings.enabled?'green':'default'}>{data?.settings.enabled?'ربات فعال':'ربات غیرفعال'}</Tag><Typography.Text strong>{data?.runtime.username?'@'+data.runtime.username:'توکن هنوز بررسی نشده'}</Typography.Text><Button onClick={()=>void load()}>به‌روزرسانی</Button></div></header>
 + {error&&<Alert type="error" title={error}/>}
-+ <Space><Tag color={data?.settings.enabled?'green':'default'}>{data?.settings.enabled?'فعال':'خاموش'}</Tag><Typography.Text>{data?.runtime.username?'@'+data.runtime.username:'توکن هنوز بررسی نشده'}</Typography.Text><Button onClick={()=>void load()}>به‌روزرسانی</Button></Space>
 + {data?.runtime.error&&<Alert type="warning" title={data.runtime.error}/>}
-+ <Alert type="info" title="راه‌اندازی" description="توکن BotFather و آیدی عددی مدیر را ذخیره کنید، «بررسی اتصال» را بزنید، پلن و اطلاعات پرداخت را تنظیم کنید و سپس ربات را فعال کنید. ربات از polling استفاده می‌کند و نباید webhook یا پردازشگر دیگری به همین توکن متصل باشد."/>
++ <Alert showIcon type="info" title="راهنمای راه‌اندازی" description="ابتدا توکن BotFather و آیدی مدیر را در اتصال و امکانات ثبت کنید. پس از ذخیره و بررسی اتصال، پلن فروش یا تست رایگان بسازید. حالت تست بدون پرداخت و یک‌بار برای هر کاربر فعال می‌شود."/>
 + <Tabs items={[
-+ {key:'settings',label:'اتصال و امکانات',children:<Card><Form form={settings} layout="vertical" onFinish={v=>void run('settings',{values:{...v,admins:String(v.admins).split(/[,،\s]+/).filter(Boolean).map(Number)}})}>
-+ <Form.Item label={'توکن ربات'+(data?.settings.token_set?' (ذخیره شده؛ خالی یعنی بدون تغییر)':'')} name="token"><Input.Password autoComplete="new-password" dir="ltr"/></Form.Item>
-+ <Form.Item label="آیدی عددی مدیران (با ویرگول جدا کنید)" name="admins" rules={[{required:true}]}><Input dir="ltr"/></Form.Item>
-+ <Form.Item label={'مرچنت زرین‌پال'+(data?.settings.merchant_set?' (ذخیره شده؛ خالی یعنی بدون تغییر)':'')} name="merchant_id"><Input.Password autoComplete="new-password" dir="ltr"/></Form.Item>
-+ <Form.Item label="پیام خوش‌آمد" name="welcome"><Input.TextArea/></Form.Item>
-+ <Form.Item label="متن راهنمای پشتیبانی" name="support"><Input.TextArea/></Form.Item>
-+ <Form.Item label="شماره کارت، نام صاحب حساب و راهنمای پرداخت (خالی: کارت‌به‌کارت خاموش)" name="card"><Input.TextArea/></Form.Item>
-+ <Form.Item label="کانال عضویت اجباری؛ مثال @channel (ربات باید مدیر کانال باشد)" name="channel"><Input dir="ltr"/></Form.Item>
-+ {Object.entries(switches).map(([key,label])=><Form.Item key={key} label={label} name={key} valuePropName="checked"><Switch/></Form.Item>)}
-+ <Form.Item label="کانال گزارش فروش؛ مثال @sales_channel" name="report_channel"><Input dir="ltr"/></Form.Item>
-+ <Form.Item label="هشدار حجم باقی‌مانده (درصد، Xray)" name="usage_warning_percent"><InputNumber min={0} max={100}/></Form.Item>
-+ <Form.Item label="درصد کمیسیون دعوت" name="commission"><InputNumber min={0} max={100}/></Form.Item>
-+ <Form.Item label="درصد تخفیف نمایندگان" name="reseller_discount"><InputNumber min={0} max={100}/></Form.Item>
-+ <Form.Item label="پلن تست" name="trial_plan"><Select options={(data?.plans||[]).map((p:Row)=>({value:p.id,label:p.name}))}/></Form.Item>
-+ <Form.Item label="هشدار چند روز پیش از انقضا" name="warning_days"><InputNumber min={0} max={100}/></Form.Item>
-+ <Space><Button type="primary" htmlType="submit" loading={busy}>ذخیره تنظیمات</Button><Button loading={busy} onClick={()=>void run('test')}>بررسی اتصال تلگرام</Button></Space>
-+ </Form></Card>},
++ {key:'settings',label:'اتصال و امکانات',children:<Form form={settings} className="masiha-sales-form" layout="vertical" onFinish={v=>void run('settings',{values:{...v,admins:String(v.admins).split(/[,،\s]+/).filter(Boolean).map(Number)}})}>
++  <div className="masiha-sales-form-grid">
++   <Card title="۱. اتصال و دسترسی ربات" className="masiha-sales-section">
++    <Form.Item label={'توکن BotFather'+(data?.settings.token_set?' — قبلاً ذخیره شده؛ برای حفظ آن خالی بگذارید':'')} name="token"><Input.Password autoComplete="new-password" dir="ltr" placeholder="توکن ربات تلگرام"/></Form.Item>
++    <Form.Item label="شناسه عددی مدیران (با ویرگول جدا کنید)" name="admins" rules={[{required:true,message:'حداقل یک مدیر تعریف کنید'}]}><Input dir="ltr" placeholder="123456789, 987654321"/></Form.Item>
++    <Form.Item label="کانال عضویت اجباری (اختیاری؛ مثال @channel)" name="channel"><Input dir="ltr"/></Form.Item>
++    <Button onClick={()=>void run('test')} loading={busy}>بررسی اتصال ربات تلگرام</Button>
++   </Card>
++   <Card title="۲. فروش و پرداخت" className="masiha-sales-section">
++    <Form.Item label="اطلاعات کارت‌به‌کارت؛ شماره کارت، نام صاحب حساب و توضیحات (اختیاری)" name="card"><Input.TextArea rows={3}/></Form.Item>
++    <Form.Item label={'مرچنت زرین‌پال'+(data?.settings.merchant_set?' — ذخیره شده؛ خالی یعنی بدون تغییر':'')} name="merchant_id"><Input.Password autoComplete="new-password" dir="ltr"/></Form.Item>
++    <Form.Item label="کانال گزارش فروش (اختیاری)" name="report_channel"><Input dir="ltr" placeholder="@sales_channel"/></Form.Item>
++   </Card>
++   <Card title="۳. متن پیام‌ها" className="masiha-sales-section">
++    <Form.Item label="متن خوشامدگویی" name="welcome"><Input.TextArea rows={3}/></Form.Item>
++    <Form.Item label="راهنمای پشتیبانی" name="support"><Input.TextArea rows={3}/></Form.Item>
++   </Card>
++   <Card title="۴. امکانات قابل فعال‌سازی" className="masiha-sales-section">
++    <Alert showIcon type="info" title="تست رایگان" description="با فعال‌کردن «تست رایگان»، پلن‌های مشخص‌شده به‌عنوان تست در تب پلن‌ها قابل دریافت بدون پرداخت می‌شوند. سهمیه هر کاربر فقط یک تست است." style={{marginBottom:16}}/>
++    <div className="masiha-sales-switches">
++     {Object.entries(switches).map(([key,label])=><Form.Item key={key} label={label} name={key} valuePropName="checked"><Switch/></Form.Item>)}
++    </div>
++   </Card>
++   <Card title="۵. محدودیت‌ها و سیاست‌های فروش" className="masiha-sales-section masiha-sales-section-wide">
++    <div className="masiha-sales-numbers">
++     <Form.Item label="هشدار مصرف (درصد حجم باقی‌مانده)" name="usage_warning_percent"><InputNumber min={0} max={100}/></Form.Item>
++     <Form.Item label="درصد کمیسیون دعوت" name="commission"><InputNumber min={0} max={100}/></Form.Item>
++     <Form.Item label="درصد تخفیف نمایندگی" name="reseller_discount"><InputNumber min={0} max={100}/></Form.Item>
++     <Form.Item label="هشدار چند روز قبل از پایان" name="warning_days"><InputNumber min={0} max={100}/></Form.Item>
++    </div>
++   </Card>
++  </div>
++  <div className="masiha-sales-form-actions"><Button type="primary" size="large" htmlType="submit" loading={busy}>ذخیره همه تنظیمات ربات</Button></div>
++ </Form>},
 + {key:'plans',label:'پلن‌ها و ظرفیت',children:<Space orientation="vertical" style={{width:'100%'}}>
-+  <Alert type="info" showIcon title="ساخت و مدیریت پلن‌ها" description="برای هر پلن Xray می‌توانید چند اینباند انتخاب کنید؛ حساب OpenVPN و OpenConnect همان مشترک با سهمیه و انقضای مشترک ساخته می‌شود. پلن‌های مستقل OpenVPN/OpenConnect در این نسخه سهمیه حجم ندارند."/>
++  <Alert type="info" showIcon title="ساخت و مدیریت پلن‌ها" description="برای اشتراک پولی یا تست رایگان، یک یا چند اینباند فعال Xray انتخاب کنید. پلن تست رایگان به‌طور خودکار بدون پرداخت به کاربر واجد شرایط تحویل می‌شود. حساب‌های OpenVPN و OpenConnect نیز برای مشترک یکپارچه ایجاد می‌شوند."/>
 +  <Space wrap>
 +   <Button type="primary" onClick={()=>editPlan()}>+ ساخت پلن جدید</Button>
 +   <Tag color="blue">کل پلن‌ها: {(data?.plans||[]).length}</Tag>
-+   <Tag color="green">فعال: {(data?.plans||[]).filter((p:Row)=>p.active).length}</Tag>
++   <Tag color="green">فعال: {(data?.plans||[]).filter((p:Row)=>p.active).length}</Tag><Tag color="purple">تست رایگان: {(data?.plans||[]).filter((p:Row)=>p.is_trial).length}</Tag>
 +   <Tag>اینباند فعال: {inbounds.filter(x=>x.enable).length}</Tag>
 +  </Space>
 +  {table(data?.plans||[],[
 +   {title:'عنوان و دسته',render:(_:unknown,r:Row)=><Space orientation="vertical" size={0}><Typography.Text strong>{r.name}</Typography.Text><Typography.Text type="secondary">{r.category}</Typography.Text></Space>},
-+   {title:'نوع سرویس',render:(_:unknown,r:Row)=>r.protocol==='xray'?<Tag color="blue">Xray + OpenVPN + OpenConnect</Tag>:<Tag>{r.protocol}</Tag>},
-+   {title:'قیمت (تومان)',render:(_:unknown,r:Row)=>Number(r.price).toLocaleString('fa-IR')},
++   {title:'نوع سرویس',render:(_:unknown,r:Row)=><Space direction="vertical" size={0}>{r.is_trial&&<Tag color="purple">🎁 تست رایگان</Tag>}{r.protocol==='xray'?<Tag color="blue">Xray + OpenVPN + OpenConnect</Tag>:<Tag>{r.protocol}</Tag>}</Space>},
++   {title:'قیمت (تومان)',render:(_:unknown,r:Row)=>r.is_trial?<Typography.Text strong style={{color:'#047857'}}>رایگان</Typography.Text>:Number(r.price).toLocaleString('fa-IR')},
 +   {title:'مدت',render:(_:unknown,r:Row)=>r.days+' روز'},
 +   {title:'حجم',render:(_:unknown,r:Row)=>r.gb?r.gb+' GB':'نامحدود / بدون سهمیه'},
 +   {title:'فروش / در انتظار',render:(_:unknown,r:Row)=><Space orientation="vertical" size={0}><Typography.Text>{r.sold||0} سفارش</Typography.Text><Typography.Text type="secondary">{r.pending||0} در انتظار</Typography.Text></Space>},
@@ -1415,9 +1518,9 @@ index 0000000..2f7b1b4
 + {key:'scope',label:'وضعیت امکانات',children:<Alert type="info" title="محدوده نسخه فعلی" description="خرید و تمدید، کیف پول، کارت‌به‌کارت با تأیید مدیر، اتصال زرین‌پال (نیازمند مرچنت و تست واقعی)، QR ساب Xray، تست، تخفیف و هدیه، کمیسیون دعوت، قیمت و خرید انبوه نماینده، نام دلخواه، تعویض لینک Xray، گزارش کانال، عضویت اجباری، دریافت شماره، پشتیبانی و پیام همگانی پیاده‌سازی شده‌اند. درگاه‌های نکست‌پی و رمزارزی، مهاجرت خودکار بین سرورها، واردکردن کانفیگ خارج از ربات، سهمیه حجمی OpenVPN/OpenConnect هنوز آماده نیستند. فروش Xray فعلاً روی اینباندهای موجود همین پنل است."/>}
 + ]}/>
 + </Space>
-+ <Modal width={740} open={planOpen} title={plan.getFieldValue("id")?"ویرایش پلن فروش":"ایجاد پلن فروش"} onCancel={()=>setPlanOpen(false)} confirmLoading={busy} onOk={async()=>{try{const v=await plan.validateFields();if(v.protocol!=="xray"){v.inbounds=[];v.gb=0;}if(await run('plan',{values:v}))setPlanOpen(false)}catch{}}} okText="ذخیره" cancelText="انصراف"><Form form={plan} layout="vertical"><Form.Item name="id" hidden><InputNumber/></Form.Item><Form.Item name="name" label="نام پلن" rules={[{required:true,message:"نام پلن را وارد کنید"}]}><Input placeholder="مثال: اشتراک ۳۰ روزه ۵۰ گیگ"/></Form.Item><Form.Item name="category" label="دسته"><Input/></Form.Item><Form.Item name="protocol" label="سرویس" rules={[{required:true}]}><Select onChange={()=>plan.setFieldsValue({inbounds:[],gb:0})} options={[{value:"xray",label:"اشتراک یکپارچه: Xray + OpenVPN + OpenConnect"},{value:"openvpn",label:"OpenVPN مستقل (بدون سهمیه حجمی)"},{value:"openconnect",label:"OpenConnect مستقل (بدون سهمیه حجمی)"}]}/></Form.Item><Form.Item name="inbounds" label={chosenProtocol==="xray"?"انتخاب اینباندهای اشتراک (انتخاب حداقل یک مورد)":"اینباندها فقط برای Xray هستند"} rules={chosenProtocol==="xray"?[{required:true,type:"array",min:1,message:"حداقل یک اینباند انتخاب کنید"}]:[]}><Select mode="multiple" disabled={chosenProtocol!=="xray"} optionFilterProp="label" showSearch placeholder="چند اینباند را انتخاب کنید" options={inbounds.filter(i=>i.enable&&['vless','vmess','trojan','shadowsocks','hysteria','tuic'].includes(i.protocol)).map(i=>({value:i.id,label:i.name+' / '+i.protocol}))}/></Form.Item><Form.Item name="price" label="قیمت فروش (تومان)" rules={[{required:true,message:"قیمت را وارد کنید"}]}><InputNumber style={{width:"100%"}} min={0} max={1000000000000} step={1000}/></Form.Item><Form.Item name="days" label="اعتبار (روز)" rules={[{required:true,message:"مدت اعتبار لازم است"}]}><InputNumber style={{width:"100%"}} min={1} max={3650}/></Form.Item><Form.Item name="gb" label="حجم گیگابایت (صفر = نامحدود؛ فقط Xray)"><InputNumber style={{width:"100%"}} disabled={chosenProtocol!=="xray"} min={0} max={100000}/></Form.Item><Form.Item name="capacity" label="حداکثر تعداد فروش جدید (صفر = بدون محدودیت)"><InputNumber style={{width:"100%"}} min={0} max={1000000}/></Form.Item><Form.Item name="active" label="فعال" valuePropName="checked"><Switch/></Form.Item></Form></Modal>
++ <Modal width={740} open={planOpen} title={plan.getFieldValue("id")?"ویرایش پلن فروش":"ایجاد پلن فروش"} onCancel={()=>setPlanOpen(false)} confirmLoading={busy} onOk={async()=>{try{const v=await plan.validateFields();if(v.protocol!=="xray"){v.inbounds=[];v.gb=0;}if(v.is_trial)v.price=0;if(await run('plan',{values:v}))setPlanOpen(false)}catch{}}} okText="ذخیره" cancelText="انصراف"><Form form={plan} layout="vertical"><Form.Item name="id" hidden><InputNumber/></Form.Item><Card size="small" style={{background:"#f0f6ff",marginBottom:16}}><Form.Item name="is_trial" label="نوع پلن: تست رایگان (بدون نیاز به پرداخت)" valuePropName="checked" style={{marginBottom:8}}><Switch checkedChildren="تست" unCheckedChildren="عادی"/></Form.Item><Typography.Text type="secondary">{chosenTrial?"این پلن فقط از منوی تست رایگان ربات قابل دریافت است، قیمت آن صفر می‌شود و هر کاربر تنها یک بار می‌تواند تست بگیرد.":"پلن عادی: خرید از کیف پول یا پرداخت کارت‌به‌کارت انجام می‌شود."}</Typography.Text></Card><Form.Item name="name" label="نام پلن" rules={[{required:true,message:"نام پلن را وارد کنید"}]}><Input placeholder="مثال: اشتراک ۳۰ روزه ۵۰ گیگ"/></Form.Item><Form.Item name="category" label="دسته"><Input/></Form.Item><Form.Item name="protocol" label="سرویس" rules={[{required:true}]}><Select onChange={()=>plan.setFieldsValue({inbounds:[],gb:0})} options={[{value:"xray",label:"اشتراک یکپارچه: Xray + OpenVPN + OpenConnect"},{value:"openvpn",label:"OpenVPN مستقل (بدون سهمیه حجمی)"},{value:"openconnect",label:"OpenConnect مستقل (بدون سهمیه حجمی)"}]}/></Form.Item><Form.Item name="inbounds" label={chosenProtocol==="xray"?"انتخاب اینباندهای اشتراک (انتخاب حداقل یک مورد)":"اینباندها فقط برای Xray هستند"} rules={chosenProtocol==="xray"?[{required:true,type:"array",min:1,message:"حداقل یک اینباند انتخاب کنید"}]:[]}><Select mode="multiple" disabled={chosenProtocol!=="xray"} optionFilterProp="label" showSearch placeholder="چند اینباند را انتخاب کنید" options={inbounds.filter(i=>i.enable&&['vless','vmess','trojan','shadowsocks','hysteria','tuic'].includes(i.protocol)).map(i=>({value:i.id,label:i.name+' / '+i.protocol}))}/></Form.Item><Form.Item name="price" label={chosenTrial?"قیمت تست (رایگان)":"قیمت فروش (تومان)"} rules={chosenTrial?[]:[{required:true,message:"قیمت را وارد کنید"}]}><InputNumber style={{width:"100%"}} disabled={!!chosenTrial} min={0} max={1000000000000} step={1000}/></Form.Item><Form.Item name="days" label="اعتبار (روز)" rules={[{required:true,message:"مدت اعتبار لازم است"}]}><InputNumber style={{width:"100%"}} min={1} max={3650}/></Form.Item><Form.Item name="gb" label="حجم گیگابایت (صفر = نامحدود؛ فقط Xray)"><InputNumber style={{width:"100%"}} disabled={chosenProtocol!=="xray"} min={0} max={100000}/></Form.Item><Form.Item name="capacity" label="حداکثر تعداد فروش جدید (صفر = بدون محدودیت)"><InputNumber style={{width:"100%"}} min={0} max={1000000}/></Form.Item><Form.Item name="active" label="فعال" valuePropName="checked"><Switch/></Form.Item></Form></Modal>
 + <Modal open={!!dialog} title={dialog?.title} onCancel={()=>setDialog(undefined)} confirmLoading={busy} okText="تأیید" cancelText="انصراف" onOk={async()=>{if(dialog&&await run(dialog.action,{...dialog,...(dialog.action==='credit'?{amount:Number(entry),reason:'اصلاح مدیر'}:{body:entry})}))setDialog(undefined)}}><Input.TextArea value={entry} onChange={e=>setEntry(e.target.value)}/></Modal>
-+ </div>;
++ </div></ConfigProvider>;
 +}
 diff --git a/frontend/src/pages/vpn/VPNPage.tsx b/frontend/src/pages/vpn/VPNPage.tsx
 new file mode 100644
@@ -1615,7 +1718,7 @@ index 5f5b2ae..d7722eb 100644
  	gLink.GET(":subid", a.subs)
  	gLink.HEAD(":subid", a.subs)
  	gLink.GET(":subid/hwid-status", a.hwidStatus)
-+	gLink.GET(":subid/vpn", a.masihaProfiles)
++	gink.GET(":subid/vpn", a.masihaProfiles)
 +	gLink.GET(":subid/vpn/:client/:protocol", a.masihaProfiles)
  	gLink.HEAD(":subid/hwid-status", a.hwidStatus)
  	if a.jsonEnabled {
