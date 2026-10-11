@@ -331,6 +331,7 @@ class Commerce(unittest.TestCase):
    self.assertEqual(json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(q2,)).fetchone()[0])["label"],"office")
  def test_selected_name_kept_through_card_payment(self):
   with s.conn() as c:
+   s.put(c,"card","test-card details")
    q=w.quote(c,102,1,label="Company VPN")
    w.purchase_quote(c,102,q,card=True)
    o=c.execute("SELECT * FROM orders WHERE user_id=102").fetchone()
