@@ -19,6 +19,7 @@ INBOUNDS = (
     ("03-VMESS-WEBSOCKET-TLS", "vmess", 8445, "ws", "tls"),
     ("04-TROJAN-TCP-TLS", "trojan", 8446, "tcp", "tls"),
     ("05-VLESS-WEBSOCKET-TLS", "vless", 8447, "ws", "tls"),
+    ("06-VLESS-XHTTP-TLS", "vless", 8448, "xhttp", "tls"),
 )
 
 
@@ -55,6 +56,9 @@ def make_inbound(domain, tag, proto, port, network, security, private=None, publ
     stream = {"network": network, "security": security}
     if network == "ws":
         stream["wsSettings"] = {"path": "/ws-" + secrets.token_hex(8), "host": domain}
+    elif network == "xhttp":
+        # Modern Xray transport; useful when WS is deprecated/filtered.
+        stream["xhttpSettings"] = {"path": "/xhttp-" + secrets.token_hex(8), "host": domain, "mode": "auto"}
     else:
         stream["tcpSettings"] = {"acceptProxyProtocol": False, "header": {"type": "none"}}
     if security == "tls":
@@ -121,10 +125,10 @@ def seed(db_path, domain, xray_binary, require_tls=True):
                 [data[k] for k in keys]
             )
         db.commit()
-        print("Created 5 empty default inbounds: VLESS Reality, VLESS TCP TLS, "
-              "VMess WS TLS, Trojan TCP TLS, VLESS WS TLS.")
-        print("Xray ports: 8443,8444,8445,8446,8447 (TCP).")
-        return 5
+        print("Created 6 empty default inbounds: VLESS Reality, VLESS TCP TLS, "
+              "VMess WS TLS, Trojan TCP TLS, VLESS WS TLS, VLESS XHTTP TLS.")
+        print("Xray ports: 8443,8444,8445,8446,8447,8448 (TCP).")
+        return 6
     except Exception:
         db.rollback()
         raise
