@@ -21,7 +21,7 @@ The older `app/` FastAPI control-plane and `node_agent/` prototype are retained 
 
 - Native 3x-ui Xray service with VLESS, VMess, Trojan and other supported inbounds.
 - Shared per-client expiry and traffic across Xray, OpenVPN and OpenConnect, including automatically provisioned VPN credentials and downloadable profiles.
-- Telegram bot sales, plan management, receipt-based top-ups and admin approval, plus a visible failed-delivery queue and admin retry. Bot activation requires an actual token and admin Telegram IDs.
+- Telegram bot sales, full plan lifecycle (create, edit, duplicate, activate/deactivate, safe delete, sales/capacity metrics), receipt-based top-ups, discounted card payments with reversible coupon reservations, pending-order cancellation and admin approval, plus a visible failed-delivery queue and retry. Bot activation requires an actual token and admin Telegram IDs.
 - Automatic HTTPS subscription URI and per-protocol OpenVPN/OpenConnect profiles, with TLS termination by Nginx. Fresh installs include VLESS Reality, VLESS TLS, VMess WS TLS, Trojan TLS, VLESS WS TLS and VLESS XHTTP TLS.
 
-Never commit customer profiles, live databases, private keys, passwords, bot tokens or production configuration. The public repository contains only source code, templates and instructions. See installation guide for the complete list of backup-only paths.
+Never commit customer profiles, live databases, private keys, passwords, bot tokens or production configuration. The public repository contains only source code, templates and instructions. See installation guide for the complete list of backup-only paths. For the Telegram bot development and plan-management walkthrough see [راهنمای مدیریت ربات و پلن‌ها](docs/TELEGRAM_BOT_FA.md).
