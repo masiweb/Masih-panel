@@ -194,13 +194,78 @@ def decide_receipt(c,ident,approve):
  c.execute("UPDATE topups SET status=? WHERE id=?",("approved" if approve else "rejected",ident))
  audit(c,"receipt_approved" if approve else "receipt_rejected",ident)
 
+def plan_overview(c):
+ # Only purchases of NEW subscriptions reserve a plan's limited stock.
+ # Renewals must not consume a second plan slot.
+ out=[]
+ for row in c.execute("SELECT * FROM plans ORDER BY active DESC,id DESC"):
+  p=dict(row)
+  totals=c.execute("""SELECT
+   COUNT(*) AS committed,
+   SUM(CASE WHEN status='fulfilled' THEN 1 ELSE 0 END) AS fulfilled,
+   SUM(CASE WHEN status IN ('awaiting_receipt','receipt_review','paid','review') THEN 1 ELSE 0 END) AS pending
+   FROM orders
+   WHERE json_extract(plan,'$.id')=? AND renew_id='' AND status!='cancelled'""",(p["id"],)).fetchone()
+  p["sold"]=totals["committed"]
+  p["delivered"]=totals["fulfilled"] or 0
+  p["pending"]=totals["pending"] or 0
+  p["remaining"]=max(0,p["capacity"]-p["sold"]) if p["capacity"] else None
+  out.append(p)
+ return out
+
+def save_plan(c,p):
+ if not isinstance(p,dict):raise ValueError("اطلاعات پلن نامعتبر است")
+ proto=p.get("protocol")
+ if proto not in ("xray","openvpn","openconnect"):
+  raise ValueError("پروتکل پلن نامعتبر است")
+ name=text(p.get("name"),100)
+ category=text(p.get("category","عمومی"),100)
+ if not name:raise ValueError("نام پلن لازم است")
+ if not category:category="عمومی"
+ ids=p.get("inbounds",[])
+ if not isinstance(ids,list):raise ValueError("لیست اینباند نامعتبر است")
+ ids=[integer(x,1,2**31-1) for x in ids]
+ if len(set(ids))!=len(ids):raise ValueError("اینباند تکراری انتخاب شده است")
+ gb=integer(p.get("gb",0),0,100000)
+ if proto=="xray":
+  available={x["id"] for x in inbound_list() if x["enable"] and x["protocol"] in
+   ("vless","vmess","trojan","shadowsocks","hysteria","tuic")}
+  if not ids or not set(ids).issubset(available):
+   raise ValueError("برای پلن Xray حداقل یک اینباند فعال انتخاب کنید")
+ elif ids:
+  raise ValueError("برای پلن مستقل OpenVPN/OpenConnect اینباند Xray تعیین نکنید")
+ elif gb:
+  raise ValueError("پلن مستقل OpenVPN/OpenConnect هنوز سهمیه حجمی ندارد؛ حجم را صفر بگذارید")
+ price=integer(p.get("price"),0,10**12)
+ days=integer(p.get("days"),1,3650)
+ capacity=integer(p.get("capacity",0),0,1000000)
+ active=p.get("active",True)
+ if type(active) is not bool:raise ValueError("وضعیت فعال‌بودن پلن نامعتبر است")
+ ident=p.get("id")
+ values=(name,category,proto,price,days,gb,json.dumps(ids),capacity,int(active))
+ if ident is not None:
+  ident=integer(ident,1,2**31-1)
+  current=c.execute("SELECT id FROM plans WHERE id=?",(ident,)).fetchone()
+  if not current:raise ValueError("پلن برای ویرایش پیدا نشد")
+  sold=c.execute("""SELECT COUNT(*) FROM orders WHERE json_extract(plan,'$.id')=?
+   AND renew_id='' AND status!='cancelled'""",(ident,)).fetchone()[0]
+  if capacity and sold>capacity:raise ValueError("ظرفیت جدید از تعداد سفارش‌های ثبت‌شده کمتر است")
+  c.execute("""UPDATE plans SET name=?,category=?,protocol=?,price=?,days=?,gb=?,
+   inbounds=?,capacity=?,active=? WHERE id=?""",(*values,ident))
+ else:
+  c.execute("""INSERT INTO plans(name,category,protocol,price,days,gb,
+   inbounds,capacity,active) VALUES(?,?,?,?,?,?,?,?,?)""",values)
+  ident=c.execute("SELECT last_insert_rowid()").fetchone()[0]
+ audit(c,"plan_saved",str(ident))
+ return ident
+
 def admin(req):
  with conn() as c:
   c.execute("BEGIN IMMEDIATE")
   a=req.get("action");s=settings(c)
   if a=="get":
    safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"])
-   return {"settings":safe,"plans":[dict(r) for r in c.execute("SELECT * FROM plans ORDER BY id DESC")],"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0]}
+   return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0]}
   if a=="settings":return save_settings(c,req["values"])
   if a=="test":
    me=tg(s,"getMe",{});hook=tg(s,"getWebhookInfo",{})
@@ -208,21 +273,21 @@ def admin(req):
    put(c,"bot_username",me["username"]);return {"username":me["username"]}
   if a=="inbounds":return inbound_list()
   if a=="plan":
-   p=req["values"];proto=p["protocol"]
-   if proto not in ("xray","openvpn","openconnect"):raise ValueError("پروتکل نامعتبر")
-   ids=p.get("inbounds",[])
-   if not isinstance(ids,list):raise ValueError("اینباند نامعتبر")
-   ids=[integer(i,1) for i in ids]
-   gb=integer(p.get("gb",0),0,100000)
-   if proto!="xray" and gb:raise ValueError("محدودیت حجمی برای OpenVPN/OpenConnect هنوز پیاده نشده؛ حجم را صفر بگذارید")
-   if proto=="xray":
-    available={i["id"] for i in inbound_list() if i["enable"] and i["protocol"] in ("vless","vmess","trojan","shadowsocks","hysteria","tuic")}
-    if not ids or not set(ids)<=available:raise ValueError("اینباند فعال و پشتیبانی‌شده انتخاب کنید")
-   name=text(p["name"],100)
-   if not name:raise ValueError("نام پلن لازم است")
-   values=(name,text(p.get("category","عمومی"),100),proto,integer(p["price"]),integer(p["days"],1,3650),gb,json.dumps(ids),integer(p.get("capacity",0)),int(bool(p.get("active",True))))
-   if p.get("id"):c.execute("UPDATE plans SET name=?,category=?,protocol=?,price=?,days=?,gb=?,inbounds=?,capacity=?,active=? WHERE id=?",(*values,integer(p["id"],1)))
-   else:c.execute("INSERT INTO plans(name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(?,?,?,?,?,?,?,?,?)",values)
+   save_plan(c,req.get("values"))
+  elif a=="plan_toggle":
+   ident=integer(req.get("id"),1,2**31-1)
+   enabled=req.get("active")
+   if type(enabled) is not bool:raise ValueError("وضعیت پلن نامعتبر است")
+   if not c.execute("UPDATE plans SET active=? WHERE id=?",(int(enabled),ident)).rowcount:
+    raise ValueError("پلن پیدا نشد")
+  elif a=="plan_delete":
+   ident=integer(req.get("id"),1,2**31-1)
+   if not c.execute("SELECT 1 FROM plans WHERE id=?",(ident,)).fetchone():
+    raise ValueError("پلن پیدا نشد")
+   if c.execute("SELECT 1 FROM orders WHERE json_extract(plan,'$.id')=? LIMIT 1",(ident,)).fetchone():
+    raise ValueError("این پلن سابقه سفارش دارد؛ به‌جای حذف، آن را غیرفعال کنید")
+   c.execute("DELETE FROM quotes WHERE plan_id=?",(ident,))
+   c.execute("DELETE FROM plans WHERE id=?",(ident,))
   elif a=="user":
    uid=integer(req["id"],1)
    c.execute("UPDATE users SET blocked=?,reseller=? WHERE id=?",(int(bool(req.get("blocked"))),int(bool(req.get("reseller"))),uid))
