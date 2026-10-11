@@ -1,6 +1,6 @@
 import os,sys,json,subprocess,time,tempfile,sqlite3,secrets,urllib.request,urllib.error,http.cookiejar
 from pathlib import Path
-binary=os.environ.get("MASIHA_TEST_BINARY","/opt/masiha-vpn-extension/x-ui-candidate")
+binary=os.environ.get("MASIHA_TEST_BINARY","/usr/local/x-ui/x-ui")
 with tempfile.TemporaryDirectory(prefix="smoke-",dir="/opt/masiha-vpn-extension") as tmp:
  env=os.environ.copy()
  env.update(XUI_DB_FOLDER=tmp,XUI_BIN_FOLDER=tmp+"/bin",XUI_LOG_FOLDER=tmp+"/logs")
