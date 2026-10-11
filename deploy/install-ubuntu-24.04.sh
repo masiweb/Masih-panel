@@ -2,6 +2,8 @@
 # Masiha VPN fresh-host installer. Ubuntu 24.04 x86_64 ONLY.
 # This script refuses an existing production installation.
 set -Eeuo pipefail
+# Do not include credentials in error diagnostics.
+trap 'rc=$?; echo "ERROR: Fresh-server installation stopped at line ${LINENO} (exit $rc)." >&2' ERR
 umask 077
 if [[ "${1:-}" == "--help" ]]; then
   echo 'Usage (interactive): sudo bash deploy/install-ubuntu-24.04.sh'
@@ -142,11 +144,13 @@ fi
 export PATH="$TOOLS/go/bin:$TOOLS/node-v24.21.0-linux-x64/bin:$PATH"
 [[ "$(go version)" == *"go1.27.1"* ]] || { echo "Go version mismatch" >&2; exit 1; }
 [[ "$(node -v)" == "v24.21.0" ]] || { echo "Node version mismatch" >&2; exit 1; }
+echo "=== Stage 1/5: Verify and build patched Masiha 3x-ui ==="
 bash "$REPO_ROOT/deploy/build-3x-ui.sh"
 BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-20261011}"
 [[ -s "$BUILD_ROOT/x-ui" ]] || exit 1
 # Official pinned installer supplies Xray, geo data and native systemd helpers.
 # The official downloaded 3x-ui binary is IMMEDIATELY replaced by the verified Masiha build.
+echo "=== Stage 2/5: Install pinned upstream 3x-ui runtime and Xray ==="
 XUI_NONINTERACTIVE=1 XUI_SSL_MODE=none XUI_DB_TYPE=sqlite \
   XUI_PANEL_PORT=62053 XUI_WEB_BASE_PATH="$PANEL_PATH" \
   bash "$BUILD_ROOT/src/install.sh"
@@ -175,6 +179,7 @@ getent ahostsv4 "$DOMAIN" >/dev/null || {
   exit 1
 }
 systemctl enable --now nginx
+echo "=== Stage 3/5: Obtain Let's Encrypt certificate for $DOMAIN ==="
 certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos \
   --email "$EMAIL" -d "$DOMAIN" --keep-until-expiring
 [[ -s "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]] || exit 1
@@ -227,6 +232,7 @@ server {
 EOF
 ln -sfn /etc/nginx/sites-available/masiha-vpn /etc/nginx/sites-enabled/masiha-vpn
 rm -f /etc/nginx/sites-enabled/default
+echo "=== Stage 4/5: Validate HTTPS reverse proxy ==="
 nginx -t
 systemctl reload nginx
 # Renewed Let's Encrypt certificates must reload both TLS consumers.
@@ -240,4 +246,5 @@ HOOK
 chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/masiha-reload.sh
 # The final step is shared with the safe recovery path. It preserves existing
 # ACME certs, credentials and an already-generated CA on interrupted installs.
+echo "=== Stage 5/5: Configure VPN services, Xray presets and Telegram extension ==="
 bash "$REPO_ROOT/deploy/finalize-ubuntu-24.04.sh" --from-installer
