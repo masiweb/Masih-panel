@@ -28,6 +28,11 @@ def conn():
  CREATE TABLE IF NOT EXISTS receipt_orders(topup_id INTEGER UNIQUE,order_id TEXT UNIQUE);
  CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,action TEXT,detail TEXT,created INTEGER);
  """)
+ # Backward-compatible additive migration; existing plans and orders survive.
+ if not any(col[1]=="is_trial" for col in c.execute("PRAGMA table_info(plans)")):
+  try:c.execute("ALTER TABLE plans ADD COLUMN is_trial INTEGER NOT NULL DEFAULT 0")
+  except sqlite3.OperationalError as exc:
+   if "duplicate column name" not in str(exc).lower():raise
  return c
 def settings(c):return {**DEFAULT,**{r["k"]:json.loads(r["v"]) for r in c.execute("SELECT * FROM settings")}}
 def put(c,k,v):c.execute("INSERT OR REPLACE INTO settings VALUES(?,?)",(k,json.dumps(v,ensure_ascii=False)))
@@ -119,12 +124,16 @@ def order(c,uid,pid,reference,renew="",trial=False,card=False):
  if existing:return existing["id"]
  s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if not u or u["blocked"]:raise ValueError("دسترسی مسدود است")
- if not s["buy"] or renew and not s["renew"]:raise ValueError("فروش یا تمدید غیرفعال است")
+ if (not trial and not s["buy"]) or (renew and not s["renew"]):
+  raise ValueError("فروش یا تمدید غیرفعال است")
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
  p=dict(p)
+ if bool(p["is_trial"])!=bool(trial):
+  raise ValueError("پلن تست فقط از مسیر دریافت رایگان قابل ثبت است")
  if trial:
-  if not s["trial"] or s["trial_plan"]!=pid:raise ValueError("تست فعال نیست")
+  if not s["trial"]:raise ValueError("ارائه تست رایگان غیرفعال است")
+  if renew or card:raise ValueError("تست رایگان قابل تمدید یا پرداخت نیست")
   if c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1",(uid,)).fetchone():raise ValueError("قبلاً تست دریافت کرده‌اید")
  if renew:
   if c.execute("SELECT 1 FROM orders WHERE service_id=? AND status IN (\'paid\',\'review\',\'awaiting_receipt\',\'receipt_review\')",(renew,)).fetchone():raise ValueError("یک سفارش برای این سرویس در حال پردازش یا بررسی است")
@@ -143,7 +152,7 @@ def order(c,uid,pid,reference,renew="",trial=False,card=False):
    c.execute("INSERT INTO redeemed VALUES(?,?)",(coupon,uid));c.execute("UPDATE coupons SET uses=uses-1 WHERE code=?",(coupon,))
    p["_coupon_code"]=coupon
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
- if not card:money(c,uid,-price,"purchase",reference+":debit")
+ if not card and not trial:money(c,uid,-price,"purchase",reference+":debit")
  sid=renew or secrets.token_hex(12)
  c.execute("INSERT INTO orders VALUES(?,?,?,?,?,?,?,?,?,?)",(reference,uid,json.dumps(p),price,"awaiting_receipt" if card else "paid",sid,renew,now(),"",int(trial)))
  return reference
@@ -255,20 +264,26 @@ def save_plan(c,p):
  capacity=integer(p.get("capacity",0),0,1000000)
  active=p.get("active",True)
  if type(active) is not bool:raise ValueError("وضعیت فعال‌بودن پلن نامعتبر است")
+ is_trial=p.get("is_trial",False)
+ if type(is_trial) is not bool:raise ValueError("نوع پلن تست باید درست یا نادرست باشد")
+ if is_trial:price=0
  ident=p.get("id")
- values=(name,category,proto,price,days,gb,json.dumps(ids),capacity,int(active))
+ values=(name,category,proto,price,days,gb,json.dumps(ids),capacity,int(active),int(is_trial))
  if ident is not None:
   ident=integer(ident,1,2**31-1)
-  current=c.execute("SELECT id FROM plans WHERE id=?",(ident,)).fetchone()
+  current=c.execute("SELECT * FROM plans WHERE id=?",(ident,)).fetchone()
   if not current:raise ValueError("پلن برای ویرایش پیدا نشد")
+  if bool(current["is_trial"])!=is_trial and c.execute(
+    "SELECT 1 FROM orders WHERE json_extract(plan,'$.id')=? LIMIT 1",(ident,)).fetchone():
+   raise ValueError("نوع تست/عادی پلنی که سابقه سفارش دارد قابل تغییر نیست")
   sold=c.execute("""SELECT COUNT(*) FROM orders WHERE json_extract(plan,'$.id')=?
    AND renew_id='' AND status!='cancelled'""",(ident,)).fetchone()[0]
   if capacity and sold>capacity:raise ValueError("ظرفیت جدید از تعداد سفارش‌های ثبت‌شده کمتر است")
   c.execute("""UPDATE plans SET name=?,category=?,protocol=?,price=?,days=?,gb=?,
-   inbounds=?,capacity=?,active=? WHERE id=?""",(*values,ident))
+   inbounds=?,capacity=?,active=?,is_trial=? WHERE id=?""",(*values,ident))
  else:
   c.execute("""INSERT INTO plans(name,category,protocol,price,days,gb,
-   inbounds,capacity,active) VALUES(?,?,?,?,?,?,?,?,?)""",values)
+   inbounds,capacity,active,is_trial) VALUES(?,?,?,?,?,?,?,?,?,?)""",values)
   ident=c.execute("SELECT last_insert_rowid()").fetchone()[0]
  audit(c,"plan_saved",str(ident))
  return ident
