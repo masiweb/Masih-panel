@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Masiha sales: private local administration and durable Telegram commerce."""
-import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, shlex, sqlite3, subprocess, sys, time, urllib.request, urllib.parse, uuid
+import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, shlex, sqlite3, subprocess, sys, time, urllib.request, urllib.parse, uuid, unicodedata
 from pathlib import Path
 from runtime_config import DOMAIN, PUBLIC_PANEL_URL
 BASE=Path(os.environ.get("MASIHA_SALES_DIR","/etc/masiha-vpn-extension/sales"))
@@ -119,7 +119,46 @@ def save_settings(c,r):
  for k in DEFAULT:put(c,k,s[k])
  audit(c,"settings","updated")
  return True
-def order(c,uid,pid,reference,renew="",trial=False,card=False):
+# Keep the account's immutable internal ID separate from its user-facing label.
+# Reserving labels in quotes prevents two parallel checkout screens from
+# showing the same name; finalized orders and services are checked too.
+LABEL_ALPHABET="abcdefghijklmnopqrstuvwxyz0123456789"
+def subscription_label(value):
+ if not isinstance(value,str):raise ValueError("نام اشتراک را وارد کنید")
+ value=" ".join(unicodedata.normalize("NFC",value).split())
+ if not 2<=len(value)<=55 or any(ord(ch)<32 or ord(ch)==127 for ch in value):
+  raise ValueError("نام اشتراک باید بین ۲ تا ۵۵ کاراکتر باشد")
+ if not all(ch.isalnum() or ch in (" ","-","_","‌") for ch in value):
+  raise ValueError("در نام اشتراک فقط حروف، اعداد، فاصله، خط تیره و زیرخط مجاز است")
+ return value
+
+def label_taken(c,label):
+ needle=label.casefold()
+ # 'casefold' works for Persian and Latin; sqlite NOCASE covers ASCII only.
+ for row in c.execute("SELECT data FROM services WHERE deleted=0"):
+  try: existing=json.loads(row["data"]).get("label","")
+  except (TypeError,ValueError):continue
+  if isinstance(existing,str) and existing.casefold()==needle:return True
+ for row in c.execute("SELECT plan FROM orders WHERE status!='cancelled'"):
+  try: existing=json.loads(row["plan"]).get("_display_name","")
+  except (TypeError,ValueError):continue
+  if isinstance(existing,str) and existing.casefold()==needle:return True
+ for row in c.execute("SELECT plan FROM quotes WHERE expires>?",(now(),)):
+  try: existing=json.loads(row["plan"]).get("label","")
+  except (TypeError,ValueError):continue
+  if isinstance(existing,str) and existing.casefold()==needle:return True
+ return False
+
+def unique_subscription_label(c,preferred):
+ name=subscription_label(preferred)
+ if not label_taken(c,name):return name
+ # Always generate five secure alphanumeric characters on collision.
+ for _ in range(64):
+  candidate=name[:54]+"-"+"".join(secrets.choice(LABEL_ALPHABET) for _ in range(5))
+  if not label_taken(c,candidate):return candidate
+ raise ValueError("نام اشتراک تکراری است؛ لطفاً نام دیگری انتخاب کنید")
+
+def order(c,uid,pid,reference,renew="",trial=False,card=False,label=None):
  existing=c.execute("SELECT id FROM orders WHERE id=?",(reference,)).fetchone()
  if existing:
   if trial:raise ValueError("شما قبلاً تست رایگان دریافت کرده‌اید")
@@ -156,6 +195,14 @@ def order(c,uid,pid,reference,renew="",trial=False,card=False):
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  if not card and not trial:money(c,uid,-price,"purchase",reference+":debit")
  sid=renew or secrets.token_hex(12)
+ if not renew:
+  # Checkout has already reserved the chosen name in its quote. The paid
+  # order stores it as an immutable snapshot for delayed receipt approvals.
+  p["_display_name"]=subscription_label(label) if label else unique_subscription_label(c,p["name"])
+ else:
+  existing_service=c.execute("SELECT data FROM services WHERE id=?",(renew,)).fetchone()
+  if existing_service:
+   p["_display_name"]=json.loads(existing_service["data"]).get("label",p["name"])
  c.execute("INSERT INTO orders VALUES(?,?,?,?,?,?,?,?,?,?)",(reference,uid,json.dumps(p),price,"awaiting_receipt" if card else "paid",sid,renew,now(),"",int(trial)))
  return reference
 def provision(c,o):
@@ -163,6 +210,8 @@ def provision(c,o):
  old=c.execute("SELECT * FROM services WHERE id=?",(sid,)).fetchone()
  # Persist absolute targets before contacting the VPN so retries cannot extend twice.
  data=json.loads(old["data"]) if old else {"uuid":str(uuid.uuid4()),"password":secrets.token_urlsafe(24),"subId":secrets.token_urlsafe(18)}
+ if not old:data["label"]=p.get("_display_name") or p["name"]
+ elif not data.get("label"):data["label"]=p.get("_display_name") or p["name"]
  if not o["error"].startswith("target:"):
   target=max(now(),old["expires"] if old and o["renew_id"] else 0)+p["days"]*86400
   data["expires"]=target
@@ -173,7 +222,7 @@ def provision(c,o):
   api=Panel()
   try:current=api.call("/panel/api/clients/get/"+name)
   except ValueError:current=None
-  client={"email":name,"id":data["uuid"],"password":data["password"],"auth":data["password"],"security":"auto","flow":"","subId":data["subId"],"enable":True,"expiryTime":target*1000,"totalGB":data["totalGB"],"tgId":uid,"limitIp":0,"comment":"Masiha sales"}
+  client={"email":name,"id":data["uuid"],"password":data["password"],"auth":data["password"],"security":"auto","flow":"","subId":data["subId"],"enable":True,"expiryTime":target*1000,"totalGB":data["totalGB"],"tgId":uid,"limitIp":0,"comment":"Masiha sales | "+data["label"][:55]}
   if current:api.call("/panel/api/clients/update/"+name,client)
   else:api.call("/panel/api/clients/add",{"client":client,"inboundIds":json.loads(p["inbounds"])})
   check=api.call("/panel/api/clients/get/"+name)
@@ -188,7 +237,7 @@ def provision(c,o):
  s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if s["referrals"] and u["referrer"] and o["price"]:
   money(c,u["referrer"],o["price"]*s["commission"]//100,"commission",o["id"]+":commission")
- enqueue(c,uid,"اشتراک آماده است. از «سرویس‌های من» دریافت کنید.",[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
+ enqueue(c,uid,"اشتراک «"+data["label"]+"» آماده است. از «سرویس‌های من» دریافت کنید.",[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
  for admin in s["admins"]+([s["report_channel"]] if s["report_channel"] else []):enqueue(c,admin,"سفارش "+o["id"]+" تحویل شد؛ مبلغ "+str(o["price"])+" تومان.",key=o["id"]+":admin:"+str(admin))
 
 def restore_reserved_coupon(c,o):
