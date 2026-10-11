@@ -1326,10 +1326,10 @@ index 0000000..5181f3d
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 0000000..38ac1ab
+index 0000000..4e7c0fd
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,85 @@
 +import {useEffect,useState} from 'react';
 +import {Alert,App,Button,Card,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography} from 'antd';
 +import {HttpUtil} from '@/utils';
@@ -1337,13 +1337,13 @@ index 0000000..38ac1ab
 +export default function SalesBotPage(){
 + const {message}=App.useApp();const [data,setData]=useState<Row>();const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [inbounds,setInbounds]=useState<Row[]>([]);
 + const [settings]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
-+ const [planOpen,setPlanOpen]=useState(false);
++ const [planOpen,setPlanOpen]=useState(false);const chosenProtocol=Form.useWatch('protocol',plan);
 + const call=async(action:string,values:Row={})=>{const r=await HttpUtil.post('/panel/api/sales-bot',{action,...values},{headers:{'Content-Type':'application/json'},silent:true,timeout:65000});if(!r?.success)throw new Error(r?.msg||'عملیات ناموفق');return r.obj as any;};
 + const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:''});setError('');}catch(e){setError(String(e))}};
 + useEffect(()=>{void load();call('inbounds').then(setInbounds).catch(()=>{});},[]);
 + const run=async(action:string,values:Row={})=>{setBusy(true);try{const r=await call(action,values);message.success(action==='test'?'اتصال تأیید شد: @'+r.username:'ذخیره شد');await load();return true;}catch(e){message.error(String(e));return false;}finally{setBusy(false)}};
 + const switches:Record<string,string>={enabled:'فعال‌بودن ربات',buy:'فروش اشتراک',renew:'تمدید اشتراک',wallet:'کیف پول و شارژ',transfer:'انتقال اعتبار',trial:'تست رایگان یک‌بار برای هر کاربر',discounts:'کد تخفیف و هدیه',referrals:'زیرمجموعه و کمیسیون',reseller:'قیمت ویژه نمایندگان',notifications:'هشدار انقضا',require_contact:'دریافت شماره متعلق به حساب تلگرام',self_delete:'اجازه حذف اشتراک توسط مشتری',bulk:'خرید انبوه نمایندگان',rename:'نام دلخواه سرویس',rotate:'تعویض لینک و اطلاعات Xray',new_user_notice:'اعلان عضو جدید به مدیر',zarinpal:'پرداخت آنلاین زرین‌پال'};
-+ const editPlan=(p?:Row)=>{plan.resetFields();plan.setFieldsValue(p?{...p,inbounds:JSON.parse(p.inbounds),active:!!p.active}:{protocol:'xray',category:'عمومی',price:0,days:30,gb:0,capacity:0,active:true,inbounds:[]});setPlanOpen(true)};
++ const editPlan=(p?:Row,duplicate=false)=>{plan.resetFields();plan.setFieldsValue(p?{...p,id:duplicate?undefined:p.id,name:duplicate?p.name+' — کپی':p.name,inbounds:typeof p.inbounds==='string'?JSON.parse(p.inbounds):p.inbounds,active:duplicate?false:!!p.active}:{protocol:'xray',category:'عمومی',price:0,days:30,gb:0,capacity:0,active:true,inbounds:[]});setPlanOpen(true)};
 + const table=(rows:Row[],columns:any[])=> <Table rowKey={(r)=>String(r.id??r.code)} dataSource={rows} columns={columns} pagination={{pageSize:15}} scroll={{x:900}}/>;
 + const base=[
 + {title:'شناسه',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'مبلغ (تومان)',dataIndex:'price'},{title:'وضعیت',dataIndex:'status'}];
@@ -1371,7 +1371,32 @@ index 0000000..38ac1ab
 + <Form.Item label="هشدار چند روز پیش از انقضا" name="warning_days"><InputNumber min={0} max={100}/></Form.Item>
 + <Space><Button type="primary" htmlType="submit" loading={busy}>ذخیره تنظیمات</Button><Button loading={busy} onClick={()=>void run('test')}>بررسی اتصال تلگرام</Button></Space>
 + </Form></Card>},
-+ {key:'plans',label:'پلن‌ها و ظرفیت',children:<Space orientation="vertical" style={{width:'100%'}}><Button type="primary" onClick={()=>editPlan()}>ساخت پلن</Button>{table(data?.plans||[],[{title:'نام',dataIndex:'name'},{title:'دسته',dataIndex:'category'},{title:'سرویس',dataIndex:'protocol'},{title:'قیمت',dataIndex:'price'},{title:'روز',dataIndex:'days'},{title:'GB',dataIndex:'gb'},{title:'ظرفیت',dataIndex:'capacity'},{title:'فعال',render:(_:unknown,r:Row)=>r.active?'بله':'خیر'},{title:'عملیات',render:(_:unknown,r:Row)=><Button onClick={()=>editPlan(r)}>ویرایش</Button>}])}</Space>},
++ {key:'plans',label:'پلن‌ها و ظرفیت',children:<Space orientation="vertical" style={{width:'100%'}}>
++  <Alert type="info" showIcon title="ساخت و مدیریت پلن‌ها" description="برای هر پلن Xray می‌توانید چند اینباند انتخاب کنید؛ حساب OpenVPN و OpenConnect همان مشترک با سهمیه و انقضای مشترک ساخته می‌شود. پلن‌های مستقل OpenVPN/OpenConnect در این نسخه سهمیه حجم ندارند."/>
++  <Space wrap>
++   <Button type="primary" onClick={()=>editPlan()}>+ ساخت پلن جدید</Button>
++   <Tag color="blue">کل پلن‌ها: {(data?.plans||[]).length}</Tag>
++   <Tag color="green">فعال: {(data?.plans||[]).filter((p:Row)=>p.active).length}</Tag>
++   <Tag>اینباند فعال: {inbounds.filter(x=>x.enable).length}</Tag>
++  </Space>
++  {table(data?.plans||[],[
++   {title:'عنوان و دسته',render:(_:unknown,r:Row)=><Space orientation="vertical" size={0}><Typography.Text strong>{r.name}</Typography.Text><Typography.Text type="secondary">{r.category}</Typography.Text></Space>},
++   {title:'نوع سرویس',render:(_:unknown,r:Row)=>r.protocol==='xray'?<Tag color="blue">Xray + OpenVPN + OpenConnect</Tag>:<Tag>{r.protocol}</Tag>},
++   {title:'قیمت (تومان)',render:(_:unknown,r:Row)=>Number(r.price).toLocaleString('fa-IR')},
++   {title:'مدت',render:(_:unknown,r:Row)=>r.days+' روز'},
++   {title:'حجم',render:(_:unknown,r:Row)=>r.gb?r.gb+' GB':'نامحدود / بدون سهمیه'},
++   {title:'فروش / در انتظار',render:(_:unknown,r:Row)=><Space orientation="vertical" size={0}><Typography.Text>{r.sold||0} سفارش</Typography.Text><Typography.Text type="secondary">{r.pending||0} در انتظار</Typography.Text></Space>},
++   {title:'ظرفیت باقی‌مانده',render:(_:unknown,r:Row)=>r.remaining===null?'نامحدود':<Tag color={r.remaining===0?'red':'green'}>{r.remaining} از {r.capacity}</Tag>},
++   {title:'فعال',render:(_:unknown,r:Row)=><Switch checked={!!r.active} loading={busy} onChange={v=>void run('plan_toggle',{id:r.id,active:v})}/>},
++   {title:'عملیات',render:(_:unknown,r:Row)=><Space wrap>
++     <Button size="small" onClick={()=>editPlan(r)}>ویرایش</Button>
++     <Button size="small" onClick={()=>editPlan(r,true)}>کپی</Button>
++     <Popconfirm title={r.sold?'این پلن سفارش دارد؛ برای آرشیو از کلید فعال استفاده کنید.':'حذف این پلن بدون سابقه سفارش؟'} okText="حذف" cancelText="انصراف" onConfirm={()=>void run('plan_delete',{id:r.id})}>
++      <Button danger size="small" disabled={!!r.sold}>حذف</Button>
++     </Popconfirm>
++   </Space>},
++  ])}
++ </Space>},
 + {key:'users',label:'کاربران و نمایندگان',children:table(data?.users||[],[{title:'آیدی',dataIndex:'id'},{title:'نام',dataIndex:'name'},{title:'موجودی تومان',dataIndex:'balance'},{title:'شماره',dataIndex:'phone'},{title:'مسدود',render:(_:unknown,r:Row)=><Switch checked={!!r.blocked} onChange={v=>void run('user',{id:r.id,blocked:v,reseller:!!r.reseller})}/>},{title:'نماینده',render:(_:unknown,r:Row)=><Switch checked={!!r.reseller} onChange={v=>void run('user',{id:r.id,blocked:!!r.blocked,reseller:v})}/>},{title:'اعتبار',render:(_:unknown,r:Row)=><Button onClick={()=>{setEntry('');setDialog({action:'credit',id:r.id,title:'افزایش یا کاهش موجودی به تومان (عدد منفی: کاهش)',reference:crypto.randomUUID()})}}>اصلاح موجودی</Button>}])},
 + {key:'payments',label:'رسیدهای پرداخت',children:table(data?.topups||[],[{title:'شماره',dataIndex:'id'},{title:'کاربر',dataIndex:'user_id'},{title:'مبلغ',dataIndex:'amount'},{title:'رسید',render:(_:unknown,r:Row)=>r.receipt.startsWith('photo:')?'تصویر به ربات مدیر ارسال شده':r.receipt},{title:'وضعیت',dataIndex:'status'},{title:'تصمیم',render:(_:unknown,r:Row)=>r.status==='pending'?<Space><Popconfirm title="مبلغ و رسید را بررسی کرده‌اید؟" onConfirm={()=>run('topup',{id:r.id,approve:true})}><Button>تأیید و شارژ</Button></Popconfirm><Button danger onClick={()=>void run('topup',{id:r.id,approve:false})}>رد</Button></Space>:null}])},
 + {key:'orders',label:'سفارش‌ها و درآمد',children:<><Typography.Title level={4}>فروش تحویل‌شده: {data?.revenue||0} تومان</Typography.Title>{table(data?.orders||[],[...base,{title:'عملیات',render:(_:unknown,r:Row)=>r.status==='review'?<Button onClick={()=>void run('retry',{id:r.id})}>تلاش مجدد تحویل</Button>:null}])}</>},
@@ -1386,7 +1411,7 @@ index 0000000..38ac1ab
 + {key:'scope',label:'وضعیت امکانات',children:<Alert type="info" title="محدوده نسخه فعلی" description="خرید و تمدید، کیف پول، کارت‌به‌کارت با تأیید مدیر، اتصال زرین‌پال (نیازمند مرچنت و تست واقعی)، QR ساب Xray، تست، تخفیف و هدیه، کمیسیون دعوت، قیمت و خرید انبوه نماینده، نام دلخواه، تعویض لینک Xray، گزارش کانال، عضویت اجباری، دریافت شماره، پشتیبانی و پیام همگانی پیاده‌سازی شده‌اند. درگاه‌های نکست‌پی و رمزارزی، مهاجرت خودکار بین سرورها، واردکردن کانفیگ خارج از ربات، سهمیه حجمی OpenVPN/OpenConnect هنوز آماده نیستند. فروش Xray فعلاً روی اینباندهای موجود همین پنل است."/>}
 + ]}/>
 + </Space>
-+ <Modal open={planOpen} title="پلن فروش" onCancel={()=>setPlanOpen(false)} confirmLoading={busy} onOk={async()=>{try{const v=await plan.validateFields();if(await run('plan',{values:v}))setPlanOpen(false)}catch{}}} okText="ذخیره" cancelText="انصراف"><Form form={plan} layout="vertical"><Form.Item name="id" hidden><InputNumber/></Form.Item><Form.Item name="name" label="نام پلن" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="category" label="دسته"><Input/></Form.Item><Form.Item name="protocol" label="سرویس"><Select options={['xray','openvpn','openconnect'].map(x=>({value:x,label:x}))}/></Form.Item><Form.Item name="inbounds" label="اینباندهای Xray"><Select mode="multiple" options={inbounds.filter(i=>i.enable&&['vless','vmess','trojan','shadowsocks','hysteria','tuic'].includes(i.protocol)).map(i=>({value:i.id,label:i.name+' / '+i.protocol}))}/></Form.Item><Form.Item name="price" label="قیمت تومان"><InputNumber min={0}/></Form.Item><Form.Item name="days" label="مدت روز"><InputNumber min={1}/></Form.Item><Form.Item name="gb" label="حجم GB؛ صفر نامحدود (فقط Xray)"><InputNumber min={0}/></Form.Item><Form.Item name="capacity" label="ظرفیت کل فروش؛ صفر نامحدود"><InputNumber min={0}/></Form.Item><Form.Item name="active" label="فعال" valuePropName="checked"><Switch/></Form.Item></Form></Modal>
++ <Modal width={740} open={planOpen} title={plan.getFieldValue("id")?"ویرایش پلن فروش":"ایجاد پلن فروش"} onCancel={()=>setPlanOpen(false)} confirmLoading={busy} onOk={async()=>{try{const v=await plan.validateFields();if(v.protocol!=="xray"){v.inbounds=[];v.gb=0;}if(await run('plan',{values:v}))setPlanOpen(false)}catch{}}} okText="ذخیره" cancelText="انصراف"><Form form={plan} layout="vertical"><Form.Item name="id" hidden><InputNumber/></Form.Item><Form.Item name="name" label="نام پلن" rules={[{required:true,message:"نام پلن را وارد کنید"}]}><Input placeholder="مثال: اشتراک ۳۰ روزه ۵۰ گیگ"/></Form.Item><Form.Item name="category" label="دسته"><Input/></Form.Item><Form.Item name="protocol" label="سرویس" rules={[{required:true}]}><Select onChange={()=>plan.setFieldsValue({inbounds:[],gb:0})} options={[{value:"xray",label:"اشتراک یکپارچه: Xray + OpenVPN + OpenConnect"},{value:"openvpn",label:"OpenVPN مستقل (بدون سهمیه حجمی)"},{value:"openconnect",label:"OpenConnect مستقل (بدون سهمیه حجمی)"}]}/></Form.Item><Form.Item name="inbounds" label={chosenProtocol==="xray"?"انتخاب اینباندهای اشتراک (انتخاب حداقل یک مورد)":"اینباندها فقط برای Xray هستند"} rules={chosenProtocol==="xray"?[{required:true,type:"array",min:1,message:"حداقل یک اینباند انتخاب کنید"}]:[]}><Select mode="multiple" disabled={chosenProtocol!=="xray"} optionFilterProp="label" showSearch placeholder="چند اینباند را انتخاب کنید" options={inbounds.filter(i=>i.enable&&['vless','vmess','trojan','shadowsocks','hysteria','tuic'].includes(i.protocol)).map(i=>({value:i.id,label:i.name+' / '+i.protocol}))}/></Form.Item><Form.Item name="price" label="قیمت فروش (تومان)" rules={[{required:true,message:"قیمت را وارد کنید"}]}><InputNumber style={{width:"100%"}} min={0} max={1000000000000} step={1000}/></Form.Item><Form.Item name="days" label="اعتبار (روز)" rules={[{required:true,message:"مدت اعتبار لازم است"}]}><InputNumber style={{width:"100%"}} min={1} max={3650}/></Form.Item><Form.Item name="gb" label="حجم گیگابایت (صفر = نامحدود؛ فقط Xray)"><InputNumber style={{width:"100%"}} disabled={chosenProtocol!=="xray"} min={0} max={100000}/></Form.Item><Form.Item name="capacity" label="حداکثر تعداد فروش جدید (صفر = بدون محدودیت)"><InputNumber style={{width:"100%"}} min={0} max={1000000}/></Form.Item><Form.Item name="active" label="فعال" valuePropName="checked"><Switch/></Form.Item></Form></Modal>
 + <Modal open={!!dialog} title={dialog?.title} onCancel={()=>setDialog(undefined)} confirmLoading={busy} okText="تأیید" cancelText="انصراف" onOk={async()=>{if(dialog&&await run(dialog.action,{...dialog,...(dialog.action==='credit'?{amount:Number(entry),reason:'اصلاح مدیر'}:{body:entry})}))setDialog(undefined)}}><Input.TextArea value={entry} onChange={e=>setEntry(e.target.value)}/></Modal>
 + </div>;
 +}
