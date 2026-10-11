@@ -192,7 +192,7 @@ systemctl enable --now x-ui.service
 systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
 systemctl enable --now masiha-vpn-extension.service
-bash "$REPO_ROOT/deploy/verify-install.sh"
+MASIHA_EXPECT_DEFAULT_INBOUNDS=1 bash "$REPO_ROOT/deploy/verify-install.sh"
 # Print credentials immediately on the terminal, ONLY after health checks pass.
 # Keep a 0600 copy for recovery; do not print during partial/failed installs.
 printf '\n===============================================\n'
