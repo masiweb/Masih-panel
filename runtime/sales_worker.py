@@ -1,12 +1,15 @@
 #!/usr/bin/python3
 import base64, contextlib, fcntl, hashlib, io, json, os, secrets, time, urllib.request
 from sales import *
-def quote(c,uid,pid,renew="",quantity=1):
+def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
  if p["is_trial"]:raise ValueError("پلن تست رایگان نیازی به پیش‌فاکتور یا پرداخت ندارد")
  ident=secrets.token_hex(12)
- c.execute("INSERT INTO quotes VALUES(?,?,?,?,?,?)",(ident,uid,pid,json.dumps({"plan":dict(p),"quantity":quantity}),renew,now()+900))
+ # If label is supplied, reserve it before showing the payment options.
+ # Renewals keep the already-provisioned service label unchanged.
+ assigned=unique_subscription_label(c,label) if label and not renew else ""
+ c.execute("INSERT INTO quotes VALUES(?,?,?,?,?,?)",(ident,uid,pid,json.dumps({"plan":dict(p),"quantity":quantity,"label":assigned}),renew,now()+900))
  return ident
 def purchase_quote(c,uid,ident,card=False):
  q=c.execute("SELECT * FROM quotes WHERE id=? AND user_id=?",(ident,uid)).fetchone()
@@ -19,7 +22,12 @@ def purchase_quote(c,uid,ident,card=False):
   user=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
   if not s["bulk"] or not s["reseller"] or not user["reseller"]:raise ValueError("خرید انبوه نماینده غیرفعال است")
  if card and (quantity!=1 or not s["card"]):raise ValueError("پرداخت کارت‌به‌کارت برای این سفارش فعال نیست")
- for index in range(quantity):order(c,uid,q["plan_id"],"quote:"+ident+":"+str(index),renew=q["renew_id"],card=card)
+ if not q["renew_id"] and not snapshot.get("label"):
+  raise ValueError("ابتدا نام اشتراک را انتخاب کنید")
+ for index in range(quantity):
+  label=snapshot.get("label") if index==0 else unique_subscription_label(c,snapshot["label"])
+  order(c,uid,q["plan_id"],"quote:"+ident+":"+str(index),
+        renew=q["renew_id"],card=card,label=label)
  return ident
 def home(c,uid):
  s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
@@ -46,7 +54,7 @@ def deliver(c,uid,sid):
  if r["protocol"]=="xray":
   if s["rotate"]:rows.append([("تعویض لینک و قطع لینک قبلی","rotateask:"+sid)])
   details=Panel().call("/panel/api/clients/get/"+r["username"])
-  body=p["name"]+"\nمصرف: "+str(round(details["usedTraffic"]/1024**3,2))+" GB\nانقضا: "+time.strftime("%Y-%m-%d",time.gmtime(r["expires"]))
+  body="اشتراک: "+d.get("label",p["name"])+"\nپلن: "+p["name"]+"\nمصرف: "+str(round(details["usedTraffic"]/1024**3,2))+" GB\nانقضا: "+time.strftime("%Y-%m-%d",time.gmtime(r["expires"]))
   enqueue(c,uid,body,rows)
   links=[subscription_url(details["client"]["subId"])]
   if isinstance(links,dict):links=list(links.values())
@@ -65,7 +73,7 @@ def deliver(c,uid,sid):
   if r["protocol"]=="openconnect":enqueue(c,uid,cfg["content"]+"\nPassword: "+d["password"],rows)
   else:
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"file",json.dumps({"filename":cfg["filename"],"content":cfg["content"]})))
-   enqueue(c,uid,p["name"]+"\nفایل اختصاصی اتصال شما",rows)
+   enqueue(c,uid,d.get("label",p["name"])+"\nفایل اختصاصی اتصال شما",rows)
 def handle(c,up):
  s=settings(c);q=up.get("callback_query");m=q.get("message",{}) if q else up.get("message",{})
  who=q.get("from",{}) if q else m.get("from",{});uid=who.get("id")
@@ -94,6 +102,28 @@ def handle(c,up):
   for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
  if not q and not body.startswith("/start") and u["state"]:
   state=u["state"]
+  if state.startswith("planname:"):
+   parts=state.split(":")
+   if len(parts)!=3:raise ValueError("درخواست خرید نامعتبر است؛ دوباره پلن را انتخاب کنید")
+   pid=integer(int(parts[1]),1);qty=integer(int(parts[2]),1,20)
+   chosen=subscription_label(body)
+   ident=quote(c,uid,pid,quantity=qty,label=chosen)
+   assigned=json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(ident,)).fetchone()["plan"])["label"]
+   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+   if qty>1:
+    keys=[[("تأیید خرید "+str(qty)+" اشتراک","buy:"+ident)]]
+    title="نام پایه سفارش انبوه"
+   else:
+    keys=[[("پرداخت از کیف پول","buy:"+ident)]]
+    if s["card"]:keys.append([("پرداخت کارت‌به‌کارت","cardbuy:"+ident)])
+    title="نام اشتراک شما"
+   suffix=" (برای جلوگیری از تکرار، پسوند تصادفی اضافه شد)" if assigned!=chosen else ""
+   plan_name=c.execute("SELECT name,price,days,gb FROM plans WHERE id=?",(pid,)).fetchone()
+   enqueue(c,uid,title+": "+assigned+suffix+
+     "\nپلن: "+plan_name["name"]+"\nمدت: "+str(plan_name["days"])+
+     " روز\nحجم: "+(str(plan_name["gb"])+" گیگابایت" if plan_name["gb"] else "نامحدود")+
+     "\nقیمت پایه هر اشتراک: "+str(plan_name["price"])+" تومان",keys)
+   return
   if (state=="transfer" and not s["transfer"]) or (state=="coupon" and not s["discounts"]) or ((state=="topup" or state.startswith("receipt:")) and (not s["wallet"] or not s["card"])):raise ValueError("این امکان غیرفعال شده است")
   if state.startswith("orderreceipt:"):
    ident=state[len("orderreceipt:"):]
@@ -117,9 +147,14 @@ def handle(c,up):
    if not s["rename"]:raise ValueError("تغییر نام غیرفعال")
    sid=state.split(":")[1];r=c.execute("SELECT * FROM services WHERE id=? AND user_id=?",(sid,uid)).fetchone()
    if not r:raise ValueError("سرویس پیدا نشد")
-   data=json.loads(r["data"]);data["label"]=text(body,80)
+   data=json.loads(r["data"])
+   # Renaming must obey the same uniqueness rule as initial checkout.
+   new_label=subscription_label(body)
+   if new_label.casefold()!=str(data.get("label","")).casefold():
+    new_label=unique_subscription_label(c,new_label)
+   data["label"]=new_label
    c.execute("UPDATE services SET data=? WHERE id=?",(json.dumps(data),sid));c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
-   enqueue(c,uid,"نام نمایشی ثبت شد.");return
+   enqueue(c,uid,"نام اشتراک ثبت شد: "+data["label"]);return
   if state=="online":
    authority=payment_create(c,uid,integer(int(body),1000,10**9),"tg:"+str(up["update_id"]))
    c.execute("UPDATE users SET state=\'\' WHERE id=?",(uid,))
@@ -169,7 +204,9 @@ def handle(c,up):
   p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
   if not p or p["is_trial"]:raise ValueError("پلن فروش عمده معتبر نیست")
   price=p["price"]*(100-s["reseller_discount"])//100
-  enqueue(c,uid,"خرید "+str(qty)+" اشتراک؛ جمع پیش از کد تخفیف "+str(price*qty)+" تومان.",[[("تأیید خرید انبوه","buy:"+quote(c,uid,pid,quantity=qty))]])
+  c.execute("UPDATE users SET state=? WHERE id=?",("planname:"+str(pid)+":"+str(qty),uid))
+  enqueue(c,uid,"خرید "+str(qty)+" اشتراک؛ جمع پیش از کد تخفیف "+str(price*qty)+
+    " تومان. لطفاً نام پایه سرویس‌ها را ارسال کنید؛ نام‌های تکراری پسوند ۵ کاراکتری می‌گیرند.")
  elif cmd.startswith("rename:"):
   if not s["rename"]:raise ValueError("تغییر نام غیرفعال")
   sid=cmd.split(":")[1]
@@ -182,10 +219,12 @@ def handle(c,up):
    enqueue(c,uid,"این پلن تست رایگان است؛ برای دریافت بدون پرداخت ادامه دهید.",
       [[("🎁 دریافت رایگان","trialpick:"+str(pid))]])
    return
-  ident=quote(c,uid,pid)
-  keys=[[("تأیید خرید از کیف پول","buy:"+ident)]]
-  if s["card"]:keys.append([("پرداخت کارت‌به‌کارت","cardbuy:"+ident)])
-  enqueue(c,uid,p["name"]+"\nمدت: "+str(p["days"])+" روز\nحجم: "+(str(p["gb"])+" GB" if p["gb"] else "نامحدود")+"\nقیمت پایه: "+str(p["price"])+" تومان",keys)
+  c.execute("UPDATE users SET state=? WHERE id=?",("planname:"+str(pid)+":1",uid))
+  enqueue(c,uid,"پلن: "+p["name"]+"\nمدت: "+str(p["days"])+" روز\nحجم: "+
+    (str(p["gb"])+" GB" if p["gb"] else "نامحدود")+
+    "\nقیمت پایه: "+str(p["price"])+" تومان"+
+    "\n\nلطفاً نام دلخواه اشتراک خود را ارسال کنید (۲ تا ۵۵ کاراکتر)."+
+    "\nاگر نام قبلاً استفاده شده باشد، یک پسوند تصادفی ۵ کاراکتری به آن اضافه می‌شود.")
   if s["bulk"] and s["reseller"] and u["reseller"]:enqueue(c,uid,"خرید انبوه نماینده",[[("۵ اشتراک","bulk:"+str(pid)+":5"),("۱۰ اشتراک","bulk:"+str(pid)+":10")]])
  elif cmd.startswith("cardbuy:"):
   ident=cmd.split(":")[1];purchase_quote(c,uid,ident,card=True)
@@ -219,7 +258,9 @@ def handle(c,up):
   if not r:raise ValueError("سرویس پیدا نشد")
   p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(json.loads(r["plan"])["id"],)).fetchone()
   if not p:raise ValueError("پلن تمدید فعال نیست")
-  enqueue(c,uid,"تمدید: "+str(p["days"])+" روز؛ قیمت "+str(p["price"])+" تومان.",[[("تأیید تمدید","renewok:"+quote(c,uid,p["id"],sid))]])
+  enqueue(c,uid,"تمدید اشتراک «"+json.loads(r["data"]).get("label",r["username"])+
+    "»: "+str(p["days"])+" روز؛ قیمت "+str(p["price"])+
+    " تومان.",[[("تأیید تمدید","renewok:"+quote(c,uid,p["id"],sid))]])
  elif cmd.startswith("renewok:"):
   purchase_quote(c,uid,cmd.split(":")[1]);enqueue(c,uid,"تمدید ثبت شد.")
  elif cmd=="wallet":
