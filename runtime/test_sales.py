@@ -57,7 +57,7 @@ class Commerce(unittest.TestCase):
   with s.conn() as c:
    s.put(c,"bulk",True);s.put(c,"reseller",True);s.put(c,"reseller_discount",10)
    c.execute("UPDATE users SET reseller=1 WHERE id=101")
-   q=w.quote(c,101,1,quantity=5);w.purchase_quote(c,101,q);w.purchase_quote(c,101,q)
+   q=w.quote(c,101,1,quantity=5,label='Wholesale');w.purchase_quote(c,101,q);w.purchase_quote(c,101,q)
    self.assertEqual(c.execute("SELECT COUNT(*) FROM orders").fetchone()[0],5)
    self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],55000)
  def test_gateway_verification_exact_amount_once(self):
@@ -75,7 +75,7 @@ class Commerce(unittest.TestCase):
  def test_card_order_without_wallet_and_duplicate_approval(self):
   with s.conn() as c:
    s.put(c,"card","test-card");s.put(c,"wallet",False);s.put(c,"admins",[102])
-   q=w.quote(c,102,1);w.purchase_quote(c,102,q,card=True)
+   q=w.quote(c,102,1,label='Card order');w.purchase_quote(c,102,q,card=True)
    o=c.execute("SELECT * FROM orders").fetchone()
    self.assertEqual(o["status"],"awaiting_receipt")
    self.assertEqual(c.execute("SELECT COUNT(*) FROM ledger").fetchone()[0],0)
@@ -90,7 +90,7 @@ class Commerce(unittest.TestCase):
  def test_card_rejection_never_provisions(self):
   with s.conn() as c:
    s.put(c,"card","test-card")
-   q=w.quote(c,102,1);w.purchase_quote(c,102,q,card=True)
+   q=w.quote(c,102,1,label='Card reject');w.purchase_quote(c,102,q,card=True)
    o=c.execute("SELECT * FROM orders").fetchone()
    c.execute("UPDATE orders SET status='receipt_review'")
    rid=c.execute("INSERT INTO topups(user_id,amount,receipt,created) VALUES(102,10000,'test',0)").lastrowid
@@ -290,4 +290,62 @@ class Commerce(unittest.TestCase):
     "message":{"chat":{"id":102,"type":"private"}},"data":"trial"}})
    out=[json.loads(row["payload"]) for row in c.execute("SELECT payload FROM outbox")]
    self.assertTrue(any("Free Offer" in json.dumps(x) for x in out))
+ def test_checkout_requires_name_from_customer(self):
+  with s.conn() as c:
+   q=w.quote(c,101,1)
+   with self.assertRaisesRegex(ValueError,"نام اشتراک"):w.purchase_quote(c,101,q)
+   w.handle(c,{"update_id":814,"callback_query":{"from":{"id":101},
+     "message":{"chat":{"id":101,"type":"private"}},"data":"choose:1"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"planname:1:1")
+   w.handle(c,{"update_id":815,"message":{"from":{"id":101},
+     "chat":{"id":101,"type":"private"},"text":"My Office"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"")
+   q=c.execute("SELECT * FROM quotes WHERE user_id=101 ORDER BY rowid DESC LIMIT 1").fetchone()
+   self.assertEqual(json.loads(q["plan"])["label"],"My Office")
+   w.purchase_quote(c,101,q["id"])
+   o=c.execute("SELECT * FROM orders WHERE user_id=101").fetchone()
+   self.assertEqual(json.loads(o["plan"])["_display_name"],"My Office")
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],90000)
+ def test_duplicate_label_random_suffix_and_casefold(self):
+  with s.conn() as c:
+   q1=w.quote(c,101,1,label="Office")
+   q2=w.quote(c,102,1,label="office")
+   a=json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(q1,)).fetchone()[0])["label"]
+   b=json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(q2,)).fetchone()[0])["label"]
+   self.assertEqual(a,"Office")
+   self.assertRegex(b,r"^office-[a-z0-9]{5}$")
+   c.execute("DELETE FROM quotes")
+   c.execute("INSERT INTO services VALUES(?,?,?,?,?,?,?,0)",(
+     "existing-service",101,"openvpn","ms-existing","{}",s.now()+5000,
+     json.dumps({"label":"کار"})))
+   q3=w.quote(c,102,1,label="کار")
+   alias=json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(q3,)).fetchone()[0])["label"]
+   self.assertRegex(alias,r"^کار-[a-z0-9]{5}$")
+ def test_label_validation_and_quote_expiry(self):
+  with s.conn() as c:
+   for invalid in ["", "a", "hello/there", "x"*60, "line\\nbreak"]:
+    with self.assertRaises(ValueError):w.quote(c,101,1,label=invalid)
+   q=w.quote(c,101,1,label="Office")
+   c.execute("UPDATE quotes SET expires=0 WHERE id=?",(q,))
+   q2=w.quote(c,102,1,label="office")
+   self.assertEqual(json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(q2,)).fetchone()[0])["label"],"office")
+ def test_selected_name_kept_through_card_payment(self):
+  with s.conn() as c:
+   q=w.quote(c,102,1,label="Company VPN")
+   w.purchase_quote(c,102,q,card=True)
+   o=c.execute("SELECT * FROM orders WHERE user_id=102").fetchone()
+   self.assertEqual((o["price"],o["status"]),(10000,"awaiting_receipt"))
+   self.assertEqual(json.loads(o["plan"])["_display_name"],"Company VPN")
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],0)
+ def test_unique_labels_for_bulk_purchases(self):
+  with s.conn() as c:
+   s.put(c,"bulk",True);s.put(c,"reseller",True)
+   c.execute("UPDATE users SET reseller=1 WHERE id=101")
+   q=w.quote(c,101,1,quantity=3,label="Bulk")
+   w.purchase_quote(c,101,q)
+   labels=[json.loads(x[0])["_display_name"] for x in c.execute("SELECT plan FROM orders ORDER BY id")]
+   self.assertEqual(len(labels),3)
+   self.assertEqual(len(set(labels)),3)
+   self.assertIn("Bulk",labels)
+   self.assertTrue(all(x=="Bulk" or __import__('re').fullmatch(r"Bulk-[a-z0-9]{5}",x) for x in labels))
 if __name__=="__main__":unittest.main()
