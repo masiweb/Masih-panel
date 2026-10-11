@@ -144,12 +144,21 @@ ufw allow 443/tcp >/dev/null
 ufw allow 1194/udp >/dev/null
 ufw allow 4443/tcp >/dev/null
 ufw allow 4443/udp >/dev/null
+for xray_port in 8443 8444 8445 8446 8447; do
+  ufw allow "$xray_port/tcp" >/dev/null
+done
 systemctl daemon-reload
-# The native panel binary is already installed and has its final credentials.
+# This finalizer only handles fresh/previously interrupted installs. Stop x-ui
+# briefly so SQLite is offline while the default Xray inbounds are initialized.
+# If any inbound is already present, the initializer leaves all inbounds alone.
+systemctl stop x-ui.service
+python3 "$REPO_ROOT/deploy/bootstrap-inbounds.py" \
+  --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
+  --xray /usr/local/x-ui/bin/xray-linux-amd64
+# Starting here also loads the patched Masiha binary instead of the
+# original upstream installer process.
 systemctl enable --now x-ui.service
 # Native upstream installer had already started x-ui before its binary was replaced.
-# Restart explicitly to load the patched Masiha executable into memory.
-systemctl restart x-ui.service
 systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
 systemctl enable --now masiha-vpn-extension.service
