@@ -349,4 +349,33 @@ class Commerce(unittest.TestCase):
    self.assertEqual(len(set(labels)),3)
    self.assertIn("Bulk",labels)
    self.assertTrue(all(x=="Bulk" or __import__('re').fullmatch(r"Bulk-[a-z0-9]{5}",x) for x in labels))
+ def test_discount_survives_checkout_name_prompt(self):
+  with s.conn() as c:
+   c.execute("INSERT INTO coupons VALUES('OFF20',20,0,3,0)")
+   c.execute("UPDATE users SET state='coupon:OFF20' WHERE id=101")
+   w.handle(c,{"update_id":920,"callback_query":{"from":{"id":101},
+     "message":{"chat":{"id":101,"type":"private"}},"data":"choose:1"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"planname:1:1:OFF20")
+   w.handle(c,{"update_id":921,"message":{"from":{"id":101},
+    "chat":{"id":101,"type":"private"},"text":"پشتیبانی من"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"coupon:OFF20")
+   q=c.execute("SELECT id FROM quotes WHERE user_id=101 ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+   w.purchase_quote(c,101,q)
+   o=c.execute("SELECT * FROM orders WHERE user_id=101").fetchone()
+   self.assertEqual(o["price"],8000)
+   self.assertEqual(json.loads(o["plan"])["_display_name"],"پشتیبانی من")
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],92000)
+ def test_renaming_preserves_unique_name(self):
+  with s.conn() as c:
+   c.execute("INSERT INTO services VALUES(?,?,?,?,?,?,?,0)",(
+     "existing-one",101,"openvpn","ms-a","{}",s.now()+5000,json.dumps({"label":"Sales"})))
+   c.execute("INSERT INTO services VALUES(?,?,?,?,?,?,?,0)",(
+     "existing-two",102,"openvpn","ms-b","{}",s.now()+5000,json.dumps({"label":"Support"})))
+   s.put(c,"rename",True)
+   c.execute("UPDATE users SET state='rename:existing-two' WHERE id=102")
+   w.handle(c,{"update_id":923,"message":{"from":{"id":102},
+      "chat":{"id":102,"type":"private"},"text":"sales"}})
+   name=json.loads(c.execute("SELECT data FROM services WHERE id='existing-two'").fetchone()[0])["label"]
+   self.assertRegex(name,r"^sales-[a-z0-9]{5}$")
+   self.assertNotEqual(name.casefold(),"sales")
 if __name__=="__main__":unittest.main()
