@@ -220,6 +220,14 @@ else
   prefetch_build_dependencies
   echo "=== Building Masiha x-ui Go backend from VERIFIED OFFLINE cache ==="
   echo "No network downloads are permitted during compilation. On first build, compilation can take several minutes."
+  # Ubuntu VPS instances frequently have only 2-4GB RAM. Limit Go's
+  # parallel compiler workers by default; operators can override explicitly.
+  export GOMAXPROCS="${MASIHA_GOMAXPROCS:-${GOMAXPROCS:-2}}"
+  [[ "$GOMAXPROCS" =~ ^[1-9][0-9]*$ ]] || {
+    echo "MASIHA_GOMAXPROCS must be a positive integer." >&2
+    exit 2
+  }
+  echo "Go compiler parallelism: GOMAXPROCS=$GOMAXPROCS"
   rm -f "$BUILD_ROOT/x-ui.new"
   # If a dependency is still missing, Go now reports it immediately instead
   # of retrying an unreachable remote server for an unbounded period.
