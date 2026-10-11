@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import base64, contextlib, fcntl, hashlib, io, json, os, secrets, time, urllib.request
+import base64, contextlib, fcntl, hashlib, io, json, os, re, secrets, time, urllib.request
 from sales import *
 def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
@@ -104,12 +104,15 @@ def handle(c,up):
   state=u["state"]
   if state.startswith("planname:"):
    parts=state.split(":")
-   if len(parts)!=3:raise ValueError("درخواست خرید نامعتبر است؛ دوباره پلن را انتخاب کنید")
+   if len(parts) not in (3,4):raise ValueError("درخواست خرید نامعتبر است؛ دوباره پلن را انتخاب کنید")
    pid=integer(int(parts[1]),1);qty=integer(int(parts[2]),1,20)
+   carried_coupon=parts[3] if len(parts)==4 else ""
+   if carried_coupon and not re.fullmatch(r"[A-Za-z0-9_-]{1,40}",carried_coupon):
+    raise ValueError("کد تخفیف نامعتبر است")
    chosen=subscription_label(body)
    ident=quote(c,uid,pid,quantity=qty,label=chosen)
    assigned=json.loads(c.execute("SELECT plan FROM quotes WHERE id=?",(ident,)).fetchone()["plan"])["label"]
-   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+   c.execute("UPDATE users SET state=? WHERE id=?",("coupon:"+carried_coupon if carried_coupon else "",uid))
    if qty>1:
     keys=[[("تأیید خرید "+str(qty)+" اشتراک","buy:"+ident)]]
     title="نام پایه سفارش انبوه"
@@ -204,7 +207,8 @@ def handle(c,up):
   p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
   if not p or p["is_trial"]:raise ValueError("پلن فروش عمده معتبر نیست")
   price=p["price"]*(100-s["reseller_discount"])//100
-  c.execute("UPDATE users SET state=? WHERE id=?",("planname:"+str(pid)+":"+str(qty),uid))
+  coupon_state=u["state"][7:] if u["state"].startswith("coupon:") else ""
+  c.execute("UPDATE users SET state=? WHERE id=?",("planname:"+str(pid)+":"+str(qty)+(":"+coupon_state if coupon_state else ""),uid))
   enqueue(c,uid,"خرید "+str(qty)+" اشتراک؛ جمع پیش از کد تخفیف "+str(price*qty)+
     " تومان. لطفاً نام پایه سرویس‌ها را ارسال کنید؛ نام‌های تکراری پسوند ۵ کاراکتری می‌گیرند.")
  elif cmd.startswith("rename:"):
@@ -219,7 +223,8 @@ def handle(c,up):
    enqueue(c,uid,"این پلن تست رایگان است؛ برای دریافت بدون پرداخت ادامه دهید.",
       [[("🎁 دریافت رایگان","trialpick:"+str(pid))]])
    return
-  c.execute("UPDATE users SET state=? WHERE id=?",("planname:"+str(pid)+":1",uid))
+  coupon_state=u["state"][7:] if u["state"].startswith("coupon:") else ""
+  c.execute("UPDATE users SET state=? WHERE id=?",("planname:"+str(pid)+":1"+(":"+coupon_state if coupon_state else ""),uid))
   enqueue(c,uid,"پلن: "+p["name"]+"\nمدت: "+str(p["days"])+" روز\nحجم: "+
     (str(p["gb"])+" GB" if p["gb"] else "نامحدود")+
     "\nقیمت پایه: "+str(p["price"])+" تومان"+
