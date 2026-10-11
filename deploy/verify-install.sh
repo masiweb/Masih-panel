@@ -33,8 +33,8 @@ db.close()
 PY
 echo "=== Extension Python syntax ==="
 python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,runtime_config}.py
-echo "=== Native sharing tests (isolated temporary SQLite) ==="
-(cd /opt/masiha-vpn-extension && python3 -m unittest -q test_unified.py)
+echo "=== Shared quota and Telegram commerce tests (isolated temporary SQLite) ==="
+(cd /opt/masiha-vpn-extension && python3 -m unittest -q test_unified.py test_sales.py)
 echo "=== OpenConnect syntax ==="
 ocserv -t -c /etc/ocserv/ocserv.conf
 echo "=== Nginx syntax ==="
