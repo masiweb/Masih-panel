@@ -8,7 +8,7 @@ def quote(c,uid,pid,renew="",quantity=1,label=None):
  ident=secrets.token_hex(12)
  # If label is supplied, reserve it before showing the payment options.
  # Renewals keep the already-provisioned service label unchanged.
- assigned=unique_subscription_label(c,label) if label and not renew else ""
+ assigned=unique_subscription_label(c,label) if label is not None and not renew else ""
  c.execute("INSERT INTO quotes VALUES(?,?,?,?,?,?)",(ident,uid,pid,json.dumps({"plan":dict(p),"quantity":quantity,"label":assigned}),renew,now()+900))
  return ident
 def purchase_quote(c,uid,ident,card=False):
