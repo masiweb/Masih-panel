@@ -58,27 +58,60 @@ systemctl disable ocserv.service 2>/dev/null || true
 TOOLS=/opt/masiha-vpn-toolchains
 mkdir -p "$TOOLS"
 download_verified() {
-  local filename="$1" expected="$2" url tmp
-  shift 2
+  # $1 destination, $2 official sha256, $3 optional local archive path,
+  # $4 optional user-selected HTTPS mirror, $5... trusted mirrors.
+  local filename="$1" expected="$2" supplied="$3" alternate="$4" url tmp
+  shift 4
   tmp="${filename}.part"
-  for url in "$@"; do
+  if [[ -s "$filename" ]] &&
+     printf '%s  %s\n' "$expected" "$filename" | sha256sum --check --status; then
+    echo "Using verified existing $(basename "$filename")"
+    return 0
+  fi
+  if [[ -n "$supplied" ]]; then
+    [[ -f "$supplied" ]] || { echo "Local archive not found: $supplied" >&2; return 1; }
+    echo "Verifying local archive: $supplied"
+    if ! printf '%s  %s\n' "$expected" "$supplied" | sha256sum --check; then
+      echo "Local archive checksum does not match official release. Aborting." >&2
+      return 1
+    fi
+    if [[ "$supplied" != "$filename" ]]; then
+      cp "$supplied" "$filename"
+    fi
+    return 0
+  fi
+  local urls=()
+  if [[ -n "$alternate" ]]; then
+    [[ "$alternate" == https://* ]] || {
+      echo "Custom mirror must use HTTPS." >&2; return 1;
+    }
+    urls+=("$alternate")
+  fi
+  urls+=("$@")
+  for url in "${urls[@]}"; do
     echo "Downloading $(basename "$filename") from $url"
     rm -f "$tmp"
     if curl --fail --location --retry 2 --connect-timeout 20 --max-time 360 \
        --output "$tmp" "$url" &&
        printf '%s  %s\n' "$expected" "$tmp" | sha256sum --check --status; then
       mv -f "$tmp" "$filename"
+      echo "Verified SHA256 of $(basename "$filename")"
       return 0
     fi
-    echo "Mirror failed or SHA256 mismatch; trying next official endpoint." >&2
+    echo "Download failed or checksum mismatch; trying next mirror." >&2
   done
   rm -f "$tmp"
-  echo "Cannot download verified $(basename "$filename"). Check outbound HTTPS/DNS/proxy." >&2
+  echo "Cannot download a SHA256-verified $(basename "$filename")." >&2
+  echo "Option A: download it from a reachable HTTPS mirror." >&2
+  echo "Option B: copy official tarball from another server and re-run with" >&2
+  echo "  sudo env MASIHA_GO_ARCHIVE=/root/go1.27.1.linux-amd64.tar.gz bash deploy/install-ubuntu-24.04.sh" >&2
   return 1
 }
 if [[ ! -x "$TOOLS/go/bin/go" ]]; then
   download_verified "$TOOLS/go.tar.gz" \
     "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445" \
+    "${MASIHA_GO_ARCHIVE:-}" "${MASIHA_GO_URL:-}" \
+    "https://mirrors.aliyun.com/golang/go1.27.1.linux-amd64.tar.gz" \
     "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz" \
     "https://dl.google.com/go/go1.27.1.linux-amd64.tar.gz" \
     "https://storage.googleapis.com/golang/go1.27.1.linux-amd64.tar.gz"
@@ -87,7 +120,9 @@ fi
 if [[ ! -x "$TOOLS/node-v24.21.0-linux-x64/bin/node" ]]; then
   download_verified "$TOOLS/node.tar.xz" \
     "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8a4a27d94fbe49f56cb2d6" \
+    "${MASIHA_NODE_ARCHIVE:-}" "${MASIHA_NODE_URL:-}" \
     "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
+    "https://mirrors.huaweicloud.com/nodejs/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
     "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
   tar -xJf "$TOOLS/node.tar.xz" -C "$TOOLS"
 fi
