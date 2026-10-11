@@ -37,7 +37,7 @@ class Commerce(unittest.TestCase):
   self.assertTrue(result["settings"]["token_set"]);self.assertNotIn("token",result["settings"])
  def test_trial_once(self):
   with s.conn() as c:
-   s.put(c,"trial",True);s.put(c,"trial_plan",1);s.order(c,101,1,"trial",trial=True)
+   s.put(c,"trial",True);c.execute("UPDATE plans SET is_trial=1,price=0 WHERE id=1");s.order(c,101,1,"trial",trial=True)
    with self.assertRaises(ValueError):s.order(c,101,1,"trial2",trial=True)
  def test_provision_retry_target_stable(self):
   with s.conn() as c:
