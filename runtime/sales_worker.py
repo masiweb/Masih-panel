@@ -281,11 +281,20 @@ def tick():
    try:
     c.execute("BEGIN IMMEDIATE");handle(c,up)
     c.execute("INSERT INTO updates VALUES(?,?)",(up["update_id"],now()));put(c,"offset",up["update_id"]+1);c.commit()
-   except Exception as e:
+   except ValueError as e:
+    # Expected user/business validation errors must not poison the queue.
     c.rollback()
     m=up.get("message") or up.get("callback_query",{}).get("message",{})
-    if m.get("chat",{}).get("type")=="private":enqueue(c,m["chat"]["id"],str(e) if isinstance(e,ValueError) else "عملیات ناموفق بود؛ دوباره تلاش کنید.")
-    c.execute("INSERT OR IGNORE INTO updates VALUES(?,?)",(up["update_id"],now()));put(c,"offset",up["update_id"]+1);c.commit()
+    if m.get("chat",{}).get("type")=="private":
+     enqueue(c,m["chat"]["id"],str(e))
+    c.execute("INSERT OR IGNORE INTO updates VALUES(?,?)",(up["update_id"],now()))
+    put(c,"offset",up["update_id"]+1)
+    c.commit()
+   except Exception:
+    # An API/network/panel error is transient; DO NOT acknowledge the update.
+    # Otherwise paid orders or receipt approvals could be permanently lost.
+    c.rollback()
+    raise
    if up.get("callback_query"):
     with contextlib.suppress(Exception):tg(s,"answerCallbackQuery",{"callback_query_id":up["callback_query"]["id"]})
   for o in c.execute("SELECT * FROM orders WHERE status='paid' LIMIT 5").fetchall():
@@ -316,9 +325,17 @@ def tick():
     else:tg(s,row["method"],p)
     c.execute("UPDATE outbox SET done=1,payload='{}' WHERE id=?",(row["id"],))
    except Exception:
-    c.execute("UPDATE outbox SET attempts=attempts+1,next_try=?,done=? WHERE id=?",(now()+min(3600,2**min(row["attempts"]+1,11)),int(row["attempts"]>=15),row["id"]))
+    new_attempts=row["attempts"]+1
+    # -1 is a *visible dead-letter*, never "done/sent". Admin can retry.
+    status=-1 if new_attempts>=16 else 0
+    c.execute("UPDATE outbox SET attempts=?,next_try=?,done=? WHERE id=?",
+              (new_attempts,now()+min(3600,2**min(new_attempts,11)),status,row["id"]))
+    if status==-1:
+     audit(c,"telegram_delivery_failed","outbox:"+str(row["id"]))
    c.commit();time.sleep(.08)
-  put(c,"last_error","");c.commit()
+  failed=c.execute("SELECT COUNT(*) FROM outbox WHERE done=-1").fetchone()[0]
+  put(c,"last_error",("ارسال "+str(failed)+" پیام تلگرام ناموفق مانده؛ صف خطا را بررسی کنید") if failed else "")
+  c.commit()
 def main():
  os.umask(0o077);BASE.mkdir(parents=True,exist_ok=True,mode=0o700)
  with open(BASE/"worker.lock","a") as lock:
