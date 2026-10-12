@@ -9,7 +9,7 @@ for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/b
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/test_extend_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -19,7 +19,7 @@ done
 sh -n runtime/test-oc-route.sh
 echo "Python syntax and portable tunnel route shell syntax OK"
 echo "=== Isolated Xray presets test (no server changes) ==="
-python3 -m unittest -q deploy/test_bootstrap_inbounds.py deploy/test_check_panel_login.py
+python3 -m unittest -q deploy/test_bootstrap_inbounds.py deploy/test_extend_inbounds.py deploy/test_check_panel_login.py
 git apply --stat deploy/3x-ui.patch >/dev/null
 test -s deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/SalesBotPage.css' deploy/3x-ui.patch
@@ -40,10 +40,10 @@ fi
 echo "PASS: sales, named checkout, trials, Telegram and quota tests"
 # Check exact key shell scripts and source files required at deployment time.
 for f in runtime/manager.py runtime/unified.py runtime/worker.py runtime/sales.py \
-         runtime/sales_worker.py runtime/runtime_config.py \
+         runtime/sales_worker.py runtime/sales_bot_admin.py runtime/runtime_config.py \
          runtime/vpn-account-hook.sh runtime/smoke_panel.py \
          runtime/test_sales.py runtime/test_unified.py \
-         deploy/bootstrap-inbounds.py deploy/check-panel-login.py \
+         deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/check-panel-login.py \
          deploy/repair-panel-login.sh deploy/finalize-ubuntu-24.04.sh \
          deploy/3x-ui.patch; do
   [[ -s "$f" ]] || { echo "Missing essential release file: $f" >&2;exit 2; }
