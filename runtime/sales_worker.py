@@ -304,7 +304,9 @@ def handle(c,up):
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   home(c,uid)
  elif cmd=="fun" or cmd.startswith("fun:"):
-  if cmd=="fun":c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  # Leaving a wallet/payment/text-entry step must cancel that pending input,
+  # including when AI or media is opened directly from the main menu.
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   entertainment.callback(c,uid,cmd)
  elif cmd.startswith("med:"):
   media_library.callback(c,uid,cmd)
@@ -313,6 +315,10 @@ def handle(c,up):
  elif cmd.startswith("a:"):
   admin_callback(c,uid,cmd)
  elif cmd=="plans":
+  # Keep an applied discount across plan selection, but leave unrelated
+  # payment or edit prompts when the user switches to shopping.
+  if not u["state"].startswith("coupon:"):
+   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   if not s["buy"]:
    enqueue(c,uid,"خرید اشتراک فعلاً غیرفعال است.",[[("🏠 منوی اصلی","home")]])
    return
@@ -375,6 +381,7 @@ def handle(c,up):
   enqueue(c,uid,bot_message(c,"trial_confirm"),
           key="trial:accepted:"+str(uid))
  elif cmd=="services":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   rows=[[(json.loads(r["data"]).get("label",json.loads(r["plan"])["name"])+" / "+r["username"],"service:"+r["id"])] for r in c.execute("SELECT * FROM services WHERE user_id=? AND deleted=0 ORDER BY expires DESC LIMIT 70",(uid,))]
   enqueue(c,uid,"سرویس‌های شما" if rows else "هنوز سرویسی ندارید.",rows)
  elif cmd.startswith("service:"):deliver(c,uid,cmd.split(":")[1])
