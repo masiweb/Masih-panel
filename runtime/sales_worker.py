@@ -53,11 +53,7 @@ def points_and_discounts(c,uid):
  import gamification as loyalty
  conf=settings(c)
  lines=["⭐ امتیاز شما: "+format(loyalty.balance(c,uid),","),
-        "🎯 روش‌های کسب امتیاز:",
-        "🛒 خرید: هر "+format(conf["points_per_toman"],",")+" تومان = "+
-        str(conf["points_per_purchase_unit"])+" امتیاز",
-        "👥 دعوت موفق: "+str(conf["points_per_referral"])+" امتیاز",
-        "🎵 تکمیل اطلاعات رسانه و ❤️ لایک معتبر"]
+        "🎟 کدهای تخفیف فعال:"]
  coupons=[]
  if conf["discounts"]:
   coupons=c.execute("""SELECT code,percent,credit FROM coupons
@@ -65,13 +61,17 @@ def points_and_discounts(c,uid):
    AND NOT EXISTS(SELECT 1 FROM redeemed WHERE redeemed.code=coupons.code AND redeemed.user_id=?)
    ORDER BY CASE WHEN expires=0 THEN 1 ELSE 0 END,expires,code LIMIT 20""",
    (now(),uid)).fetchall()
- lines.extend(["", "🎟 کدهای تخفیف فعال:"])
  for cp in coupons:
   benefit=str(cp["percent"])+"٪" if cp["percent"] else format(cp["credit"],",")+" تومان اعتبار"
   lines.append("• "+cp["code"]+" — "+benefit)
  if not coupons:lines.append("کد قابل استفاده‌ای ندارید.")
+ lines.extend(["","🎯 روش‌های کسب امتیاز:",
+    "🛒 خرید: هر "+format(conf["points_per_toman"],",")+" تومان = "+
+       str(conf["points_per_purchase_unit"])+" امتیاز",
+    "👥 دعوت موفق: "+str(conf["points_per_referral"])+" امتیاز",
+    "🎵 تکمیل اطلاعات رسانه و ❤️ لایک معتبر"])
  buttons=[]
- if coupons:buttons.append([("🎟 ثبت کد تخفیف / هدیه","coupon")])
+ if conf["discounts"]:buttons.append([("🎟 ثبت کد تخفیف / هدیه","coupon")])
  if conf["referrals"] or conf.get("points_per_referral",0):
   buttons.append([("👥 دعوت دوستان","referral")])
  buttons.extend([[("⭐ جزئیات امتیاز","fun:points"),("🛒 خرید جدید","plans")],
@@ -413,8 +413,9 @@ def handle(c,up):
   if method=="walletcard":
    if not s["wallet"] or not s["card"]:raise ValueError("کارت‌به‌کارت غیرفعال است")
    c.execute("UPDATE users SET state=? WHERE id=?",("receipt:"+str(amount),uid))
-   enqueue(c,uid,"💳 مبلغ: "+format(amount,",")+" تومان\n"+s["card"]+
-       "\n📷 عکس یا فایل رسید را پس از واریز ارسال کنید.",
+   enqueue(c,uid,"💳 مبلغ: "+format(amount,",")+" تومان\n"+s["card"],
+       [[("↩️ کیف پول","wallet")]])
+   enqueue(c,uid,"📷 پس از واریز، عکس یا فایل رسید را ارسال کنید.",
        [[("↩️ کیف پول","wallet")]])
   else:
    if not s["wallet"] or not s["zarinpal"] or not s["merchant_id"]:
