@@ -495,4 +495,62 @@ class Commerce(unittest.TestCase):
    with self.assertRaises(ValueError):
     input_text(c,101,"","10000 | accidental",102005)
    self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],0)
+ def test_normalize_public_channel_without_at_prefix(self):
+  self.assertEqual(s.normalize_channel("masih_v2ray"),"@masih_v2ray")
+  self.assertEqual(s.normalize_channel("@masih_v2ray"),"@masih_v2ray")
+  self.assertEqual(s.normalize_channel("https://t.me/masih_v2ray"),"@masih_v2ray")
+  with self.assertRaises(ValueError):
+   s.normalize_channel("https://example.org/not-telegram")
+
+ def test_unknown_channel_nonmember_returns_false_instead_of_bot_error(self):
+  import io,urllib.error
+  payload=json.dumps({"ok":False,"error_code":400,
+       "description":"Bad Request: PARTICIPANT_ID_INVALID"}).encode()
+  err=urllib.error.HTTPError("https://api.telegram.org/botREDACTED/getChatMember",
+      400,"Bad Request",{},io.BytesIO(payload))
+  with patch.object(s.urllib.request,"urlopen",side_effect=err):
+   self.assertFalse(s.telegram_channel_member({"token":"TEST_TOKEN"},"masih_v2ray",1234567890))
+
+ def test_fresh_nonmember_gets_join_buttons_not_token_error(self):
+  with s.conn() as c:
+   s.put(c,"channel","masih_v2ray")
+   with patch.object(w,"telegram_channel_member",return_value=False):
+    w.handle(c,{"update_id":43210,"message":{
+     "chat":{"id":98765432,"type":"private"},
+     "from":{"id":98765432,"first_name":"new customer"},"text":"/start"}})
+   self.assertTrue(c.execute("SELECT 1 FROM users WHERE id=98765432").fetchone())
+   sent=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=98765432 ORDER BY id DESC LIMIT 1").fetchone()["payload"])
+   self.assertIn("عضو شوید",sent["text"])
+   buttons=[b for row in sent["reply_markup"]["inline_keyboard"] for b in row]
+   self.assertTrue(any(b.get("url")=="https://t.me/masih_v2ray" for b in buttons))
+   self.assertTrue(any(b.get("callback_data")=="home" for b in buttons))
+
+ def test_member_gets_normal_home_after_check(self):
+  with s.conn() as c:
+   s.put(c,"channel","@masih_v2ray")
+   with patch.object(w,"telegram_channel_member",return_value=True):
+    w.handle(c,{"update_id":43211,"message":{
+     "chat":{"id":98765432,"type":"private"},
+     "from":{"id":98765432,"first_name":"new customer"},"text":"/start"}})
+   sent=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=98765432 ORDER BY id DESC LIMIT 1").fetchone()["payload"])
+   buttons=[b.get("callback_data") for row in sent["reply_markup"]["inline_keyboard"] for b in row]
+   self.assertIn("trial",buttons)
+   self.assertIn("plans",buttons)
+
+ def test_save_channel_normalizes_and_verifies_bot_is_admin(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True)
+   s.put(c,"token","123456:"+("x"*30))
+   s.put(c,"admins",[101])
+   def fake_tg(settings,method,data):
+    if method=="getChat":
+     self.assertEqual(data["chat_id"],"@masih_v2ray")
+     return {"type":"channel"}
+    if method=="getMe":return {"id":900,"username":"test_bot"}
+    if method=="getChatMember":return {"status":"administrator"}
+    if method=="deleteWebhook":return True
+    raise AssertionError(method)
+   with patch.object(s,"tg",side_effect=fake_tg):
+    s.save_settings(c,{"channel":"masih_v2ray"})
+   self.assertEqual(s.settings(c)["channel"],"@masih_v2ray")
 if __name__=="__main__":unittest.main()
