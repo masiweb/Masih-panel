@@ -885,4 +885,25 @@ class Commerce(unittest.TestCase):
    self.assertEqual(payment.call_args.args[1:3],(102,12000))
    self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"")
 
+ def test_navigation_away_from_wallet_amount_cancels_pending_input(self):
+  with s.conn() as c:
+   s.put(c,"wallet",True);s.put(c,"card","Card test")
+   w.handle(c,{"update_id":92001,"callback_query":{"from":{"id":102},
+     "message":{"chat":{"id":102,"type":"private"}},"data":"walletadd"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"wallet_amount")
+   w.handle(c,{"update_id":92002,"callback_query":{"from":{"id":102},
+     "message":{"chat":{"id":102,"type":"private"}},"data":"fun:music"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"")
+   w.handle(c,{"update_id":92003,"callback_query":{"from":{"id":102},
+     "message":{"chat":{"id":102,"type":"private"}},"data":"fun:ai"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"")
+
+ def test_coupon_keeps_selected_code_when_opening_new_purchase_menu(self):
+  with s.conn() as c:
+   c.execute("INSERT INTO coupons VALUES('SALE10',10,0,3,0)")
+   c.execute("UPDATE users SET state='coupon:SALE10' WHERE id=101")
+   w.handle(c,{"update_id":92004,"callback_query":{"from":{"id":101},
+      "message":{"chat":{"id":101,"type":"private"}},"data":"plans"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"coupon:SALE10")
+
 if __name__=="__main__":unittest.main()
