@@ -91,9 +91,20 @@ def handle(c,up):
  u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if u["blocked"]:return
  if s["channel"] and uid not in s["admins"]:
-  member=tg(s,"getChatMember",{"chat_id":s["channel"],"user_id":uid})
-  if member["status"] not in ("creator","administrator","member") and not member.get("is_member"):
-   enqueue(c,uid,"ابتدا در کانال "+s["channel"]+" عضو شوید.",[[("بررسی عضویت","home")]]);return
+  # An unknown or nonmember account can cause Telegram HTTP 400. The
+  # membership helper maps that response to False, never "bot token failed".
+  channel=normalize_channel(s["channel"])
+  if not telegram_channel_member(s,channel,uid):
+   join_url=("https://t.me/"+channel[1:]) if channel.startswith("@") else None
+   buttons=[]
+   if join_url:buttons.append([{"text":"📢 عضویت در کانال","url":join_url}])
+   buttons.append([{"text":"✅ بررسی مجدد عضویت","callback_data":"home"}])
+   payload={"chat_id":uid,"text":"برای شروع استفاده از ربات، ابتدا در کانال "+channel+
+     " عضو شوید. سپس دکمه بررسی مجدد را بزنید.",
+     "reply_markup":{"inline_keyboard":buttons}}
+   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+     (secrets.token_hex(12),uid,"sendMessage",json.dumps(payload,ensure_ascii=False)))
+   return
  if s["require_contact"] and not u["phone"] and uid not in s["admins"]:
   contact=m.get("contact",{})
   if contact.get("user_id")==uid and isinstance(contact.get("phone_number"),str) and len(contact["phone_number"])<=32:
