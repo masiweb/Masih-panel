@@ -390,7 +390,7 @@ def upload(s,chat,filename,content,photo=False):
  boundary="Masiha"+secrets.token_hex(12);field="photo" if photo else "document"
  body=("--"+boundary+'\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n'+str(chat)+"\r\n--"+boundary+'\r\nContent-Disposition: form-data; name="'+field+'"; filename="'+filename+'"\r\nContent-Type: application/octet-stream\r\n\r\n').encode()+content+("\r\n--"+boundary+"--\r\n").encode()
  req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+("/sendPhoto" if photo else "/sendDocument"),data=body,headers={"Content-Type":"multipart/form-data; boundary="+boundary})
- with urllib.request.urlopen(req,timeout=35) as r:
+ with telegram_open(req,timeout=35) as r:
   if not json.load(r).get("ok"):raise ValueError("upload failed")
 def tick():
  with conn() as c:
@@ -466,8 +466,15 @@ def main():
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:return
   while True:
-   try:tick()
+   try:
+    tick()
    except Exception:
-    with conn() as c:put(c,"last_error","ارتباط یا پردازش ربات ناموفق است؛ اتصال تلگرام و تنظیمات را بررسی کنید")
-   time.sleep(3)
+    with conn() as c:
+     put(c,"last_error","ارتباط یا پردازش ربات ناموفق است؛ اتصال تلگرام و تنظیمات را بررسی کنید")
+    # Back off only for failed polls, not for successful bot interactions.
+    time.sleep(1)
+   else:
+    # getUpdates already waits up to one second if idle.
+    # A further 3-second unconditional sleep made users wait unnecessarily.
+    time.sleep(.08)
 if __name__=="__main__":main()
