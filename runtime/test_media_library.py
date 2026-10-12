@@ -291,6 +291,64 @@ class MediaQA(unittest.TestCase):
    lib.callback(c,101,"med:plremoveok:"+str(pid))
    self.assertEqual(c.execute("SELECT removed FROM playlists WHERE id=?",(pid,)).fetchone()[0],1)
 
+ def test_play_queues_cover_with_details_before_music_and_buttons(self):
+  with s.conn() as c:
+   mid=self.upload(c)
+   c.execute("UPDATE media_items SET cover_id=?,genre=?,lyrics=? WHERE id=?",
+             ("COVER_FILE_ID","پاپ","بخشی از متن آهنگ",mid))
+   self.publish(c,101,mid)
+   lib.play(c,102,mid)
+   rows=c.execute("SELECT method,payload FROM outbox WHERE chat=? ORDER BY id",(102,)).fetchall()
+   self.assertEqual([r["method"] for r in rows],["sendPhoto","sendAudio"])
+   cover,audio=[json.loads(r["payload"]) for r in rows]
+   self.assertEqual(cover["photo"],"COVER_FILE_ID")
+   self.assertIn("متن آهنگ",cover["caption"])
+   self.assertIn("پاپ",cover["caption"])
+   self.assertNotIn("reply_markup",cover)
+   self.assertEqual(audio["audio"],"audioId")
+   self.assertNotIn("متن آهنگ",audio["caption"])
+   buttons={b["callback_data"] for line in audio["reply_markup"]["inline_keyboard"] for b in line}
+   self.assertTrue({"med:like:"+str(mid),"med:comments:"+str(mid),
+                    "med:addmenu:"+str(mid),"med:report:"+str(mid)}<=buttons)
+
+ def test_play_without_cover_is_info_message_then_movie_with_buttons(self):
+  with s.conn() as c:
+   mid=self.upload(c,kind="film")
+   self.publish(c,101,mid)
+   lib.play(c,102,mid)
+   rows=c.execute("SELECT method,payload FROM outbox WHERE chat=? ORDER BY id",(102,)).fetchall()
+   self.assertEqual([r["method"] for r in rows],["sendMessage","sendVideo"])
+   info,video=[json.loads(r["payload"]) for r in rows]
+   self.assertIn("سینمایی",info["text"])
+   self.assertNotIn("reply_markup",info)
+   self.assertEqual(video["video"],"movieId")
+   self.assertIn("reply_markup",video)
+
+ def test_play_link_info_and_second_link_message_with_buttons(self):
+  with s.conn() as c:
+   mid=self.upload(c,message={"text":"https://example.com/audio.mp3"})
+   self.publish(c,101,mid)
+   lib.play(c,102,mid)
+   rows=c.execute("SELECT method,payload FROM outbox WHERE chat=? ORDER BY id",(102,)).fetchall()
+   self.assertEqual([r["method"] for r in rows],["sendMessage","sendMessage"])
+   first,second=[json.loads(r["payload"]) for r in rows]
+   self.assertNotIn("reply_markup",first)
+   self.assertIn("https://example.com/audio.mp3",second["text"])
+   self.assertIn("reply_markup",second)
+
+ def test_video_note_actions_are_on_video_not_extra_caption_message(self):
+  with s.conn() as c:
+   mid=self.upload(c,kind="film",message={"video_note":{
+    "file_id":"note_id","file_unique_id":"note_unique"}})
+   self.publish(c,101,mid)
+   lib.play(c,102,mid)
+   rows=c.execute("SELECT method,payload FROM outbox WHERE chat=? ORDER BY id",(102,)).fetchall()
+   self.assertEqual([r["method"] for r in rows],["sendMessage","sendVideoNote"])
+   note=json.loads(rows[1]["payload"])
+   self.assertNotIn("caption",note)
+   self.assertEqual(note["video_note"],"note_id")
+   self.assertIn("reply_markup",note)
+
  def test_no_arbitrary_documents_accepted(self):
   with s.conn() as c:
    self.assertFalse(lib.is_media_message({"document":{"file_id":"x","file_unique_id":"x","file_name":"malware.exe","mime_type":"application/octet-stream"}}))
