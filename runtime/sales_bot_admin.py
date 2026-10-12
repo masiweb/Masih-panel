@@ -159,12 +159,12 @@ def callback(c,uid,cmd):
    pass  # absence or Telegram privacy restrictions must not block the card
   invites=c.execute("SELECT COUNT(*) FROM loyalty_points WHERE reference LIKE 'referral:%' AND user_id=?",(user["id"],)).fetchone()[0]
   subs=c.execute("SELECT COUNT(*) FROM services WHERE user_id=?",(user["id"],)).fetchone()[0]
-  text_card="👤 "+(user["name"] or "بدون نام")+"\nشناسه: "+str(user["id"])+
+  text_card=("👤 "+(user["name"] or "بدون نام")+"\nشناسه: "+str(user["id"])+
      "\nموجودی: "+str(user["balance"])+" تومان\nشماره: "+(user["phone"] or "ثبت نشده")+
      "\n⭐ امتیاز: "+str(loyalty.balance(c,user["id"]))+
      "\nدعوت موفق: "+str(invites)+"\nاشتراک‌های خریداری‌شده: "+str(subs)+
      "\nوضعیت: "+("مسدود" if user["blocked"] else "فعال")+
-     " | نماینده: "+("بله" if user["reseller"] else "خیر")
+     " | نماینده: "+("بله" if user["reseller"] else "خیر"))
   return send(c,uid,text_card,[
    [("📦 لیست اشتراک‌های کاربر","a:usubs:"+ident)],
    [("مسدود/آزاد","a:block:"+ident),("نمایندگی روشن/خاموش","a:reseller:"+ident)],
