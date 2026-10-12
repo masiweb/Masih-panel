@@ -126,6 +126,22 @@ class MediaQA(unittest.TestCase):
    self.assertTrue(any("https://example.com/" in x.get("text","") for x in self.payloads(c,102)))
    with self.assertRaises(ValueError):lib._url("http://127.0.0.1/admin")
 
+ def test_direct_music_and_film_link_autodetection(self):
+  with s.conn() as c:
+   worker.handle(c,{"update_id":481,"message":{
+    "from":{"id":101,"first_name":"LinkUser"},"chat":{"id":101,"type":"private"},
+    "text":"https://example.org/music.mp3?source=channel"}})
+   row=c.execute("SELECT kind,telegram_method FROM media_items WHERE owner_id=101 ORDER BY id DESC LIMIT 1").fetchone()
+   self.assertEqual(tuple(row),("music","link"))
+   c.execute("UPDATE users SET state='' WHERE id=101")
+   worker.handle(c,{"update_id":482,"message":{
+    "from":{"id":101,"first_name":"LinkUser"},"chat":{"id":101,"type":"private"},
+    "text":"https://example.org/movie.mp4"}})
+   row=c.execute("SELECT kind,telegram_method FROM media_items WHERE owner_id=101 ORDER BY id DESC LIMIT 1").fetchone()
+   self.assertEqual(tuple(row),("film","link"))
+  self.assertFalse(lib.is_media_message({"text":"https://example.org/ordinary-page"}))
+  self.assertFalse(lib.is_media_message({"voice":{"file_id":"v","file_unique_id":"u"}}))
+
  def test_public_private_playlists_and_membership_invite(self):
   with s.conn() as c:
    mid=self.upload(c)
