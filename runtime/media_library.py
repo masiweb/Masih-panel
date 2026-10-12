@@ -243,8 +243,18 @@ def _guess(message,expected=None):
   return kind,method,part
  return None
 
+def _link_kind(value):
+ if not isinstance(value,str) or not value.startswith("https://"):return None
+ ext=urlparse(value).path.lower().rsplit(".",1)[-1]
+ if ext in ("mp3","m4a","flac","ogg","wav","aac","opus"):return "music"
+ if ext in ("mp4","mkv","mov","webm","avi","m4v"):return "film"
+ return None
+
 def is_media_message(m):
- return bool(_guess(m))
+ # Recognize direct media URLs without hijacking ordinary support messages.
+ # Voice notes are accepted only after explicit upload selection.
+ return bool(m.get("audio") or m.get("video") or (
+   m.get("document") and _guess(m)) or _link_kind(m.get("text","")))
 
 def _prompt(c,uid,row,step=0):
  fields=FIELDS[row["kind"]]
@@ -268,10 +278,15 @@ def accept(c,uid,message,expected=None):
  if not kind_method:
   # An external HTTPS URL is an index entry, not a downloaded Telegram file.
   body=message.get("text","")
-  if not expected or not body.strip().startswith("https://"):
+  if not body.strip().startswith("https://"):
    raise ValueError("لطفاً فایل صوتی/تصویری یا لینک HTTPS مستقیم ارسال کنید")
   url=_url(body)
-  kind=expected;method="link"
+  detected=_link_kind(url)
+  if expected and detected and expected!=detected:
+   raise ValueError("نوع فایل لینک با بخش انتخاب‌شده مطابقت ندارد")
+  kind=expected or detected
+  if not kind:raise ValueError("نوع فایل لینک نامشخص است؛ اول دکمه آپلود موزیک یا فیلم را انتخاب کنید")
+  method="link"
   part={"file_id":"","file_unique_id":hashlib.sha256(url.encode()).hexdigest(),
         "file_name":url.rsplit("/",1)[-1],"title":""}
  else:kind,method,part=kind_method;url=""
