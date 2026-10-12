@@ -162,10 +162,9 @@ def _queue_file(c,uid,method,file_id,caption,buttons):
  field={"sendAudio":"audio","sendVoice":"voice","sendVideo":"video","sendVideoNote":"video_note","sendDocument":"document"}[method]
  markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in row] for row in buttons]}
  payload={"chat_id":uid,field:file_id,"reply_markup":markup}
- if method=="sendVideoNote":
-  # Telegram video_note method has no caption parameter.
-  send(c,uid,caption,buttons)
- else:
+ if method!="sendVideoNote":
+  # Telegram video_note does not support captions; the information card
+  # has already been queued as the preceding message.
   payload["caption"]=caption[:950]
  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
            (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
@@ -401,15 +400,22 @@ def play(c,uid,mid):
   [("🚩 گزارش","med:report:"+str(mid))]]
  if uid==row["owner_id"]:buttons.append([("🗑 حذف فایل من","med:remove:"+str(mid))])
  buttons.append([("↩️ "+GENRE_LABEL[row["kind"]],"med:"+row["kind"])])
+ # Telegram renders a photo's caption BELOW the photo. Enqueue the cover
+ # and full information as the first message, without action buttons.
  description=_preview(c,uid,row)
- if row["telegram_method"]=="link":
-  send(c,uid,description+"\n🔗 لینک رسانه:\n"+row["source_url"],buttons)
- else:
-  _queue_file(c,uid,row["telegram_method"],row["file_id"],description,buttons)
  if row["cover_id"]:
-  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
-     (secrets.token_hex(12),uid,"sendPhoto",json.dumps({
-      "chat_id":uid,"photo":row["cover_id"],"caption":"🖼 کاور "+row["title"][:100]})))
+  method="sendPhoto"
+  payload={"chat_id":uid,"photo":row["cover_id"],"caption":description[:1000]}
+ else:
+  method="sendMessage"
+  payload={"chat_id":uid,"text":description[:4000]}
+ c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+      (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
+ # Message two is the Telegram-hosted music/video itself, with ALL buttons.
+ if row["telegram_method"]=="link":
+  send(c,uid,"🔗 "+row["source_url"],buttons)
+ else:
+  _queue_file(c,uid,row["telegram_method"],row["file_id"],row["title"][:100],buttons)
 
 def playlists(c,uid,kind,scope):
  if scope=="mine":
