@@ -528,6 +528,8 @@ class Commerce(unittest.TestCase):
  def test_member_gets_normal_home_after_check(self):
   with s.conn() as c:
    s.put(c,"channel","@masih_v2ray")
+   s.put(c,"trial",True)
+   c.execute("UPDATE plans SET is_trial=1,price=0 WHERE id=1")
    with patch.object(w,"telegram_channel_member",return_value=True):
     w.handle(c,{"update_id":43211,"message":{
      "chat":{"id":98765432,"type":"private"},
