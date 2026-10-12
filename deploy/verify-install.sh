@@ -46,7 +46,7 @@ from PIL import Image
 from io import BytesIO
 out=BytesIO()
 qrcode.make('https://example.org/test-subscription').save(out,format='PNG')
-assert out.getvalue().startswith(b'\\x89PNG\\r\\n\\x1a\\n')
+assert out.getvalue()[:8] == bytes([137,80,78,71,13,10,26,10])
 print('Telegram subscription QR dependencies and PNG rendering OK')
 PY
 echo "=== Executable VPN hooks and QA client route helper ==="
