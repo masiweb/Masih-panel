@@ -102,6 +102,7 @@ def handle(c,up):
    enqueue(c,uid,bot_message(c,"contact_saved"))
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
      (secrets.token_hex(12),uid,"sendMessage",json.dumps({"chat_id":uid,"text":"✅","reply_markup":{"remove_keyboard":True}})))
+   home(c,uid)
    return
   else:
    payload={"chat_id":uid,"text":bot_message(c,"contact_prompt"),"reply_markup":{"keyboard":[[{"text":"ارسال شماره من","request_contact":True}]],"resize_keyboard":True,"one_time_keyboard":True}}
