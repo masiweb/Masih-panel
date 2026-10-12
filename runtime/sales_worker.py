@@ -42,7 +42,7 @@ def home(c,uid):
  if s["referrals"]:rows.append([("دعوت دوستان","referral")])
  rows.append([("پشتیبانی","support")])
  if uid in s["admins"]:rows.append([("مدیریت فروش","admin")])
- enqueue(c,uid,s["welcome"]+"\nموجودی: "+str(u["balance"])+" تومان",rows)
+ enqueue(c,uid,(s["welcome"] if s["welcome"]!=DEFAULT["welcome"] else bot_message(c,"home"))+"\n"+bot_message(c,"wallet_balance",balance=u["balance"]),rows)
 def deliver(c,uid,sid):
  r=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(sid,uid)).fetchone()
  if not r:raise ValueError("سرویس پیدا نشد")
@@ -94,9 +94,15 @@ def handle(c,up):
    enqueue(c,uid,"ابتدا در کانال "+s["channel"]+" عضو شوید.",[[("بررسی عضویت","home")]]);return
  if s["require_contact"] and not u["phone"] and uid not in s["admins"]:
   contact=m.get("contact",{})
-  if contact.get("user_id")==uid:c.execute("UPDATE users SET phone=? WHERE id=?",(contact["phone_number"],uid))
+  if contact.get("user_id")==uid and isinstance(contact.get("phone_number"),str) and len(contact["phone_number"])<=32:
+   c.execute("UPDATE users SET phone=? WHERE id=?",(contact["phone_number"],uid))
+   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+   enqueue(c,uid,bot_message(c,"contact_saved"))
+   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+     (secrets.token_hex(12),uid,"sendMessage",json.dumps({"chat_id":uid,"text":"✅","reply_markup":{"remove_keyboard":True}})))
+   return
   else:
-   payload={"chat_id":uid,"text":"شماره تماس متعلق به حساب خودتان را ارسال کنید.","reply_markup":{"keyboard":[[{"text":"ارسال شماره من","request_contact":True}]],"resize_keyboard":True,"one_time_keyboard":True}}
+   payload={"chat_id":uid,"text":bot_message(c,"contact_prompt"),"reply_markup":{"keyboard":[[{"text":"ارسال شماره من","request_contact":True}]],"resize_keyboard":True,"one_time_keyboard":True}}
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"sendMessage",json.dumps(payload)));return
  if new and s["new_user_notice"]:
   for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
@@ -170,7 +176,7 @@ def handle(c,up):
    amount=int(state.split(":")[1])
    ident=c.execute("INSERT INTO topups(user_id,amount,receipt,created) VALUES(?,?,?,?)",(uid,amount,receipt,now())).lastrowid
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
-   enqueue(c,uid,"رسید ثبت شد؛ پس از تأیید مدیر موجودی شارژ می‌شود.")
+   enqueue(c,uid,bot_message(c,"receipt_saved"))
    for aid in s["admins"]:
     enqueue(c,aid,"رسید شماره "+str(ident)+"؛ کاربر "+str(uid)+"؛ مبلغ "+str(amount)+" تومان",[[("تأیید","approve:"+str(ident)),("رد","reject:"+str(ident))]])
     if receipt.startswith("photo:"):
@@ -188,7 +194,7 @@ def handle(c,up):
    enqueue(c,uid,"کد ثبت شد.",[[("خرید","plans")]]);return
   if state=="support":
    c.execute("INSERT INTO tickets(user_id,body,created) VALUES(?,?,?)",(uid,text(body,3000),now()))
-   c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,"پیام پشتیبانی ثبت شد.");return
+   c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,bot_message(c,"support_saved"));return
   if state=="transfer":
    target,amount=map(int,body.split());integer(target,1);integer(amount,1,10**9)
    if target==uid:raise ValueError("گیرنده باید متفاوت باشد")
@@ -198,7 +204,7 @@ def handle(c,up):
  if cmd.startswith("/start") or cmd=="home":home(c,uid)
  elif cmd=="plans":
   rows=[[ (p["category"]+" / "+p["name"]+" — "+str(p["price"])+" تومان","choose:"+str(p["id"])) ] for p in c.execute("SELECT * FROM plans WHERE active=1 AND is_trial=0 LIMIT 70")]
-  enqueue(c,uid,"پلن موردنظر را انتخاب کنید." if rows else "فعلاً پلنی برای فروش وجود ندارد.",rows)
+  enqueue(c,uid,bot_message(c,"plans_menu") if rows else bot_message(c,"plans_empty"),rows)
  elif cmd.startswith("bulk:"):
   if not s["bulk"] or not s["reseller"] or not u["reseller"]:raise ValueError("دسترسی نماینده لازم است")
   _,pid,qty=cmd.split(":");qty=integer(int(qty),2,20);pid=int(pid)
@@ -236,7 +242,7 @@ def handle(c,up):
   c.execute("UPDATE users SET state=? WHERE id=?",("orderreceipt:"+o["id"],uid))
   enqueue(c,uid,"شماره سفارش: "+o["id"]+"\nمبلغ دقیق: "+str(o["price"])+" تومان\n"+s["card"]+"\nپس از واریز، عکس یا فایل رسید را همین‌جا ارسال کنید.")
  elif cmd.startswith("buy:"):
-  purchase_quote(c,uid,cmd.split(":")[1]);enqueue(c,uid,"سفارش ثبت شد؛ در حال ساخت اشتراک.")
+  purchase_quote(c,uid,cmd.split(":")[1]);enqueue(c,uid,bot_message(c,"order_confirm"))
  elif cmd=="trial":
   if not s["trial"]:raise ValueError("دریافت تست رایگان غیرفعال است")
   if c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1",(uid,)).fetchone():
@@ -244,13 +250,12 @@ def handle(c,up):
   rows=[[("🎁 "+p["name"]+" — "+str(p["days"])+" روز، "+str(p["gb"])+" گیگابایت",
           "trialpick:"+str(p["id"]))] for p in c.execute(
             "SELECT * FROM plans WHERE active=1 AND is_trial=1 ORDER BY id LIMIT 40")]
-  enqueue(c,uid,"پلن تست رایگان خود را انتخاب کنید؛ هیچ پرداختی لازم نیست." if rows else
-    "در حال حاضر پلن تست فعالی وجود ندارد.",rows)
+  enqueue(c,uid,bot_message(c,"trial_menu") if rows else bot_message(c,"trial_empty"),rows)
  elif cmd.startswith("trialpick:"):
   if not s["trial"]:raise ValueError("تست رایگان غیرفعال است")
   pid=int(cmd.partition(":")[2])
   order(c,uid,pid,"trial:"+str(uid),trial=True)
-  enqueue(c,uid,"تست رایگان ثبت شد و بدون پرداخت در حال فعال‌سازی است.",
+  enqueue(c,uid,bot_message(c,"trial_confirm"),
           key="trial:accepted:"+str(uid))
  elif cmd=="services":
   rows=[[(json.loads(r["data"]).get("label",json.loads(r["plan"])["name"])+" / "+r["username"],"service:"+r["id"])] for r in c.execute("SELECT * FROM services WHERE user_id=? AND deleted=0 ORDER BY expires DESC LIMIT 70",(uid,))]
@@ -272,7 +277,7 @@ def handle(c,up):
   if s["card"]:rows.append([("شارژ با کارت‌به‌کارت","topup")])
   if s["zarinpal"]:rows.append([("پرداخت آنلاین زرین‌پال","online")])
   if s["transfer"]:rows.append([("انتقال موجودی","transfer")])
-  enqueue(c,uid,"موجودی: "+str(u["balance"])+" تومان",rows)
+  enqueue(c,uid,bot_message(c,"wallet_balance",balance=u["balance"]),rows)
  elif cmd=="online":
   if not s["zarinpal"] or not s["wallet"]:raise ValueError("درگاه غیرفعال")
   c.execute("UPDATE users SET state=\'online\' WHERE id=?",(uid,));enqueue(c,uid,"مبلغ شارژ به تومان را وارد کنید.")
