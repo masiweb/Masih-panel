@@ -102,9 +102,9 @@ def setup(c):
   status TEXT NOT NULL DEFAULT 'pending', UNIQUE(media_id,reporter_id)
  );
  CREATE TABLE IF NOT EXISTS media_settings(k TEXT PRIMARY KEY,v INTEGER NOT NULL);
+ INSERT OR IGNORE INTO media_settings(k,v) VALUES
+  ('field_points',2),('like_points',1),('max_media_mb',0);
  """)
- for k,v in [('field_points',2),('like_points',1),('max_media_mb',0)]:
-  c.execute("INSERT OR IGNORE INTO media_settings(k,v) VALUES(?,?)",(k,v))
 
 def _sales():
  import sales
