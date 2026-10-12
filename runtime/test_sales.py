@@ -9,7 +9,7 @@ import sales_worker as w
 class Commerce(unittest.TestCase):
  def setUp(self):
   with s.conn() as c:
-   for t in ("settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates"):c.execute("DELETE FROM "+t)
+   for t in ("settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
    c.execute("INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
@@ -555,4 +555,111 @@ class Commerce(unittest.TestCase):
    with patch.object(s,"tg",side_effect=fake_tg):
     s.save_settings(c,{"channel":"masih_v2ray"})
    self.assertEqual(s.settings(c)["channel"],"@masih_v2ray")
+ def test_purchase_points_awarded_only_once_on_fulfillment(self):
+  import gamification as loyalty
+  with s.conn() as c:
+   s.put(c,"points_per_toman",5000);s.put(c,"points_per_purchase_unit",3)
+   s.order(c,101,1,"loyal-paid");c.commit()
+   def fake(req):
+    if req["action"]=="list":return {"users":[]}
+    return {}
+   with patch.object(s,"vpn",side_effect=fake):
+    o=c.execute("SELECT * FROM orders WHERE id='loyal-paid'").fetchone()
+    s.provision(c,o)
+    c.commit()
+    self.assertEqual(loyalty.balance(c,101),6)
+    s.provision(c,c.execute("SELECT * FROM orders WHERE id='loyal-paid'").fetchone())
+    self.assertEqual(loyalty.balance(c,101),6)
+    self.assertEqual(c.execute("SELECT COUNT(*) FROM loyalty_points WHERE kind='purchase'").fetchone()[0],1)
+
+ def test_free_trial_does_not_reward_purchase_points(self):
+  import gamification as loyalty
+  with s.conn() as c:
+   s.put(c,"trial",True);c.execute("UPDATE plans SET is_trial=1,price=0 WHERE id=1")
+   s.order(c,101,1,"trial-no-points",trial=True);c.commit()
+   def fake(req):
+    if req["action"]=="list":return {"users":[]}
+    return {}
+   with patch.object(s,"vpn",side_effect=fake):
+    s.provision(c,c.execute("SELECT * FROM orders WHERE id='trial-no-points'").fetchone())
+   self.assertEqual(loyalty.balance(c,101),0)
+
+ def test_referral_reward_once_after_verified_new_user_onboarding(self):
+  import gamification as loyalty
+  with s.conn() as c:
+   s.put(c,"points_per_referral",25)
+   upd={"update_id":7601,"message":{"from":{"id":104,"first_name":"Invitee"},
+       "chat":{"id":104,"type":"private"},"text":"/start ref_101"}}
+   w.handle(c,upd)
+   self.assertEqual(loyalty.balance(c,101),25)
+   w.handle(c,{"update_id":7602,"message":{"from":{"id":104,"first_name":"Invitee"},
+       "chat":{"id":104,"type":"private"},"text":"/start"}})
+   self.assertEqual(loyalty.balance(c,101),25)
+
+ def test_loyalty_referral_waits_for_own_contact_when_required(self):
+  import gamification as loyalty
+  with s.conn() as c:
+   s.put(c,"require_contact",True);s.put(c,"points_per_referral",40)
+   w.handle(c,{"update_id":7603,"message":{"from":{"id":104,"first_name":"Invitee"},
+     "chat":{"id":104,"type":"private"},"text":"/start ref_101"}})
+   self.assertEqual(loyalty.balance(c,101),0)
+   w.handle(c,{"update_id":7604,"message":{"from":{"id":104,"first_name":"Invitee"},
+     "chat":{"id":104,"type":"private"},"contact":{"user_id":104,"phone_number":"+989120000001"}}})
+   self.assertEqual(loyalty.balance(c,101),40)
+   w.handle(c,{"update_id":7605,"message":{"from":{"id":104,"first_name":"Invitee"},
+     "chat":{"id":104,"type":"private"},"text":"/start"}})
+   self.assertEqual(loyalty.balance(c,101),40)
+
+ def test_ai_success_charges_points_once_and_failure_does_not_charge(self):
+  import gamification as loyalty, entertainment as fun
+  with s.conn() as c:
+   loyalty.award(c,101,20,"test","manual-award",s.now())
+   s.put(c,"ai_enabled",True);s.put(c,"ai_api_url","https://provider.example/v1")
+   s.put(c,"ai_api_key","secret-test-key-never-send");s.put(c,"ai_model","sandbox")
+   s.put(c,"ai_cost",5)
+   with patch.object(loyalty,"query_ai",side_effect=ValueError("provider unavailable")):
+    with self.assertRaises(ValueError):fun.ai_answer(c,101,"test question",55001)
+   self.assertEqual(loyalty.balance(c,101),20)
+   with patch.object(loyalty,"query_ai",return_value="پاسخ نمونه") as api:
+    fun.ai_answer(c,101,"hello",55002)
+    self.assertEqual(loyalty.balance(c,101),15)
+    fun.ai_answer(c,101,"hello",55002)
+    self.assertEqual(loyalty.balance(c,101),15)
+    self.assertEqual(api.call_count,1)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM ai_usage").fetchone()[0],1)
+
+ def test_admin_user_photo_and_subscription_buttons(self):
+  import sales_bot_admin as adm
+  with s.conn() as c:
+   s.put(c,"admins",[101])
+   with patch.object(adm,"tg",return_value={"photos":[[{"file_id":"photo-A"}]]}):
+    adm.callback(c,101,"a:user:102")
+   photo=c.execute("SELECT payload FROM outbox WHERE chat=101 AND method='sendPhoto'").fetchone()
+   self.assertEqual(json.loads(photo[0])["photo"],"photo-A")
+   user_card=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 AND method='sendMessage' ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("امتیاز",user_card["text"])
+   callbacks=[b.get("callback_data") for row in user_card["reply_markup"]["inline_keyboard"] for b in row]
+   self.assertIn("a:usubs:102",callbacks)
+   c.execute("INSERT INTO services VALUES(?,?,?,?,?,?,?,0)",
+      ("test-sub-02",102,"xray","ms-sub",json.dumps({"name":"gold"}),
+       s.now()+86400,json.dumps({"label":"اشتراک طلایی"})))
+   adm.callback(c,101,"a:usubs:102")
+   x=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 AND method='sendMessage' ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:usub:test-sub-02",[b["callback_data"] for row in x["reply_markup"]["inline_keyboard"] for b in row])
+
+ def test_default_navigation_buttons_available_in_every_message(self):
+  with s.conn() as c:
+   s.enqueue(c,101,"standard reply")
+   p=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("home",[b["callback_data"] for row in p["reply_markup"]["inline_keyboard"] for b in row])
+   c.execute("UPDATE users SET state='a:credit:102' WHERE id=101")
+   s.enqueue(c,101,"amount please")
+   p=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:home",[b["callback_data"] for row in p["reply_markup"]["inline_keyboard"] for b in row])
+
+ def test_ai_secret_masked_in_web_admin(self):
+  with s.conn() as c:s.put(c,"ai_api_key","TEST_ONLY_SECRET")
+  view=s.admin({"action":"get"})
+  self.assertNotIn("ai_api_key",view["settings"])
+  self.assertTrue(view["settings"]["ai_api_key_set"])
 if __name__=="__main__":unittest.main()
