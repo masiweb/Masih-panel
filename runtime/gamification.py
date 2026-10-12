@@ -59,7 +59,6 @@ def purchase(c,order,settings,now):
 
 def referral(c,new_user_id,settings,now):
  """One inviter award after first successful onboarding; never for self-invites."""
- if not settings.get("referrals"):return False
  record=c.execute("SELECT id,referrer FROM users WHERE id=?",(new_user_id,)).fetchone()
  if not record or not record["referrer"] or record["referrer"]==new_user_id:return False
  reward=settings["points_per_referral"]
@@ -72,7 +71,7 @@ def redeem(c,uid,points,reference,now):
  if c.execute("SELECT 1 FROM loyalty_points WHERE reference=?",(reference,)).fetchone():
   return False
  if balance(c,uid)<points:raise ValueError("امتیاز کافی ندارید")
- return award(c,uid,-points,"ai",reference,now) if False else _debit(c,uid,points,reference,now)
+ return _debit(c,uid,points,reference,now)
 
 def _debit(c,uid,points,reference,now):
  c.execute("INSERT INTO loyalty_points(user_id,points,kind,reference,created) VALUES(?,?,?,?,?)",
