@@ -6,6 +6,7 @@ and requires a rights confirmation before public listing. No media bytes are
 downloaded to, or persisted on, the VPN host.
 """
 import hashlib
+import ipaddress
 import json
 import re
 import secrets
@@ -153,8 +154,13 @@ def _queue_file(c,uid,method,file_id,caption,buttons):
   raise AssertionError("use send for external URLs")
  field={"sendAudio":"audio","sendVoice":"voice","sendVideo":"video","sendVideoNote":"video_note","sendDocument":"document"}[method]
  markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in row] for row in buttons]}
- payload={"chat_id":uid,field:file_id,"caption":caption[:950],"reply_markup":markup}
- c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+ payload={"chat_id":uid,field:file_id,"reply_markup":markup}
+ if method=="sendVideoNote":
+  # Telegram video_note method has no caption parameter.
+  send(c,uid,caption,buttons)
+ else:
+  payload["caption"]=caption[:950]
+ c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)
            (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
 
 def kind_menu(c,uid,kind):
@@ -209,6 +215,11 @@ def _url(value):
   raise ValueError("فقط لینک مستقیم HTTPS معتبر پذیرفته می‌شود")
  if p.hostname in ("localhost",) or not p.hostname or p.hostname.endswith((".local",".internal",".localhost")):
   raise ValueError("لینک داخلی قابل قبول نیست")
+ try:
+  ip=ipaddress.ip_address(p.hostname)
+ except ValueError:pass
+ else:
+  if not ip.is_global:raise ValueError("لینک به آدرس خصوصی قابل قبول نیست")
  return candidate
 
 def _guess(message,expected=None):
@@ -620,6 +631,41 @@ def text_input(c,uid,state,message,update_id):
   return send(c,uid,"✅ گزارش شما ثبت شد و توسط مدیر بررسی می‌شود.",
        [[("↩️ رسانه","med:play:"+str(mid))]])
  raise ValueError("عملیات رسانه نامعتبر است")
+
+def admin_reports(c,uid):
+ s=_sales().settings(c)
+ if uid not in s["admins"]:raise ValueError("مدیریت رسانه فقط برای مدیر ربات است")
+ rows=c.execute("""SELECT r.id,r.media_id,r.reason,m.title FROM media_reports r
+   JOIN media_items m ON m.id=r.media_id WHERE r.status='pending'
+   ORDER BY r.id DESC LIMIT 25""").fetchall()
+ buttons=[[("🚩 "+str(r["id"])+": "+(r["title"] or str(r["media_id"]))[:35],
+           "medadmin:report:"+str(r["id"]))] for r in rows]
+ buttons.append([("↩️ مدیریت فروش","a:home")])
+ send(c,uid,"گزارش‌های رسانه‌ای در انتظار: "+str(len(rows)),buttons)
+
+def admin_action(c,uid,cmd):
+ s=_sales().settings(c)
+ if uid not in s["admins"]:raise ValueError("دسترسی مدیر رسانه لازم است")
+ p=cmd.split(":")
+ if cmd=="medadmin:reports":return admin_reports(c,uid)
+ if len(p)!=3 or p[0]!="medadmin":raise ValueError("فرمان مدیریت رسانه نامعتبر است")
+ operation,report_id=p[1],_positive_int(p[2],10**9)
+ r=c.execute("SELECT * FROM media_reports WHERE id=? AND status='pending'",(report_id,)).fetchone()
+ if not r:raise ValueError("گزارش یافت نشد یا قبلاً بررسی شده است")
+ if operation=="report":
+  row=c.execute("SELECT * FROM media_items WHERE id=?",(r["media_id"],)).fetchone()
+  return send(c,uid,"گزارش شماره "+str(report_id)+"\nرسانه: "+
+     (row["title"] if row else "حذف‌شده")+"\nدلیل: "+r["reason"][:400],
+     [[("🗑 حذف رسانه و بستن گزارش","medadmin:remove:"+str(report_id))],
+      [("✅ رد گزارش، حفظ رسانه","medadmin:dismiss:"+str(report_id))],
+      [("↩️ گزارش‌ها","medadmin:reports")]])
+ if operation=="remove":
+  c.execute("UPDATE media_items SET status='removed' WHERE id=?",(r["media_id"],))
+  c.execute("UPDATE media_reports SET status='removed' WHERE media_id=? AND status='pending'",(r["media_id"],))
+ elif operation=="dismiss":
+  c.execute("UPDATE media_reports SET status='dismissed' WHERE id=?",(report_id,))
+ else:raise ValueError("عملیات نامعتبر است")
+ return admin_reports(c,uid)
 
 def invite_start(c,uid,body):
  if not body.startswith("/start mpl_"):return False
