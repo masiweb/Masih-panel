@@ -4,6 +4,7 @@ import json
 import secrets
 from sales import enqueue, settings, integer, now, audit
 import gamification as loyalty
+import media_library
 
 def menu(c,uid):
  enqueue(c,uid,"🎮 سرگرمی و باشگاه امتیازهای مسیحا\nبا خرید اشتراک و دعوت دوستان امتیاز بگیرید.",
@@ -64,12 +65,8 @@ def callback(c,uid,cmd):
  if cmd=="fun":return menu(c,uid)
  if cmd=="fun:points":return points(c,uid)
  if cmd=="fun:ai":return ai_start(c,uid)
- if cmd=="fun:music":
-  return enqueue(c,uid,"🎵 بخش موزیک\nپیشنهادهای شخصی، چالش حدس آهنگ و پلی‌لیست‌های موضوعی به‌زودی اضافه می‌شوند.",
-    [[("⭐ امتیازها","fun:points"),("↩️ سرگرمی","fun")]])
- if cmd=="fun:film":
-  return enqueue(c,uid,"🎬 بخش فیلم\nفهرست تماشا، پیشنهاد فیلم و چالش شناخت فیلم در برنامه توسعه است.",
-    [[("⭐ امتیازها","fun:points"),("↩️ سرگرمی","fun")]])
+ if cmd=="fun:music":return media_library.kind_menu(c,uid,"music")
+ if cmd=="fun:film":return media_library.kind_menu(c,uid,"film")
  if cmd=="fun:game":
   return enqueue(c,uid,"🎲 بخش بازی\nچالش روزانه، سؤال چهارگزینه‌ای و جدول رتبه‌بندی در برنامه توسعه‌اند.",
     [[("⭐ امتیازها","fun:points"),("↩️ سرگرمی","fun")]])
