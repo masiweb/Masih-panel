@@ -9,7 +9,7 @@ import sales_worker as w
 class Commerce(unittest.TestCase):
  def setUp(self):
   with s.conn() as c:
-   for t in ("settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders"):c.execute("DELETE FROM "+t)
+   for t in ("settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates"):c.execute("DELETE FROM "+t)
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
    c.execute("INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
@@ -419,4 +419,58 @@ class Commerce(unittest.TestCase):
    self.assertNotEqual(record["username"],"دفتر مرکزی")
    self.assertEqual(panel.inbound_ids,[7,8])
    self.assertEqual(c.execute("SELECT status FROM orders WHERE id='named-xray'").fetchone()[0],"fulfilled")
+ def test_active_trial_plan_enables_trial_menu_automatically(self):
+  with patch.object(s,"inbound_list",return_value=[{"id":1,"enable":True,"protocol":"vless"}]):
+   s.admin({"action":"plan","values":{"name":"Free Sample","category":"test","protocol":"xray","price":4000,
+      "days":2,"gb":1,"inbounds":[1],"capacity":10,"active":True,"is_trial":True}})
+  with s.conn() as c:
+   self.assertTrue(s.settings(c)["trial"])
+   self.assertEqual(c.execute("SELECT price FROM plans WHERE is_trial=1").fetchone()[0],0)
+   w.home(c,102)
+   x=[json.loads(r["payload"]) for r in c.execute("SELECT payload FROM outbox")]
+   self.assertTrue(any("trial" in str(z) for z in x))
+ def test_admin_menu_allows_only_authorized_telegram_user(self):
+  from sales_bot_admin import callback
+  with s.conn() as c:
+   s.put(c,"admins",[101])
+   with self.assertRaisesRegex(ValueError,"مدیر"):
+    callback(c,102,"a:settings")
+   callback(c,101,"a:settings")
+   self.assertTrue(c.execute("SELECT 1 FROM outbox WHERE chat=101").fetchone())
+   callback(c,101,"a:toggle:trial")
+   self.assertTrue(s.settings(c)["trial"])
+   with self.assertRaises(ValueError):callback(c,101,"a:toggle:token")
+ def test_admin_creates_free_trial_through_bot(self):
+  from sales_bot_admin import callback,input_text
+  with s.conn() as c, patch.object(s,"inbound_list",return_value=[{"id":1,"enable":True,"protocol":"vless"}]):
+   s.put(c,"admins",[101])
+   callback(c,101,"a:newplan")
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"a:newplan")
+   input_text(c,101,"a:newplan","تست دوم | عمومی | xray | 999 | 1 | 2 | 5 | 1 | 1",8000)
+   new=c.execute("SELECT * FROM plans WHERE is_trial=1").fetchone()
+   self.assertTrue(new and new["active"])
+   self.assertEqual(new["price"],0)
+   self.assertTrue(s.settings(c)["trial"])
+ def test_response_templates_are_web_only_and_placeholder_safe(self):
+  s.admin({"action":"message_templates","values":{"trial_confirm":"تست رایگان شما پذیرفته شد"}})
+  with s.conn() as c:
+   self.assertEqual(s.bot_message(c,"trial_confirm"),"تست رایگان شما پذیرفته شد")
+  data=s.admin({"action":"get"})
+  self.assertEqual(data["message_templates"]["trial_confirm"],"تست رایگان شما پذیرفته شد")
+  with self.assertRaises(ValueError):
+   s.admin({"action":"message_templates","values":{"service_ready":"{name.__class__}"}})
+  with self.assertRaises(ValueError):
+   s.admin({"action":"message_templates","values":{"custom":"foo"}})
+ def test_contact_permission_gate_and_self_contact(self):
+  with s.conn() as c:
+   s.put(c,"require_contact",True)
+   w.handle(c,{"update_id":910,"message":{"from":{"id":102,"first_name":"Tester"},
+     "chat":{"id":102,"type":"private"},"text":"/start"}})
+   sent=[json.loads(x["payload"]) for x in c.execute("SELECT payload FROM outbox WHERE chat=102")]
+   self.assertTrue(any("request_contact" in str(x) for x in sent))
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"")
+   w.handle(c,{"update_id":911,"message":{"from":{"id":102,"first_name":"Tester"},
+     "chat":{"id":102,"type":"private"},"contact":{"user_id":102,"phone_number":"+989121234567"}}})
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"+989121234567")
+   self.assertTrue(any('"remove_keyboard": true' in x["payload"] for x in c.execute("SELECT payload FROM outbox WHERE chat=102")))
 if __name__=="__main__":unittest.main()
