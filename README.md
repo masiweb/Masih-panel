@@ -6,6 +6,8 @@ Masiha VPN Manager is deployed as a **patched SANAei 3x-ui** with native Xray in
 
 **[چک‌لیست انتشار و تست نصب روی سرور جدید](docs/NEW_SERVER_RELEASE_FA.md)**
 
+**[راهنمای کتابخانه موزیک/فیلم، پلی‌لیست و گیمیفیکیشن تلگرام](docs/MEDIA_LIBRARY_FA.md)**
+
 ## Deployment source of truth (2026-10-11)
 
 - `deploy/3x-ui.patch`: patch for 30 files over upstream 3x-ui commit `7ef22f94c950ff09f0870e2295fa65ad5968742c`.
@@ -24,6 +26,7 @@ The older `app/` FastAPI control-plane and `node_agent/` prototype are retained 
 - Native 3x-ui Xray service with VLESS, VMess, Trojan and other supported inbounds.
 - Shared per-client expiry and traffic across Xray, OpenVPN and OpenConnect, including automatically provisioned VPN credentials and downloadable profiles.
 - Telegram bot sales with **admin-only Telegram management menus** (plans, customer access, coupons, top-ups, order reviews, support tickets, broadcasts, settings and failed-message retries), **phone-number verification toggle**, **web-only editable response templates**, full plan lifecycle (create, edit, duplicate, activate/deactivate, safe delete, sales/capacity metrics), **per-plan one-time free trials requiring no payment or wallet debit**, **customer-chosen subscription name before checkout with collision-safe 5-character random alphanumeric suffix**, a readable high-contrast RTL sales-management UI, receipt-based top-ups, discounted card payments with reversible coupon reservations, pending-order cancellation and admin approval, plus a visible failed-delivery queue and retry. Bot activation requires an actual token and admin Telegram IDs.
+- Telegram-native user-submitted **music, film and TV series library**: media/forwarded file detection, direct HTTPS audio/video links, optional rich metadata and cover images, music and film playlists with public/private invitations, last 20, my media, search, likes, comments, creators leaderboard, copyright reports and verified publication. Actual Telegram media bytes remain on Telegram; the VPS stores file IDs and metadata only. See `docs/MEDIA_LIBRARY_FA.md`.
 - Loyalty points and entertainment: configurable **purchase amount → points** and **successful referral → points**, exactly-once SQLite ledger, admin Telegram profile-photo card and customer subscription list, always-available Back/Home navigation, entertainment menus for AI/music/film/games, and optional point-funded AI requests via web-configured HTTPS Chat Completions API. Music, film and games are navigation placeholders; external content providers are not connected yet. AI is disabled until API credentials are configured.
 - Automatic HTTPS subscription URI and per-protocol OpenVPN/OpenConnect profiles, with TLS termination by Nginx. Fresh installs include VLESS Reality, VLESS TLS, VMess WS TLS, Trojan TLS, VLESS WS TLS, VLESS XHTTP TLS, Shadowsocks 2022 TCP/UDP, VLESS XHTTP stream-up/H2 and VLESS XHTTP packet-up/H2. Shadowsocks 2022 is deprecated by current Xray; modern XHTTP options are preferred. No configuration guarantees access through every ISP filtering method.
 
