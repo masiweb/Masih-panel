@@ -3,6 +3,7 @@ import base64, contextlib, fcntl, hashlib, io, json, os, re, secrets, time, urll
 from sales import *
 from sales_bot_admin import main as admin_menu, callback as admin_callback, input_text as admin_text
 import entertainment
+import media_library
 def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
@@ -126,11 +127,25 @@ def handle(c,up):
  loyalty.referral(c,uid,s,now())
  if new and s["new_user_notice"]:
   for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
+ # Private playlist invitations are resolved only after mandatory channel/
+ # contact onboarding has succeeded, and are scoped to the invitee.
+ if not q and media_library.invite_start(c,uid,body):
+  return
+ # Received/forwarded Telegram audio and video are accepted directly, even
+ # without pressing an upload button. Financial receipt and text workflows
+ # take precedence, preventing a media file from hijacking a paid order.
+ if not q and media_library.is_media_message(m) and (
+   not u["state"] or u["state"].startswith("med:upload:")):
+  media_library.accept(c,uid,m,u["state"].split(":")[2] if u["state"].startswith("med:upload:") else None)
+  return
  if body in ("🏠 منوی اصلی","منوی اصلی","/menu"):cmd="home"
  if body in ("🎮 سرگرمی","سرگرمی"):cmd="fun"
  if body in ("⭐ امتیازهای من","امتیازات من"):cmd="fun:points"
  if not q and not body.startswith("/start") and cmd not in ("home","fun","fun:points") and u["state"]:
   state=u["state"]
+  if state.startswith("med:"):
+   media_library.text_input(c,uid,state,m,up["update_id"])
+   return
   if state=="ai:chat":
    entertainment.ai_answer(c,uid,body,up["update_id"])
    return
@@ -236,6 +251,8 @@ def handle(c,up):
  elif cmd=="fun" or cmd.startswith("fun:"):
   if cmd=="fun":c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   entertainment.callback(c,uid,cmd)
+ elif cmd.startswith("med:"):
+  media_library.callback(c,uid,cmd)
  elif cmd.startswith("a:"):
   admin_callback(c,uid,cmd)
  elif cmd=="plans":
