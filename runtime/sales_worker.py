@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import base64, contextlib, fcntl, hashlib, io, json, os, re, secrets, time, urllib.request
 from sales import *
+from sales_bot_admin import main as admin_menu, callback as admin_callback, input_text as admin_text
 def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
@@ -108,6 +109,9 @@ def handle(c,up):
   for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
  if not q and not body.startswith("/start") and u["state"]:
   state=u["state"]
+  if state.startswith("a:"):
+   admin_text(c,uid,state,body,up["update_id"])
+   return
   if state.startswith("planname:"):
    parts=state.split(":",3)
    if len(parts) not in (3,4):raise ValueError("درخواست خرید نامعتبر است؛ دوباره پلن را انتخاب کنید")
@@ -202,6 +206,8 @@ def handle(c,up):
    money(c,uid,-amount,"transfer",ref+":out");money(c,target,amount,"transfer",ref+":in")
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,"انتقال انجام شد.");enqueue(c,target,"اعتبار دریافتی: "+str(amount)+" تومان");return
  if cmd.startswith("/start") or cmd=="home":home(c,uid)
+ elif cmd.startswith("a:"):
+  admin_callback(c,uid,cmd)
  elif cmd=="plans":
   rows=[[ (p["category"]+" / "+p["name"]+" — "+str(p["price"])+" تومان","choose:"+str(p["id"])) ] for p in c.execute("SELECT * FROM plans WHERE active=1 AND is_trial=0 LIMIT 70")]
   enqueue(c,uid,bot_message(c,"plans_menu") if rows else bot_message(c,"plans_empty"),rows)
@@ -290,11 +296,7 @@ def handle(c,up):
  elif cmd=="referral":
   if not s["referrals"]:raise ValueError("زیرمجموعه غیرفعال")
   enqueue(c,uid,"لینک دعوت شما:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+str(uid)+"\nکمیسیون: "+str(s["commission"])+"٪")
- elif cmd=="admin":
-  if uid not in s["admins"]:raise ValueError("دسترسی مدیر لازم است")
-  enqueue(c,uid,"مدیریت کامل فروش:\n"+PUBLIC_PANEL_URL+"/panel/sales-bot\nرسیدهای در انتظار:")
-  for r in c.execute("SELECT * FROM topups WHERE status='pending' LIMIT 30"):
-   enqueue(c,uid,str(r["id"])+" — "+str(r["amount"])+" تومان",[[("تأیید","approve:"+str(r["id"])),("رد","reject:"+str(r["id"]))]])
+ elif cmd=="admin":admin_menu(c,uid)
  elif cmd.startswith(("approve:","reject:")):
   if uid not in s["admins"]:raise ValueError("دسترسی مدیر لازم است")
   decide_receipt(c,int(cmd.split(":")[1]),cmd.startswith("approve:"));enqueue(c,uid,"ثبت شد.")
