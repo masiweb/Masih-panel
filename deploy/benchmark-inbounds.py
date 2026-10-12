@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Additive performance comparison profiles for Masiha native x-ui.
 
-Only creates new rows, never changes clients, shares, balances or inbounds.
-Ports are unique; profiles are empty until customers are assigned through
-native x-ui. A malformed SS2022 key must not be used for any new preset.
+Only creates new inbound rows, never directly writes customer credentials,
+shares or balances. Note: the native x-ui reconciler may automatically link
+existing clients to each new inbound after insertion; plan rollout accordingly.
+SS2022 is omitted because malformed global per-user keys can crash Xray.
 """
 import argparse
 import json
@@ -137,7 +138,7 @@ def extend(db_path, domain, xray_binary, check_listeners=True, check_tls=True):
                 )
         db.commit()
     print("Created", len(pending), "isolated benchmark inbounds.")
-    print("Assign testing clients through the native panel or enrollment script." )
+    print("Native x-ui may auto-link existing clients; verify mappings and regenerate the Xray config.")
     return len(pending)
 
 
