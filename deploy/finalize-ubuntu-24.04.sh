@@ -168,11 +168,13 @@ ufw allow 443/tcp >/dev/null
 ufw allow 1194/udp >/dev/null
 ufw allow 4443/tcp >/dev/null
 ufw allow 4443/udp >/dev/null
-for xray_port in 8443 8444 8445 8446 8447 8448 8449 8450 8451; do
+for xray_port in 8443 8444 8445 8446 8447 8448 8450 8451 8452 8453 8454 8455 8456 8457; do
   ufw allow "$xray_port/tcp" >/dev/null
 done
-# Shadowsocks 2022 also supports UDP datagrams.
-ufw allow 8449/udp >/dev/null
+# Shadowsocks benchmark profiles support UDP and TCP.
+for ss_udp_port in 8452 8453 8454 8455; do
+  ufw allow "$ss_udp_port/udp" >/dev/null
+done
 systemctl daemon-reload
 # This finalizer only handles fresh/previously interrupted installs. Stop x-ui
 # briefly so SQLite is offline while the default Xray inbounds are initialized.
@@ -212,6 +214,9 @@ python3 "$REPO_ROOT/deploy/bootstrap-inbounds.py" \
   --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
   --xray /usr/local/x-ui/bin/xray-linux-amd64
 python3 "$REPO_ROOT/deploy/extend-inbounds.py" \
+  --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
+  --xray /usr/local/x-ui/bin/xray-linux-amd64
+python3 "$REPO_ROOT/deploy/benchmark-inbounds.py" \
   --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
   --xray /usr/local/x-ui/bin/xray-linux-amd64
 # The upstream installer creates a RANDOM admin account. An earlier 'setting'
