@@ -1411,10 +1411,10 @@ index 0000000..66e9ae5
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 00000000..56f0259a
+index 00000000..80ed4697
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,179 @@
 +import {useEffect,useState} from 'react';
 +import {Alert,App,Button,Card,ConfigProvider,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography,theme} from 'antd';
 +import './SalesBotPage.css';
@@ -1422,10 +1422,10 @@ index 00000000..56f0259a
 +type Row=Record<string,any>;
 +export default function SalesBotPage(){
 + const {message}=App.useApp();const [data,setData]=useState<Row>();const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [inbounds,setInbounds]=useState<Row[]>([]);
-+ const [settings]=Form.useForm();const [templates]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
++ const [settings]=Form.useForm();const [templates]=Form.useForm();const [mediaForm]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
 + const [planOpen,setPlanOpen]=useState(false);const chosenProtocol=Form.useWatch('protocol',plan);const chosenTrial=Form.useWatch('is_trial',plan);
 + const call=async(action:string,values:Row={})=>{const r=await HttpUtil.post('/panel/api/sales-bot',{action,...values},{headers:{'Content-Type':'application/json'},silent:true,timeout:65000});if(!r?.success)throw new Error(r?.msg||'عملیات ناموفق');return r.obj as any;};
-+ const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:'',ai_api_key:''});templates.setFieldsValue(d.message_templates||{});setError('');}catch(e){setError(String(e))}};
++ const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:'',ai_api_key:''});templates.setFieldsValue(d.message_templates||{});mediaForm.setFieldsValue({field_points:d.media?.field_points??2,like_points:d.media?.like_points??1});setError('');}catch(e){setError(String(e))}};
 + useEffect(()=>{void load();call('inbounds').then(setInbounds).catch(()=>{});},[]);
 + const run=async(action:string,values:Row={})=>{setBusy(true);try{const r=await call(action,values);message.success(action==='test'?'اتصال تأیید شد: @'+r.username:'ذخیره شد');await load();return true;}catch(e){message.error(String(e));return false;}finally{setBusy(false)}};
 + const templatesLabels:Record<string,string>={home:'پیام خوشامد',trial_menu:'نمایش گزینه‌های تست رایگان',trial_empty:'نبود پلن تست رایگان',trial_confirm:'تأیید ثبت تست رایگان',trial_used:'تست تکراری',plans_menu:'نمایش پلن‌های فروش',plans_empty:'نبود پلن قابل فروش',service_ready:'پیام آماده‌شدن اشتراک',contact_prompt:'درخواست ارسال شماره تلفن',contact_saved:'ثبت شماره تماس',support_prompt:'راهنمای شروع پشتیبانی',support_saved:'ثبت پیام پشتیبانی',receipt_saved:'ثبت رسید',order_confirm:'ثبت سفارش',wallet_balance:'نمایش موجودی کیف پول',welcome_admin:'خوشامد پنل مدیریت ربات',admin_saved:'تأیید عملیات مدیر',coupon_saved:'تأیید ثبت کد تخفیف'};
@@ -1489,6 +1489,43 @@ index 00000000..56f0259a
 +  </div>
 +  <div className="masiha-sales-form-actions"><Button type="primary" size="large" htmlType="submit" loading={busy}>ذخیره همه تنظیمات ربات</Button></div>
 + </Form>},
++ {key:'media_library',label:'کتابخانه موزیک و فیلم',children:<Space orientation="vertical" size="large" style={{width:'100%'}}>
++  <Alert type="info" showIcon title="فایل‌ها فقط روی تلگرام؛ اطلاعات در سرور" description="موزیک و ویدئو به‌صورت file_id در دیتابیس ثبت شده و هنگام پخش از تلگرام ارسال می‌شوند؛ سرور VPN فایل رسانه را دریافت یا آرشیو نمی‌کند. محتوای ارسالی باید با اجازه صاحب اثر منتشر شود."/>
++  <Space wrap>
++   <Tag color="blue">موزیک منتشرشده: {data?.media?.total_music||0}</Tag>
++   <Tag color="purple">فیلم و سریال: {data?.media?.total_films||0}</Tag>
++   <Tag color="green">پلی‌لیست‌ها: {data?.media?.playlists||0}</Tag>
++   <Tag color={(data?.media?.reports||[]).length?'red':'default'}>گزارش‌های در انتظار: {(data?.media?.reports||[]).length}</Tag>
++  </Space>
++  <Card title="میزان امتیاز برای اطلاعات رسانه و محبوبیت">
++   <Form form={mediaForm} layout="vertical" onFinish={v=>void run('media_settings',{values:v})}>
++    <Space wrap align="start">
++     <Form.Item label="امتیاز هر فیلد اختیاری تکمیل‌شده" name="field_points" rules={[{required:true}]}>
++      <InputNumber min={0} max={10} style={{width:230}}/>
++     </Form.Item>
++     <Form.Item label="امتیاز سازنده از هر لایک معتبر" name="like_points" rules={[{required:true}]}>
++      <InputNumber min={0} max={10} style={{width:230}}/>
++     </Form.Item>
++    </Space>
++    <Alert type="warning" showIcon style={{marginBottom:12}} title="سقف‌های ضدتقلب" description="برای اطلاعات رسانه حداکثر ۳۰ امتیاز و برای لایک‌های واقعی حداکثر ۲۰ امتیاز در روز به هر سازنده داده می‌شود. لایک خودکاربر و ثبت مجدد همان لایک امتیاز ندارد."/>
++    <Button type="primary" htmlType="submit" loading={busy}>ذخیره قوانین امتیاز موزیک و فیلم</Button>
++   </Form>
++  </Card>
++  <Card title="بررسی گزارش‌های رسانه‌ای و حقوق نشر">
++   {table(data?.media?.reports||[],[
++    {title:'شماره گزارش',dataIndex:'id'},
++    {title:'فایل',render:(_:unknown,r:Row)=><Space direction="vertical" size={0}><Typography.Text strong>{r.title}</Typography.Text><Typography.Text type="secondary">#{r.media_id}</Typography.Text></Space>},
++    {title:'گزارش‌دهنده',dataIndex:'reporter_id'},
++    {title:'دلیل',dataIndex:'reason'},
++    {title:'عملیات',render:(_:unknown,r:Row)=><Space wrap>
++     <Popconfirm title="این فایل از همه لیست‌های عمومی حذف شود؟" onConfirm={()=>void run('media_report',{id:r.id,decision:'remove'})} okText="حذف" cancelText="انصراف">
++      <Button size="small" danger>حذف رسانه</Button>
++     </Popconfirm>
++     <Button size="small" onClick={()=>void run('media_report',{id:r.id,decision:'dismiss'})}>رد گزارش</Button>
++    </Space>}
++   ])}
++  </Card>
++ </Space>},
 + {key:'loyalty',label:'باشگاه امتیازها',children:<Space orientation="vertical" style={{width:'100%'}}>
 +  <Alert type="info" showIcon title="گیمیفیکیشن مسیحا" description="امتیازات خرید و دعوت هرکدام یک‌بار با مرجع یکتا ثبت می‌شوند. مصرف هوش مصنوعی فقط پس از دریافت پاسخ موفق هزینه دارد. قوانین از تب اتصال و امکانات قابل ویرایش‌اند."/>
 +  <Space wrap><Tag color="blue">کاربران دارای امتیاز: {data?.loyalty?.total_users_with_points||0}</Tag><Tag color="green">امتیازهای اعطاشده: {data?.loyalty?.total_awarded||0}</Tag></Space>
