@@ -21,7 +21,8 @@ SETTINGS_BOOL = {
  "new_user_notice":"اعلان کاربر جدید", "zarinpal":"درگاه پرداخت"
 }
 SETTINGS_EDIT = {
- "welcome":"متن خوشامدگویی", "support":"راهنمای پشتیبانی",
+ # All end-user response texts are deliberately WEB-only, including legacy
+ # welcome/support fields; do not expose them through the admin Telegram bot.
  "card":"اطلاعات کارت‌به‌کارت", "channel":"کانال اجباری",
  "report_channel":"کانال گزارش فروش",
  "commission":"درصد پورسانت", "reseller_discount":"تخفیف نماینده",
