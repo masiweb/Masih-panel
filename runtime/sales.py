@@ -59,6 +59,9 @@ def conn():
  CREATE TABLE IF NOT EXISTS message_templates(id TEXT PRIMARY KEY,body TEXT NOT NULL);
  """)
  loyalty.setup(c)
+ # Media database stores only Telegram file IDs and text metadata, never bytes.
+ import media_library
+ media_library.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
  if not any(col[1]=="is_trial" for col in c.execute("PRAGMA table_info(plans)")):
   try:c.execute("ALTER TABLE plans ADD COLUMN is_trial INTEGER NOT NULL DEFAULT 0")
