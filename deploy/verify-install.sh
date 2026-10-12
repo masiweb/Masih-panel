@@ -7,9 +7,24 @@ for service in x-ui.service openvpn-server@masiha.service ocserv.service masiha-
   systemctl is-active "$service" || exit 1
 done
 echo "=== Xray runtime process health ==="
-# x-ui service can be healthy while its embedded Xray is crashing repeatedly.
-pgrep -f '^bin/xray-linux-amd64 -c bin/config.json
-ss -lntup | grep -E ':(443|1194|4443|62053)\b' || true
+# x-ui can stay active while Xray crashes on an invalid Shadowsocks key.
+if ! pgrep -f '^bin/xray-linux-amd64 -c bin/config.json' >/dev/null; then
+  echo "FATAL: Xray core not running even though x-ui is active" >&2
+  exit 1
+fi
+/usr/local/x-ui/bin/xray-linux-amd64 run -test -c /usr/local/x-ui/bin/config.json >/dev/null 2>&1 || {
+  echo "FATAL: active Xray configuration invalid" >&2
+  exit 1
+}
+python3 - <<'PY'
+import socket
+for port in (8443,8444,8445,8446,8447,8448):
+ with socket.create_connection(("127.0.0.1",port),timeout=2):
+  pass
+print("Xray is running and all six baseline TCP listeners respond: PASS")
+PY
+echo "=== Listener health ==="
+ss -lntup | grep -E ':(443|1194|4443|62053)\\b' || true
 echo "=== Native inbound and subscription configuration (no client secrets) ==="
 python3 - <<'PY'
 import sqlite3,os,json
