@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Masiha sales: private local administration and durable Telegram commerce."""
-import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, shlex, sqlite3, subprocess, sys, time, urllib.request, urllib.parse, uuid, unicodedata
+import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, shlex, sqlite3, subprocess, sys, time, urllib.request, urllib.error, urllib.parse, uuid, unicodedata
 from pathlib import Path
 from runtime_config import DOMAIN, PUBLIC_PANEL_URL
 BASE=Path(os.environ.get("MASIHA_SALES_DIR","/etc/masiha-vpn-extension/sales"))
@@ -121,6 +121,59 @@ def tg(s,method,payload):
   if not obj.get("ok"):raise ValueError()
   return obj["result"]
  except Exception:raise ValueError("ارتباط با تلگرام ناموفق است؛ توکن، شبکه و وضعیت webhook را بررسی کنید")
+def normalize_channel(value):
+ """Normalize public Telegram usernames, t.me links, or numeric channel IDs.
+
+ Telegram Bot API getChatMember does not resolve a bare channel handle: the
+ leading @ is mandatory. Never silently bypass mandatory membership.
+ """
+ value=text(value,160)
+ if not value:return ""
+ if value.startswith("https://t.me/"):
+  value=value[len("https://t.me/"):].strip("/")
+ if re.fullmatch(r"-100[0-9]{6,18}",value):
+  return value
+ if re.fullmatch(r"@?[A-Za-z][A-Za-z0-9_]{4,31}",value):
+  return "@"+value.lstrip("@")
+ raise ValueError("شناسه کانال باید به صورت @channelname یا https://t.me/channelname وارد شود")
+
+def telegram_channel_member(s,channel,uid):
+ """Check membership without misclassifying unknown nonmembers as API outages.
+
+ When the bot is a channel admin, Telegram can answer HTTP 400 for a non-member
+ whose user ID is not known in that chat. This is NOT a bot token failure.
+ """
+ payload={"chat_id":normalize_channel(channel),"user_id":integer(uid,1,2**52)}
+ req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+"/getChatMember",
+     data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
+ try:
+  with urllib.request.urlopen(req,timeout=20) as response:
+   data=json.load(response)
+ except urllib.error.HTTPError as exc:
+  try: data=json.load(exc)
+  except (ValueError,UnicodeDecodeError):
+   raise RuntimeError("پاسخ نامعتبر هنگام بررسی عضویت کانال") from None
+ except Exception as exc:
+  raise RuntimeError("ارتباط موقت با تلگرام هنگام بررسی عضویت کانال ناموفق بود") from exc
+ if data.get("ok"):
+  result=data.get("result") or {}
+  status=result.get("status")
+  return status in ("creator","administrator","member") or (
+    status=="restricted" and result.get("is_member") is True)
+ code=data.get("error_code")
+ message=str(data.get("description","")).lower()
+ if code==400 and any(x in message for x in (
+     "participant_id_invalid","user not found",
+     "invalid user identifier","user_id_invalid","user_id is invalid")):
+  return False
+ if "not enough rights" in message or "chat_admin_required" in message:
+  raise ValueError("ربات برای کنترل عضویت باید در کانال مدیر باشد؛ تنظیمات کانال را بررسی کنید")
+ if code==400 and "chat not found" in message:
+  raise ValueError("کانال عضویت اجباری پیدا نشد؛ آیدی کانال را در پنل تنظیمات بررسی کنید")
+ # An unknown Telegram server error is transient. Do not acknowledge the user
+ # update and lose it: the sales worker will retry after Telegram recovers.
+ raise RuntimeError("خطای موقت سرویس تلگرام هنگام بررسی عضویت کانال")
+
 def save_settings(c,r):
  s=settings(c)
  for k,v in r.items():
@@ -129,6 +182,18 @@ def save_settings(c,r):
    if not v:continue
    if s["token"] and v.split(":")[0]!=s["token"].split(":")[0] and c.execute("SELECT 1 FROM users LIMIT 1").fetchone():raise ValueError("تغییر هویت ربات دارای مشتری مجاز نیست؛ فقط توکن جدید همان ربات را وارد کنید")
    if not re.fullmatch(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}",v):raise ValueError("فرمت توکن نادرست است")
+  elif k=="channel":
+   v=normalize_channel(v)
+   if v and s["enabled"] and v!=s["channel"]:
+    # Prevent bad channel names and missing bot admin permissions from
+    # silently locking out every customer on the next /start.
+    channel_info=tg(s,"getChat",{"chat_id":v})
+    if channel_info.get("type") not in ("channel","supergroup"):
+     raise ValueError("شناسه واردشده یک کانال یا گروه معتبر نیست")
+    bot=tg(s,"getMe",{})
+    membership=tg(s,"getChatMember",{"chat_id":v,"user_id":bot["id"]})
+    if membership.get("status") not in ("administrator","creator"):
+     raise ValueError("ربات باید ابتدا مدیر کانال عضویت اجباری شود")
   elif k=="merchant_id":
    if not v:continue
    try:v=str(uuid.UUID(v))
