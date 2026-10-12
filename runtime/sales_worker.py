@@ -43,7 +43,8 @@ def home(c,uid):
  if s["referrals"]:rows.append([("دعوت دوستان","referral")])
  rows.append([("پشتیبانی","support")])
  if uid in s["admins"]:rows.append([("مدیریت فروش","admin")])
- enqueue(c,uid,(s["welcome"] if s["welcome"]!=DEFAULT["welcome"] else bot_message(c,"home"))+"\n"+bot_message(c,"wallet_balance",balance=u["balance"]),rows)
+ welcome=bot_message(c,"home") if c.execute("SELECT 1 FROM message_templates WHERE id='home'").fetchone() else s["welcome"]
+ enqueue(c,uid,welcome+"\n"+bot_message(c,"wallet_balance",balance=u["balance"]),rows)
 def deliver(c,uid,sid):
  r=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(sid,uid)).fetchone()
  if not r:raise ValueError("سرویس پیدا نشد")
@@ -195,7 +196,7 @@ def handle(c,up):
     c.execute("INSERT INTO redeemed VALUES(?,?)",(code,uid));c.execute("UPDATE coupons SET uses=uses-1 WHERE code=?",(code,))
     c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
    else:c.execute("UPDATE users SET state=? WHERE id=?",("coupon:"+code,uid))
-   enqueue(c,uid,"کد ثبت شد.",[[("خرید","plans")]]);return
+   enqueue(c,uid,bot_message(c,"coupon_saved"),[[("خرید","plans")]]);return
   if state=="support":
    c.execute("INSERT INTO tickets(user_id,body,created) VALUES(?,?,?)",(uid,text(body,3000),now()))
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,bot_message(c,"support_saved"));return
@@ -292,7 +293,7 @@ def handle(c,up):
   if cmd=="transfer" and not s["transfer"]:raise ValueError("انتقال غیرفعال")
   if cmd=="coupon" and not s["discounts"]:raise ValueError("کد تخفیف غیرفعال")
   c.execute("UPDATE users SET state=? WHERE id=?",(cmd,uid))
-  enqueue(c,uid,{"topup":"مبلغ شارژ به تومان را وارد کنید.","transfer":"آیدی عددی گیرنده و مبلغ تومان را با فاصله ارسال کنید.","coupon":"کد تخفیف یا هدیه را بفرستید.","support":s["support"]}[cmd])
+  enqueue(c,uid,{"topup":"مبلغ شارژ به تومان را وارد کنید.","transfer":"آیدی عددی گیرنده و مبلغ تومان را با فاصله ارسال کنید.","coupon":"کد تخفیف یا هدیه را بفرستید.","support":(bot_message(c,"support_prompt") if c.execute("SELECT 1 FROM message_templates WHERE id='support_prompt'").fetchone() else s["support"])}[cmd])
  elif cmd=="referral":
   if not s["referrals"]:raise ValueError("زیرمجموعه غیرفعال")
   enqueue(c,uid,"لینک دعوت شما:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+str(uid)+"\nکمیسیون: "+str(s["commission"])+"٪")
