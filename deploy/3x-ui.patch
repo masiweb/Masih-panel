@@ -1411,10 +1411,10 @@ index 0000000..66e9ae5
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 0000000..6b25038
+index 00000000..ecfabeff
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,123 @@
 +import {useEffect,useState} from 'react';
 +import {Alert,App,Button,Card,ConfigProvider,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography,theme} from 'antd';
 +import './SalesBotPage.css';
@@ -1422,12 +1422,13 @@ index 0000000..6b25038
 +type Row=Record<string,any>;
 +export default function SalesBotPage(){
 + const {message}=App.useApp();const [data,setData]=useState<Row>();const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [inbounds,setInbounds]=useState<Row[]>([]);
-+ const [settings]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
++ const [settings]=Form.useForm();const [templates]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
 + const [planOpen,setPlanOpen]=useState(false);const chosenProtocol=Form.useWatch('protocol',plan);const chosenTrial=Form.useWatch('is_trial',plan);
 + const call=async(action:string,values:Row={})=>{const r=await HttpUtil.post('/panel/api/sales-bot',{action,...values},{headers:{'Content-Type':'application/json'},silent:true,timeout:65000});if(!r?.success)throw new Error(r?.msg||'عملیات ناموفق');return r.obj as any;};
-+ const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:''});setError('');}catch(e){setError(String(e))}};
++ const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:''});templates.setFieldsValue(d.message_templates||{});setError('');}catch(e){setError(String(e))}};
 + useEffect(()=>{void load();call('inbounds').then(setInbounds).catch(()=>{});},[]);
 + const run=async(action:string,values:Row={})=>{setBusy(true);try{const r=await call(action,values);message.success(action==='test'?'اتصال تأیید شد: @'+r.username:'ذخیره شد');await load();return true;}catch(e){message.error(String(e));return false;}finally{setBusy(false)}};
++ const templatesLabels:Record<string,string>={home:'پیام خوشامد',trial_menu:'نمایش گزینه‌های تست رایگان',trial_empty:'نبود پلن تست رایگان',trial_confirm:'تأیید ثبت تست رایگان',trial_used:'تست تکراری',plans_menu:'نمایش پلن‌های فروش',plans_empty:'نبود پلن قابل فروش',service_ready:'پیام آماده‌شدن اشتراک',contact_prompt:'درخواست ارسال شماره تلفن',contact_saved:'ثبت شماره تماس',support_saved:'ثبت پیام پشتیبانی',receipt_saved:'ثبت رسید',order_confirm:'ثبت سفارش',wallet_balance:'نمایش موجودی کیف پول',welcome_admin:'خوشامد پنل مدیریت ربات',admin_saved:'تأیید عملیات مدیر'};
 + const switches:Record<string,string>={enabled:'فعال‌بودن ربات',buy:'فروش اشتراک',renew:'تمدید اشتراک',wallet:'کیف پول و شارژ',transfer:'انتقال اعتبار',trial:'تست رایگان یک‌بار برای هر کاربر',discounts:'کد تخفیف و هدیه',referrals:'زیرمجموعه و کمیسیون',reseller:'قیمت ویژه نمایندگان',notifications:'هشدار انقضا',require_contact:'دریافت شماره متعلق به حساب تلگرام',self_delete:'اجازه حذف اشتراک توسط مشتری',bulk:'خرید انبوه نمایندگان',rename:'نام دلخواه سرویس',rotate:'تعویض لینک و اطلاعات Xray',new_user_notice:'اعلان عضو جدید به مدیر',zarinpal:'پرداخت آنلاین زرین‌پال'};
 + const editPlan=(p?:Row,duplicate=false)=>{plan.resetFields();plan.setFieldsValue(p?{...p,id:duplicate?undefined:p.id,name:duplicate?p.name+' — کپی':p.name,inbounds:typeof p.inbounds==='string'?JSON.parse(p.inbounds):p.inbounds,active:duplicate?false:!!p.active,is_trial:!!p.is_trial}:{protocol:'xray',category:'عمومی',price:0,days:30,gb:1,capacity:0,active:true,is_trial:false,inbounds:[]});setPlanOpen(true)};
 + const table=(rows:Row[],columns:any[])=> <Table rowKey={(r)=>String(r.id??r.code)} dataSource={rows} columns={columns} pagination={{pageSize:15}} scroll={{x:900}}/>;
@@ -1474,8 +1475,23 @@ index 0000000..6b25038
 +  </div>
 +  <div className="masiha-sales-form-actions"><Button type="primary" size="large" htmlType="submit" loading={busy}>ذخیره همه تنظیمات ربات</Button></div>
 + </Form>},
++ {key:'templates',label:'متن‌های پیش‌فرض',children:<Card title="ویرایش پاسخ‌های ربات (فقط از وب)">
++  <Alert type="info" showIcon title="ویرایش متن‌های ارسالی ربات" description="این تنظیمات فقط در پنل وب در دسترس‌اند. برای پیام «اشتراک آماده است» از متغیر {name} و برای موجودی کیف پول از {balance} استفاده کنید. سایر متن‌ها را آزادانه ویرایش کنید." style={{marginBottom:16}}/>
++  <Form form={templates} layout="vertical" onFinish={v=>void run('message_templates',{values:v})}>
++   <div className="masiha-sales-form-grid">
++    {Object.entries(templatesLabels).map(([key,label])=><Form.Item key={key} label={label} name={key} rules={[{required:true,message:'این پیام نمی‌تواند خالی باشد'}]}>
++      <Input.TextArea rows={2} maxLength={1000} showCount/>
++    </Form.Item>)}
++   </div>
++   <Space wrap>
++    <Button htmlType="submit" type="primary" loading={busy}>ذخیره متن‌های پیش‌فرض</Button>
++    <Button onClick={()=>templates.setFieldsValue(data?.message_defaults||{})}>بازگردانی متن‌های اولیه (قبل از ذخیره)</Button>
++   </Space>
++  </Form>
++ </Card>},
 + {key:'plans',label:'پلن‌ها و ظرفیت',children:<Space orientation="vertical" style={{width:'100%'}}>
 +  <Alert type="info" showIcon title="ساخت و مدیریت پلن‌ها" description="برای اشتراک پولی یا تست رایگان، یک یا چند اینباند فعال Xray انتخاب کنید. پلن تست رایگان به‌طور خودکار بدون پرداخت به کاربر واجد شرایط تحویل می‌شود. حساب‌های OpenVPN و OpenConnect نیز برای مشترک یکپارچه ایجاد می‌شوند."/>
++  {!data?.settings.trial&&(data?.plans||[]).some((p:Row)=>p.is_trial&&p.active)&&<Alert type="warning" showIcon title="نمایش تست رایگان متوقف است" description="تیک کلی «تست رایگان» در اتصال و امکانات خاموش است. برای نمایش در ربات آن را روشن و ذخیره کنید."/>}
 +  <Space wrap>
 +   <Button type="primary" onClick={()=>editPlan()}>+ ساخت پلن جدید</Button>
 +   <Tag color="blue">کل پلن‌ها: {(data?.plans||[]).length}</Tag>
