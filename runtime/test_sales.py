@@ -814,6 +814,7 @@ class Commerce(unittest.TestCase):
       "message":{"chat":{"id":102,"type":"private"}},"data":"points_discount"}})
    item=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
    self.assertIn("ACTIVE20",item["text"])
+   self.assertLess(item["text"].index("ACTIVE20"),item["text"].index("روش‌های کسب امتیاز"))
    self.assertIn("45",item["text"])
    self.assertIn("100,000",item["text"])
    for banned in ("EXPIRED10","USED15","ZERO10"):self.assertNotIn(banned,item["text"])
@@ -839,8 +840,12 @@ class Commerce(unittest.TestCase):
    w.handle(c,{"update_id":91015,"callback_query":{"from":{"id":102},
       "message":{"chat":{"id":102,"type":"private"}},"data":"walletcard:35000"}})
    card=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
-   self.assertIn("6037-9999",card["text"])
    self.assertIn("عکس یا فایل رسید",card["text"])
+   last_two=list(reversed(c.execute(
+     "SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 2").fetchall()))
+   first=json.loads(last_two[0]["payload"])
+   self.assertIn("6037-9999",first["text"])
+   self.assertNotIn("عکس یا فایل رسید",first["text"])
    self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"receipt:35000")
    w.handle(c,{"update_id":91016,"message":{"from":{"id":102},
       "chat":{"id":102,"type":"private"},"document":{"file_id":"RECEIPT_DOC"}}})
