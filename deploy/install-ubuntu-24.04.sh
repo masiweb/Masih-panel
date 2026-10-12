@@ -177,10 +177,10 @@ XUI_NONINTERACTIVE=1 XUI_SSL_MODE=none XUI_DB_TYPE=sqlite \
 systemctl stop x-ui.service 2>/dev/null || true
 install -m 0755 "$BUILD_ROOT/x-ui" /usr/local/x-ui/x-ui
 install -d -m 0700 /etc/x-ui /etc/masiha-vpn-extension /opt/masiha-vpn-extension
-for file in manager.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py gamification.py entertainment.py runtime_config.py; do
+for file in manager.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py gamification.py entertainment.py media_library.py runtime_config.py; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
 done
-for file in test_unified.py test_sales.py smoke_panel.py test_tunnels.py; do
+for file in test_unified.py test_sales.py test_media_library.py smoke_panel.py test_tunnels.py; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
 done
 # OpenConnect executes this route helper as a subprocess during QA. Installing
