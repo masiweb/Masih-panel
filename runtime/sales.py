@@ -75,8 +75,22 @@ def text(x,n=4000):
  if not isinstance(x,str) or len(x)>n:raise ValueError("متن نامعتبر است")
  return x.strip()
 def enqueue(c,chat,body,keys=None,key=None):
+ """Always preserve navigation; text-entry stages show only a Back control."""
  p={"chat_id":chat,"text":body[:4000]}
- if keys:p["reply_markup"]={"inline_keyboard":[[{"text":a,"callback_data":b} for a,b in row] for row in keys]}
+ buttons=[list(row) for row in (keys or [])]
+ user=c.execute("SELECT state FROM users WHERE id=?",(chat,)).fetchone() if type(chat) is int else None
+ if user:
+  state=user["state"] or ""
+  callbacks={callback for row in buttons for label,callback in row}
+  if state.startswith("a:"):
+   back=("↩️ بازگشت به مدیریت","a:home")
+  elif state.startswith("ai:"):
+   back=("↩️ بازگشت به سرگرمی","fun")
+  else:
+   back=("🏠 منوی اصلی","home")
+  if back[1] not in callbacks and not any(v in callbacks for v in ("a:home","home","fun")):
+   buttons.append([back])
+ if buttons:p["reply_markup"]={"inline_keyboard":[[{"text":a,"callback_data":b} for a,b in row] for row in buttons]}
  c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(key or secrets.token_hex(12),chat,"sendMessage",json.dumps(p,ensure_ascii=False)))
 def money(c,uid,amount,reason,ref):
  if c.execute("SELECT 1 FROM ledger WHERE reference=?",(ref,)).fetchone():return
