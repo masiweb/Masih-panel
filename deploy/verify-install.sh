@@ -38,6 +38,17 @@ db.close()
 PY
 echo "=== Extension Python syntax ==="
 python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,sales_bot_admin,gamification,entertainment,media_library,runtime_config}.py
+# QR generation is a Telegram outbox feature: without both packages it
+# silently accumulates repeated failures instead of delivering a QR image.
+python3 - <<'PY'
+import qrcode
+from PIL import Image
+from io import BytesIO
+out=BytesIO()
+qrcode.make('https://example.org/test-subscription').save(out,format='PNG')
+assert out.getvalue().startswith(b'\\x89PNG\\r\\n\\x1a\\n')
+print('Telegram subscription QR dependencies and PNG rendering OK')
+PY
 echo "=== Executable VPN hooks and QA client route helper ==="
 for helper in /opt/masiha-vpn-extension/vpn-account-hook.sh /opt/masiha-vpn-extension/test-oc-route.sh; do
   [[ -x "$helper" ]] || {
