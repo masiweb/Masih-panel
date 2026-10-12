@@ -701,4 +701,72 @@ class Commerce(unittest.TestCase):
    self.assertEqual(s.tg({"token":"DUMMY_TOKEN"},"getMe",{}),{"is_bot":True})
    self.assertEqual(opener.call_count,1)
 
+ def test_order_receipt_photo_first_then_buyer_and_service_with_actions(self):
+  import sales_bot_admin as adm
+  with s.conn() as c:
+   s.put(c,"admins",[102])
+   c.execute("UPDATE users SET phone=?, telegram_username=? WHERE id=101",
+             ("+989121234567","sample_buyer"))
+   ref="quote:test-photo-receipt:0"
+   s.order(c,101,1,ref,card=True,label="سرویس من")
+   c.execute("UPDATE users SET state=? WHERE id=101",("orderreceipt:"+ref,))
+   w.handle(c,{"update_id":65001,"message":{
+    "chat":{"id":101,"type":"private"},"from":{"id":101,"first_name":"test","username":"sample_buyer"},
+    "photo":[{"file_id":"receipt-photo","file_unique_id":"receipt-unique"}]}})
+   items=c.execute("SELECT method,payload FROM outbox WHERE chat=102 ORDER BY id").fetchall()
+   self.assertEqual([r["method"] for r in items],["sendPhoto","sendMessage"])
+   picture,card=[json.loads(r["payload"]) for r in items]
+   self.assertEqual(picture["photo"],"receipt-photo")
+   self.assertNotIn("reply_markup",picture)
+   self.assertIn("test",card["text"])
+   self.assertIn("+989121234567",card["text"])
+   self.assertIn("@sample_buyer",card["text"])
+   self.assertIn("شناسه عددی: 101",card["text"])
+   self.assertIn("سرویس من",card["text"])
+   self.assertIn("پلن: test",card["text"])
+   self.assertIn("مدت: 30 روز",card["text"])
+   self.assertIn("مبلغ: 10,000 تومان",card["text"])
+   callbacks={b["callback_data"] for row in card["reply_markup"]["inline_keyboard"] for b in row}
+   self.assertIn("approve:1",callbacks)
+   self.assertIn("reject:1",callbacks)
+   self.assertEqual(c.execute("SELECT status FROM orders WHERE id=?",(ref,)).fetchone()[0],"receipt_review")
+   # Reopen from admin receipt list uses the same ordering and card.
+   adm.callback(c,102,"a:receipt:1")
+   new=c.execute("SELECT method,payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 2").fetchall()
+   self.assertEqual([x["method"] for x in reversed(new)],["sendPhoto","sendMessage"])
+   self.assertEqual(c.execute("SELECT status FROM topups WHERE id=1").fetchone()[0],"pending")
+
+ def test_wallet_receipt_image_before_details_and_no_service(self):
+  with s.conn() as c:
+   s.put(c,"admins",[102])
+   s.put(c,"wallet",True);s.put(c,"card","کارت تست")
+   c.execute("UPDATE users SET phone=?,telegram_username=? WHERE id=101",("09121112233",""))
+   c.execute("UPDATE users SET state='receipt:25000' WHERE id=101")
+   w.handle(c,{"update_id":65002,"message":{
+    "chat":{"id":101,"type":"private"},"from":{"id":101,"first_name":"customer"},
+    "photo":[{"file_id":"topup-photo","file_unique_id":"topup-unique"}]}})
+   items=c.execute("SELECT method,payload FROM outbox WHERE chat=102 ORDER BY id").fetchall()
+   self.assertEqual([r["method"] for r in items],["sendPhoto","sendMessage"])
+   card=json.loads(items[1]["payload"])
+   self.assertIn("شارژ کیف پول",card["text"])
+   self.assertIn("ثبت نشده",card["text"])
+   self.assertIn("25,000 تومان",card["text"])
+   self.assertIn("📱 موبایل: 09121112233",card["text"])
+   self.assertNotIn("پلن:",card["text"])
+   self.assertEqual(c.execute("SELECT status FROM topups").fetchone()[0],"pending")
+
+ def test_receipt_text_fallback_and_admin_only(self):
+  import sales_bot_admin as adm
+  with s.conn() as c:
+   s.put(c,"admins",[102])
+   c.execute("INSERT INTO topups(id,user_id,amount,receipt,created) VALUES(1,101,35000,?,0)",
+             ("tracking-987",))
+   with self.assertRaises(ValueError):
+    adm.queue_receipt_review(c,101,1)
+   adm.queue_receipt_review(c,102,1)
+   rows=c.execute("SELECT method,payload FROM outbox WHERE chat=102 ORDER BY id").fetchall()
+   self.assertEqual([r["method"] for r in rows],["sendMessage","sendMessage"])
+   self.assertIn("tracking-987",json.loads(rows[0]["payload"])["text"])
+   self.assertNotIn("reply_markup",json.loads(rows[0]["payload"]))
+   self.assertIn("approve:1",str(rows[1]["payload"]))
 if __name__=="__main__":unittest.main()
