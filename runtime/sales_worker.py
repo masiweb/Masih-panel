@@ -33,21 +33,78 @@ def purchase_quote(c,uid,ident,card=False):
         renew=q["renew_id"],card=card,label=label)
  return ident
 def home(c,uid):
- s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
- rows=[]
- if s["buy"]:rows.append([("خرید اشتراک","plans")])
- rows.append([("سرویس‌های من","services")])
- if s["wallet"]:rows.append([("کیف پول","wallet")])
- if s["trial"] and c.execute("SELECT 1 FROM plans WHERE active=1 AND is_trial=1 LIMIT 1").fetchone() and not c.execute(
-    "SELECT 1 FROM orders WHERE user_id=? AND trial=1 LIMIT 1",(uid,)).fetchone():
-  rows.append([("🎁 دریافت تست رایگان","trial")])
- if s["discounts"]:rows.append([("کد تخفیف / هدیه","coupon")])
- if s["referrals"] or s.get("points_per_referral",0):rows.append([("دعوت دوستان","referral")])
- rows.append([("🎮 سرگرمی و هوش مصنوعی","fun"),("⭐ امتیازات من","fun:points")])
- rows.append([("پشتیبانی","support")])
- if uid in s["admins"]:rows.append([("مدیریت فروش","admin")])
- welcome=bot_message(c,"home") if c.execute("SELECT 1 FROM message_templates WHERE id='home'").fetchone() else s["welcome"]
- enqueue(c,uid,welcome+"\n"+bot_message(c,"wallet_balance",balance=u["balance"]),rows)
+ """Compact user-first keyboard; managers see a single extra control."""
+ s=settings(c)
+ c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+ buttons=[
+  [("🛒 خرید جدید","plans"),("📦 اشتراک‌های من","services")],
+  [("🤖 هوش مصنوعی","fun:ai")],
+  [("🎵 موزیک","fun:music"),("🎬 فیلم","fun:film")],
+  [("⭐ امتیاز و تخفیف","points_discount")],
+  [("🎮 سرگرمی","fun"),("🛟 پشتیبانی","support")],
+  [("💳 کیف پول","wallet")]
+ ]
+ if uid in s["admins"]:buttons.append([("⚙️ منوی مدیریت","admin")])
+ welcome=(bot_message(c,"home") if c.execute(
+  "SELECT 1 FROM message_templates WHERE id='home'").fetchone() else s["welcome"])
+ enqueue(c,uid,welcome,buttons)
+
+def points_and_discounts(c,uid):
+ import gamification as loyalty
+ conf=settings(c)
+ lines=["⭐ امتیاز شما: "+format(loyalty.balance(c,uid),","),
+        "🎯 روش‌های کسب امتیاز:",
+        "🛒 خرید: هر "+format(conf["points_per_toman"],",")+" تومان = "+
+        str(conf["points_per_purchase_unit"])+" امتیاز",
+        "👥 دعوت موفق: "+str(conf["points_per_referral"])+" امتیاز",
+        "🎵 تکمیل اطلاعات رسانه و ❤️ لایک معتبر"]
+ coupons=[]
+ if conf["discounts"]:
+  coupons=c.execute("""SELECT code,percent,credit FROM coupons
+   WHERE uses>0 AND (expires=0 OR expires>?)
+   AND NOT EXISTS(SELECT 1 FROM redeemed WHERE redeemed.code=coupons.code AND redeemed.user_id=?)
+   ORDER BY CASE WHEN expires=0 THEN 1 ELSE 0 END,expires,code LIMIT 20""",
+   (now(),uid)).fetchall()
+ lines.extend(["", "🎟 کدهای تخفیف فعال:"])
+ for cp in coupons:
+  benefit=str(cp["percent"])+"٪" if cp["percent"] else format(cp["credit"],",")+" تومان اعتبار"
+  lines.append("• "+cp["code"]+" — "+benefit)
+ if not coupons:lines.append("کد قابل استفاده‌ای ندارید.")
+ buttons=[]
+ if coupons:buttons.append([("🎟 ثبت کد تخفیف / هدیه","coupon")])
+ if conf["referrals"] or conf.get("points_per_referral",0):
+  buttons.append([("👥 دعوت دوستان","referral")])
+ buttons.extend([[("⭐ جزئیات امتیاز","fun:points"),("🛒 خرید جدید","plans")],
+                 [("🏠 منوی اصلی","home")]])
+ enqueue(c,uid,"\n".join(lines),buttons)
+
+def wallet_page(c,uid):
+ conf=settings(c)
+ if not conf["wallet"]:
+  enqueue(c,uid,"کیف پول فعلاً غیرفعال است.",[[("🏠 منوی اصلی","home")]])
+  return
+ c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+ balance=c.execute("SELECT balance FROM users WHERE id=?",(uid,)).fetchone()["balance"]
+ buttons=[]
+ if conf["card"] or (conf["zarinpal"] and conf["merchant_id"]):
+  buttons.append([("➕ افزایش موجودی","walletadd")])
+ if conf["transfer"]:buttons.append([("↗️ انتقال موجودی","transfer")])
+ buttons.append([("🏠 منوی اصلی","home")])
+ enqueue(c,uid,"💳 کیف پول\nموجودی: "+format(balance,",")+" تومان",buttons)
+
+def wallet_amount_options(c,uid,amount):
+ conf=settings(c)
+ if not conf["wallet"]:raise ValueError("کیف پول غیرفعال است")
+ amount=integer(amount,1000,10**9)
+ buttons=[]
+ if conf["card"]:buttons.append([("💳 کارت‌به‌کارت","walletcard:"+str(amount))])
+ if conf["zarinpal"] and conf["merchant_id"]:
+  buttons.append([("🌐 پرداخت آنلاین زرین‌پال","walletonline:"+str(amount))])
+ if not buttons:raise ValueError("روش پرداخت فعالی وجود ندارد")
+ c.execute("UPDATE users SET state=? WHERE id=?",("wallet_method:"+str(amount),uid))
+ buttons.append([("↩️ کیف پول","wallet")])
+ enqueue(c,uid,"مبلغ شارژ: "+format(amount,",")+" تومان\nروش پرداخت را انتخاب کنید:",buttons)
+
 def deliver(c,uid,sid):
  r=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(sid,uid)).fetchone()
  if not r:raise ValueError("سرویس پیدا نشد")
@@ -146,7 +203,8 @@ def handle(c,up):
  if body in ("🏠 منوی اصلی","منوی اصلی","/menu"):cmd="home"
  if body in ("🎮 سرگرمی","سرگرمی"):cmd="fun"
  if body in ("⭐ امتیازهای من","امتیازات من"):cmd="fun:points"
- if not q and not body.startswith("/start") and cmd not in ("home","fun","fun:points") and u["state"]:
+ if body in ("کیف پول","💳 کیف پول"):cmd="wallet"
+ if not q and not body.startswith("/start") and cmd not in ("home","fun","fun:points","wallet") and u["state"]:
   state=u["state"]
   if state.startswith("med:"):
    media_library.text_input(c,uid,state,m,up["update_id"])
@@ -207,16 +265,15 @@ def handle(c,up):
    data["label"]=new_label
    c.execute("UPDATE services SET data=? WHERE id=?",(json.dumps(data),sid));c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
    enqueue(c,uid,"نام اشتراک ثبت شد: "+data["label"]);return
-  if state=="online":
-   authority=payment_create(c,uid,integer(int(body),1000,10**9),"tg:"+str(up["update_id"]))
-   c.execute("UPDATE users SET state=\'\' WHERE id=?",(uid,))
-   enqueue(c,uid,"لینک پرداخت امن زرین‌پال:\nhttps://payment.zarinpal.com/pg/StartPay/"+authority+"\nپس از پرداخت به همین ربات برگردید.");return
-  if state=="topup":
-   amount=integer(int(body),1000,10**9)
-   c.execute("UPDATE users SET state=? WHERE id=?",("receipt:"+str(amount),uid))
-   enqueue(c,uid,"رسید پرداخت را به صورت تصویر یا متن ارسال کنید.\n"+s["card"]);return
+  if state in ("wallet_amount","topup","online"):
+   amount=integer(int(body.replace(",","").replace("٬","").strip()),1000,10**9)
+   wallet_amount_options(c,uid,amount)
+   return
+  if state.startswith("wallet_method:"):
+   raise ValueError("روش پرداخت را با دکمه‌ها انتخاب کنید")
   if state.startswith("receipt:"):
-   receipt="photo:"+m["photo"][-1]["file_id"] if m.get("photo") else text(body,2000)
+   receipt=("photo:"+m["photo"][-1]["file_id"] if m.get("photo") else
+      ("document:"+m["document"]["file_id"] if m.get("document") else text(body,2000)))
    if not receipt:raise ValueError("رسید ارسال نشده")
    amount=int(state.split(":")[1])
    ident=c.execute("INSERT INTO topups(user_id,amount,receipt,created) VALUES(?,?,?,?)",(uid,amount,receipt,now())).lastrowid
@@ -256,7 +313,14 @@ def handle(c,up):
  elif cmd.startswith("a:"):
   admin_callback(c,uid,cmd)
  elif cmd=="plans":
-  rows=[[ (p["category"]+" / "+p["name"]+" — "+str(p["price"])+" تومان","choose:"+str(p["id"])) ] for p in c.execute("SELECT * FROM plans WHERE active=1 AND is_trial=0 LIMIT 70")]
+  if not s["buy"]:
+   enqueue(c,uid,"خرید اشتراک فعلاً غیرفعال است.",[[("🏠 منوی اصلی","home")]])
+   return
+  rows=[[ (p["category"]+" / "+p["name"]+" — "+str(p["price"])+" تومان","choose:"+str(p["id"])) ]
+        for p in c.execute("SELECT * FROM plans WHERE active=1 AND is_trial=0 LIMIT 70")]
+  if s["trial"] and not c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1 LIMIT 1",(uid,)).fetchone():
+   if c.execute("SELECT 1 FROM plans WHERE active=1 AND is_trial=1 LIMIT 1").fetchone():
+    rows.insert(0,[("🎁 دریافت تست رایگان","trial")])
   enqueue(c,uid,bot_message(c,"plans_menu") if rows else bot_message(c,"plans_empty"),rows)
  elif cmd.startswith("bulk:"):
   if not s["bulk"] or not s["reseller"] or not u["reseller"]:raise ValueError("دسترسی نماینده لازم است")
@@ -325,21 +389,46 @@ def handle(c,up):
  elif cmd.startswith("renewok:"):
   purchase_quote(c,uid,cmd.split(":")[1]);enqueue(c,uid,"تمدید ثبت شد.")
  elif cmd=="wallet":
-  if not s["wallet"]:raise ValueError("کیف پول غیرفعال")
-  rows=[]
-  if s["card"]:rows.append([("شارژ با کارت‌به‌کارت","topup")])
-  if s["zarinpal"]:rows.append([("پرداخت آنلاین زرین‌پال","online")])
-  if s["transfer"]:rows.append([("انتقال موجودی","transfer")])
-  enqueue(c,uid,bot_message(c,"wallet_balance",balance=u["balance"]),rows)
- elif cmd=="online":
-  if not s["zarinpal"] or not s["wallet"]:raise ValueError("درگاه غیرفعال")
-  c.execute("UPDATE users SET state=\'online\' WHERE id=?",(uid,));enqueue(c,uid,"مبلغ شارژ به تومان را وارد کنید.")
- elif cmd in ("topup","transfer","coupon","support"):
-  if cmd=="topup" and (not s["wallet"] or not s["card"]):raise ValueError("پرداخت دستی فعال نیست")
-  if cmd=="transfer" and not s["transfer"]:raise ValueError("انتقال غیرفعال")
-  if cmd=="coupon" and not s["discounts"]:raise ValueError("کد تخفیف غیرفعال")
+  wallet_page(c,uid)
+ elif cmd=="points_discount":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  points_and_discounts(c,uid)
+ elif cmd in ("walletadd","topup","online"):
+  if not s["wallet"] or not (s["card"] or (s["zarinpal"] and s["merchant_id"])):
+   raise ValueError("شارژ کیف پول فعلاً غیرفعال است")
+  c.execute("UPDATE users SET state='wallet_amount' WHERE id=?",(uid,))
+  enqueue(c,uid,"مبلغ شارژ را به تومان وارد کنید.",[[("↩️ کیف پول","wallet")]])
+ elif cmd.startswith(("walletcard:","walletonline:")):
+  method,_,raw=cmd.partition(":")
+  amount=integer(int(raw),1000,10**9)
+  state=c.execute("SELECT state FROM users WHERE id=?",(uid,)).fetchone()["state"]
+  if state!="wallet_method:"+str(amount):raise ValueError("ابتدا مبلغ شارژ را وارد کنید")
+  if method=="walletcard":
+   if not s["wallet"] or not s["card"]:raise ValueError("کارت‌به‌کارت غیرفعال است")
+   c.execute("UPDATE users SET state=? WHERE id=?",("receipt:"+str(amount),uid))
+   enqueue(c,uid,"💳 مبلغ: "+format(amount,",")+" تومان\n"+s["card"]+
+       "\n📷 عکس یا فایل رسید را پس از واریز ارسال کنید.",
+       [[("↩️ کیف پول","wallet")]])
+  else:
+   if not s["wallet"] or not s["zarinpal"] or not s["merchant_id"]:
+    raise ValueError("درگاه پرداخت غیرفعال است")
+   authority=payment_create(c,uid,amount,"tg:"+str(up["update_id"]))
+   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+   enqueue(c,uid,"🌐 لینک پرداخت "+format(amount,",")+" تومان:\n"+
+       "https://payment.zarinpal.com/pg/StartPay/"+authority,
+       [[("↩️ کیف پول","wallet")]])
+ elif cmd in ("transfer","coupon","support"):
+  if cmd=="transfer" and not s["transfer"]:raise ValueError("انتقال غیرفعال است")
+  if cmd=="coupon" and not s["discounts"]:raise ValueError("کد تخفیف غیرفعال است")
   c.execute("UPDATE users SET state=? WHERE id=?",(cmd,uid))
-  enqueue(c,uid,{"topup":"مبلغ شارژ به تومان را وارد کنید.","transfer":"آیدی عددی گیرنده و مبلغ تومان را با فاصله ارسال کنید.","coupon":"کد تخفیف یا هدیه را بفرستید.","support":(bot_message(c,"support_prompt") if c.execute("SELECT 1 FROM message_templates WHERE id='support_prompt'").fetchone() else s["support"])}[cmd])
+  prompt={"transfer":"آیدی عددی گیرنده و مبلغ تومان را وارد کنید.",
+          "coupon":"کد تخفیف یا هدیه را بفرستید.",
+          "support":(bot_message(c,"support_prompt") if c.execute(
+              "SELECT 1 FROM message_templates WHERE id='support_prompt'").fetchone() else s["support"])}[cmd]
+  back=[[("↩️ کیف پول","wallet")]] if cmd=="transfer" else (
+       [[("↩️ امتیاز و تخفیف","points_discount")]] if cmd=="coupon" else
+       [[("🏠 منوی اصلی","home")]])
+  enqueue(c,uid,prompt,back)
  elif cmd=="referral":
   if not s["referrals"] and not s.get("points_per_referral",0):raise ValueError("سیستم دعوت دوستان غیرفعال است")
   enqueue(c,uid,"لینک دعوت اختصاصی:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+str(uid)+
