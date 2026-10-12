@@ -15,12 +15,14 @@ MESSAGE_DEFAULTS={
  "service_ready":"اشتراک «{name}» آماده است. از «سرویس‌های من» دریافت کنید.",
  "contact_prompt":"برای ادامه، شماره تلفن متعلق به حساب تلگرام خودتان را با دکمه زیر ارسال کنید.",
  "contact_saved":"شماره تماس شما تأیید شد. می‌توانید از منوی ربات استفاده کنید.",
+ "support_prompt":"برای پشتیبانی پیام خود را ارسال کنید.",
  "support_saved":"پیام پشتیبانی ثبت شد.",
  "receipt_saved":"رسید ثبت شد؛ پس از تأیید مدیر موجودی شارژ می‌شود.",
  "order_confirm":"سفارش ثبت شد؛ در حال ساخت اشتراک.",
  "wallet_balance":"موجودی: {balance} تومان",
  "welcome_admin":"پنل مدیریت ربات: گزینه مدنظر را انتخاب کنید.",
- "admin_saved":"تغییرات با موفقیت ذخیره شد."
+ "admin_saved":"تغییرات با موفقیت ذخیره شد.",
+ "coupon_saved":"کد تخفیف شما ثبت شد."
 }
 def bot_message(c,key,**values):
  if key not in MESSAGE_DEFAULTS:raise ValueError("شناسه متن ربات نامعتبر است")
@@ -188,7 +190,7 @@ def unique_subscription_label(c,preferred):
 def order(c,uid,pid,reference,renew="",trial=False,card=False,label=None):
  existing=c.execute("SELECT id FROM orders WHERE id=?",(reference,)).fetchone()
  if existing:
-  if trial:raise ValueError("شما قبلاً تست رایگان دریافت کرده‌اید")
+  if trial:raise ValueError(bot_message(c,"trial_used"))
   return existing["id"]
  s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if not u or u["blocked"]:raise ValueError("دسترسی مسدود است")
@@ -202,7 +204,7 @@ def order(c,uid,pid,reference,renew="",trial=False,card=False,label=None):
  if trial:
   if not s["trial"]:raise ValueError("ارائه تست رایگان غیرفعال است")
   if renew or card:raise ValueError("تست رایگان قابل تمدید یا پرداخت نیست")
-  if c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1",(uid,)).fetchone():raise ValueError("قبلاً تست دریافت کرده‌اید")
+  if c.execute("SELECT 1 FROM orders WHERE user_id=? AND trial=1",(uid,)).fetchone():raise ValueError(bot_message(c,"trial_used"))
  if renew:
   if c.execute("SELECT 1 FROM orders WHERE service_id=? AND status IN (\'paid\',\'review\',\'awaiting_receipt\',\'receipt_review\')",(renew,)).fetchone():raise ValueError("یک سفارش برای این سرویس در حال پردازش یا بررسی است")
   service=c.execute("SELECT * FROM services WHERE id=? AND user_id=? AND deleted=0",(renew,uid)).fetchone()
