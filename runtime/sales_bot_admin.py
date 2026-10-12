@@ -8,7 +8,7 @@ changes reuse the exact same validated commerce helpers as the web UI.
 import json
 import secrets
 from sales import (
- DEFAULT, settings, save_settings, save_plan, plan_overview, enqueue, integer,
+ DEFAULT, settings, save_settings, save_plan, plan_overview, enqueue, bot_message, integer,
  text, audit, money, decide_receipt, restore_reserved_coupon, now
 )
 
@@ -36,7 +36,7 @@ def send(c,uid,message,buttons=None):
 
 def main(c,uid):
  ensure_admin(c,uid)
- send(c,uid,"🛡 مدیریت ربات فروش مسیحا — بدون نیاز به پنل وب",[
+ send(c,uid,bot_message(c,"welcome_admin"),[
   [("تنظیم امکانات","a:settings"),("پلن‌های فروش","a:plans")],
   [("کاربران و نمایندگان","a:users"),("سفارش‌ها","a:orders")],
   [("رسیدهای در انتظار","a:receipts"),("کدهای تخفیف","a:coupons")],
@@ -289,4 +289,4 @@ def input_text(c,uid,state,body,update_id):
  else:raise ValueError("ورودی مدیریت قابل شناسایی نیست")
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  audit(c,"telegram_admin_"+op,str(uid))
- send(c,uid,"✅ عملیات ثبت شد.",back())
+ send(c,uid,bot_message(c,"admin_saved"),back())
