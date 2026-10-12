@@ -16,6 +16,15 @@ fi
 source /etc/os-release
 [[ "$ID" == "ubuntu" && "$VERSION_ID" == "24.04" && "$(uname -m)" == "x86_64" ]] ||
   { echo "Only fresh Ubuntu 24.04 amd64 is supported" >&2; exit 1; }
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# A partially completed setup has already created the machine's unique VPN
+# CA and panel SQLite file. NEVER regenerate them through a second fresh run.
+if [[ -f /etc/masiha-vpn-extension/.finalize-in-progress ]]; then
+  echo "INCOMPLETE Masiha installation detected (safe resume marker present)." >&2
+  echo "Do not rerun the fresh installer; this would risk existing SSL/CA state." >&2
+  echo "Continue with: sudo bash $REPO_ROOT/deploy/finalize-ubuntu-24.04.sh --resume" >&2
+  exit 3
+fi
 # Interactive prompts are required when values are not supplied via environment.
 # On unattended runs, demand values explicitly instead of silently choosing a domain.
 request_value() {
@@ -54,7 +63,6 @@ echo "DNS A record resolves for $DOMAIN. Ensure TCP/80 and TCP/443 reach this ho
 for path in /etc/x-ui/x-ui.db /etc/masiha-vpn-extension/users.db /usr/local/x-ui/x-ui; do
   [[ ! -e "$path" ]] || { echo "Existing installation detected at $path; do NOT run this fresh-host installer. See migration guide." >&2; exit 1; }
 done
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [[ -f "$REPO_ROOT/deploy/3x-ui.patch" && -f "$REPO_ROOT/runtime/unified.py" ]] ||
   { echo "Incomplete Masiha release checkout" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
