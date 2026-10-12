@@ -1411,10 +1411,10 @@ index 0000000..66e9ae5
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 00000000..20030b11
+index 00000000..56f0259a
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,142 @@
 +import {useEffect,useState} from 'react';
 +import {Alert,App,Button,Card,ConfigProvider,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography,theme} from 'antd';
 +import './SalesBotPage.css';
@@ -1425,7 +1425,7 @@ index 00000000..20030b11
 + const [settings]=Form.useForm();const [templates]=Form.useForm();const [plan]=Form.useForm();const [coupon]=Form.useForm();const [dialog,setDialog]=useState<Row>();const [entry,setEntry]=useState('');
 + const [planOpen,setPlanOpen]=useState(false);const chosenProtocol=Form.useWatch('protocol',plan);const chosenTrial=Form.useWatch('is_trial',plan);
 + const call=async(action:string,values:Row={})=>{const r=await HttpUtil.post('/panel/api/sales-bot',{action,...values},{headers:{'Content-Type':'application/json'},silent:true,timeout:65000});if(!r?.success)throw new Error(r?.msg||'عملیات ناموفق');return r.obj as any;};
-+ const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:''});templates.setFieldsValue(d.message_templates||{});setError('');}catch(e){setError(String(e))}};
++ const load=async()=>{try{const d=await call('get');setData(d);settings.setFieldsValue({...d.settings,admins:d.settings.admins.join(','),token:'',merchant_id:'',ai_api_key:''});templates.setFieldsValue(d.message_templates||{});setError('');}catch(e){setError(String(e))}};
 + useEffect(()=>{void load();call('inbounds').then(setInbounds).catch(()=>{});},[]);
 + const run=async(action:string,values:Row={})=>{setBusy(true);try{const r=await call(action,values);message.success(action==='test'?'اتصال تأیید شد: @'+r.username:'ذخیره شد');await load();return true;}catch(e){message.error(String(e));return false;}finally{setBusy(false)}};
 + const templatesLabels:Record<string,string>={home:'پیام خوشامد',trial_menu:'نمایش گزینه‌های تست رایگان',trial_empty:'نبود پلن تست رایگان',trial_confirm:'تأیید ثبت تست رایگان',trial_used:'تست تکراری',plans_menu:'نمایش پلن‌های فروش',plans_empty:'نبود پلن قابل فروش',service_ready:'پیام آماده‌شدن اشتراک',contact_prompt:'درخواست ارسال شماره تلفن',contact_saved:'ثبت شماره تماس',support_prompt:'راهنمای شروع پشتیبانی',support_saved:'ثبت پیام پشتیبانی',receipt_saved:'ثبت رسید',order_confirm:'ثبت سفارش',wallet_balance:'نمایش موجودی کیف پول',welcome_admin:'خوشامد پنل مدیریت ربات',admin_saved:'تأیید عملیات مدیر',coupon_saved:'تأیید ثبت کد تخفیف'};
@@ -1472,9 +1472,28 @@ index 00000000..20030b11
 +     <Form.Item label="هشدار چند روز قبل از پایان" name="warning_days"><InputNumber min={0} max={100}/></Form.Item>
 +    </div>
 +   </Card>
++   <Card title="۶. باشگاه امتیاز و سرگرمی" className="masiha-sales-section masiha-sales-section-wide">
++    <Alert type="info" showIcon title="امتیاز خرید و دعوت" description="امتیاز خرید فقط پس از تحویل موفق اشتراک پولی و براساس مبلغ واقعی پرداخت‌شده ثبت می‌شود. هر دعوت پس از تکمیل عضویت و الزامات شماره تماس یک‌بار امتیاز می‌گیرد." style={{marginBottom:14}}/>
++    <div className="masiha-sales-numbers">
++     <Form.Item name="points_per_toman" label="به ازای هر چند تومان خرید" rules={[{required:true}]}><InputNumber min={1} max={1000000000} style={{width:'100%'}}/></Form.Item>
++     <Form.Item name="points_per_purchase_unit" label="چند امتیاز به خریدار داده شود" rules={[{required:true}]}><InputNumber min={0} max={10000} style={{width:'100%'}}/></Form.Item>
++     <Form.Item name="points_per_referral" label="امتیاز هر دعوت موفق" rules={[{required:true}]}><InputNumber min={0} max={10000} style={{width:'100%'}}/></Form.Item>
++     <Form.Item name="ai_cost" label="هزینه هر پاسخ موفق AI (امتیاز)" rules={[{required:true}]}><InputNumber min={1} max={10000} style={{width:'100%'}}/></Form.Item>
++    </div>
++    <Alert type="warning" showIcon title="API هوش مصنوعی" description="تا زمانی که آدرس HTTPS، کلید محرمانه و نام مدل را ثبت نکرده‌اید، هوش مصنوعی را فعال نکنید. کلید در پاسخ API وب یا تلگرام نمایش داده نمی‌شود. API باید با ساختار Chat Completions سازگار باشد." style={{marginBottom:14}}/>
++    <Form.Item name="ai_enabled" label="فعال‌سازی دسترسی کاربران به هوش مصنوعی" valuePropName="checked"><Switch/></Form.Item>
++    <Form.Item name="ai_api_url" label="آدرس پایه API هوش مصنوعی (HTTPS)" extra="مثال: https://your-provider.example/v1"><Input dir="ltr" placeholder="https://your-provider.example/v1"/></Form.Item>
++    <Form.Item name="ai_model" label="شناسه مدل هوش مصنوعی"><Input dir="ltr" placeholder="نام مدل سرویس متصل"/></Form.Item>
++    <Form.Item name="ai_api_key" label={'کلید API'+(data?.settings.ai_api_key_set?' — ذخیره شده؛ برای حفظ آن خالی بگذارید':'')}><Input.Password dir="ltr" autoComplete="new-password"/></Form.Item>
++   </Card>
 +  </div>
 +  <div className="masiha-sales-form-actions"><Button type="primary" size="large" htmlType="submit" loading={busy}>ذخیره همه تنظیمات ربات</Button></div>
 + </Form>},
++ {key:'loyalty',label:'باشگاه امتیازها',children:<Space orientation="vertical" style={{width:'100%'}}>
++  <Alert type="info" showIcon title="گیمیفیکیشن مسیحا" description="امتیازات خرید و دعوت هرکدام یک‌بار با مرجع یکتا ثبت می‌شوند. مصرف هوش مصنوعی فقط پس از دریافت پاسخ موفق هزینه دارد. قوانین از تب اتصال و امکانات قابل ویرایش‌اند."/>
++  <Space wrap><Tag color="blue">کاربران دارای امتیاز: {data?.loyalty?.total_users_with_points||0}</Tag><Tag color="green">امتیازهای اعطاشده: {data?.loyalty?.total_awarded||0}</Tag></Space>
++  {table(data?.loyalty?.recent||[],[{title:'کاربر',dataIndex:'user_id'},{title:'امتیاز مثبت/منفی',dataIndex:'points'},{title:'دلیل',render:(_:unknown,r:Row)=>r.kind==='purchase'?'خرید موفق':r.kind==='referral'?'دعوت موفق':r.kind==='ai'?'مصرف هوش مصنوعی':r.kind},{title:'زمان ثبت (Unix)',dataIndex:'created'}])}
++ </Space>},
 + {key:'templates',label:'متن‌های پیش‌فرض',children:<Card title="ویرایش پاسخ‌های ربات (فقط از وب)">
 +  <Alert type="info" showIcon title="ویرایش متن‌های ارسالی ربات" description="این تنظیمات فقط در پنل وب در دسترس‌اند. برای پیام «اشتراک آماده است» از متغیر {name} و برای موجودی کیف پول از {balance} استفاده کنید. سایر متن‌ها را آزادانه ویرایش کنید." style={{marginBottom:16}}/>
 +  <Form form={templates} layout="vertical" onFinish={v=>void run('message_templates',{values:v})}>
