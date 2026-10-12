@@ -32,7 +32,7 @@ if os.environ.get('MASIHA_EXPECT_DEFAULT_INBOUNDS')=='1':
 db.close()
 PY
 echo "=== Extension Python syntax ==="
-python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,runtime_config}.py
+python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,sales_bot_admin,runtime_config}.py
 echo "=== Executable VPN hooks and QA client route helper ==="
 for helper in /opt/masiha-vpn-extension/vpn-account-hook.sh /opt/masiha-vpn-extension/test-oc-route.sh; do
   [[ -x "$helper" ]] || {
