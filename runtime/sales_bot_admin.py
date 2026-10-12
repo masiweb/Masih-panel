@@ -7,9 +7,10 @@ changes reuse the exact same validated commerce helpers as the web UI.
 """
 import json
 import secrets
+import gamification as loyalty
 from sales import (
  DEFAULT, settings, save_settings, save_plan, plan_overview, enqueue, bot_message, integer,
- text, audit, money, decide_receipt, restore_reserved_coupon, now
+ text, audit, money, decide_receipt, restore_reserved_coupon, now, tg
 )
 
 SETTINGS_BOOL = {
@@ -18,7 +19,8 @@ SETTINGS_BOOL = {
  "referrals":"معرفی دوستان", "reseller":"نمایندگی", "notifications":"هشدارها",
  "require_contact":"اجبار شماره تماس", "self_delete":"حذف اشتراک توسط مشتری",
  "bulk":"خرید انبوه", "rename":"تغییر نام اشتراک", "rotate":"تعویض لینک",
- "new_user_notice":"اعلان کاربر جدید", "zarinpal":"درگاه پرداخت"
+ "new_user_notice":"اعلان کاربر جدید", "zarinpal":"درگاه پرداخت",
+ "ai_enabled":"فعال‌سازی هوش مصنوعی"
 }
 SETTINGS_EDIT = {
  # All end-user response texts are deliberately WEB-only, including legacy
@@ -26,7 +28,11 @@ SETTINGS_EDIT = {
  "card":"اطلاعات کارت‌به‌کارت", "channel":"کانال اجباری",
  "report_channel":"کانال گزارش فروش",
  "commission":"درصد پورسانت", "reseller_discount":"تخفیف نماینده",
- "warning_days":"روز هشدار انقضا", "usage_warning_percent":"درصد هشدار حجم"
+ "warning_days":"روز هشدار انقضا", "usage_warning_percent":"درصد هشدار حجم",
+ "points_per_toman":"مبلغ هر واحد خرید (تومان)",
+ "points_per_purchase_unit":"امتیاز هر واحد خرید",
+ "points_per_referral":"امتیاز دعوت موفق",
+ "ai_cost":"هزینه هر پیام هوش مصنوعی"
 }
 def ensure_admin(c,uid):
  if uid not in settings(c)["admins"]:raise ValueError("دسترسی این بخش فقط برای مدیر ربات است")
@@ -139,9 +145,55 @@ def callback(c,uid,cmd):
  if op=="user":
   user=c.execute("SELECT * FROM users WHERE id=?",(integer(int(ident),1),)).fetchone()
   if not user:raise ValueError("کاربر یافت نشد")
-  return send(c,uid,"کاربر "+str(user["id"])+" | موجودی "+str(user["balance"])+" تومان\nشماره: "+(user["phone"] or "ثبت نشده"),[
+  # Telegram profile photos are optional and user-controlled. Cache only
+  # Telegram's file_id in the message outbox, never image bytes in SQLite.
+  try:
+   photos=tg(s,"getUserProfilePhotos",{"user_id":user["id"],"limit":1})
+   files=photos.get("photos") or []
+   if files and files[0]:
+    file_id=files[0][-1]["file_id"]
+    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+      (secrets.token_hex(12),uid,"sendPhoto",json.dumps({
+       "chat_id":uid,"photo":file_id,"caption":"🖼 تصویر پروفایل کاربر "+str(user["id"])})))
+  except (ValueError,KeyError,TypeError):
+   pass  # absence or Telegram privacy restrictions must not block the card
+  invites=c.execute("SELECT COUNT(*) FROM loyalty_points WHERE reference LIKE 'referral:%' AND user_id=?",(user["id"],)).fetchone()[0]
+  subs=c.execute("SELECT COUNT(*) FROM services WHERE user_id=?",(user["id"],)).fetchone()[0]
+  text_card="👤 "+(user["name"] or "بدون نام")+"\nشناسه: "+str(user["id"])+
+     "\nموجودی: "+str(user["balance"])+" تومان\nشماره: "+(user["phone"] or "ثبت نشده")+
+     "\n⭐ امتیاز: "+str(loyalty.balance(c,user["id"]))+
+     "\nدعوت موفق: "+str(invites)+"\nاشتراک‌های خریداری‌شده: "+str(subs)+
+     "\nوضعیت: "+("مسدود" if user["blocked"] else "فعال")+
+     " | نماینده: "+("بله" if user["reseller"] else "خیر")
+  return send(c,uid,text_card,[
+   [("📦 لیست اشتراک‌های کاربر","a:usubs:"+ident)],
    [("مسدود/آزاد","a:block:"+ident),("نمایندگی روشن/خاموش","a:reseller:"+ident)],
-   [("تغییر اعتبار","a:credit:"+ident)]]+back())
+   [("تغییر اعتبار","a:credit:"+ident)],
+   [("↩️ فهرست کاربران","a:users")]]+back())
+ if op=="usubs":
+  user_id=integer(int(ident),1)
+  if not c.execute("SELECT 1 FROM users WHERE id=?",(user_id,)).fetchone():
+   raise ValueError("کاربر یافت نشد")
+  records=c.execute("SELECT * FROM services WHERE user_id=? ORDER BY expires DESC LIMIT 40",(user_id,)).fetchall()
+  rows=[]
+  for rec in records:
+   try:label=json.loads(rec["data"]).get("label") or rec["username"]
+   except (ValueError,TypeError):label=rec["username"]
+   rows.append([(("❌ " if rec["deleted"] else "📦 ")+label[:30],"a:usub:"+rec["id"])])
+  return send(c,uid,"اشتراک‌های کاربر "+str(user_id)+
+      "\nتعداد: "+str(len(records))+" (حداکثر ۴۰ مورد اخیر)"+
+      ("\nهنوز اشتراکی خریداری نشده است." if not rows else ""),
+      rows+[[("↩️ بازگشت به مشخصات کاربر","a:user:"+str(user_id))]]+back())
+ if op=="usub":
+  rec=c.execute("SELECT * FROM services WHERE id=?",(ident,)).fetchone()
+  if not rec:raise ValueError("اشتراک وجود ندارد")
+  p=json.loads(rec["plan"]);d=json.loads(rec["data"])
+  return send(c,uid,"📦 اشتراک "+str(d.get("label") or rec["username"])+
+    "\nنوع: "+rec["protocol"]+"\nپلن: "+str(p.get("name",""))+
+    "\nنام سیستمی: "+rec["username"]+
+    "\nانقضا (Unix): "+str(rec["expires"])+
+    "\nوضعیت: "+("حذف‌شده" if rec["deleted"] else "فعال یا منقضی‌شده"),
+    [[("↩️ اشتراک‌های همین کاربر","a:usubs:"+str(rec["user_id"]))]]+back())
  if op in ("block","reseller"):
   uid2=integer(int(ident),1)
   field="blocked" if op=="block" else "reseller"
@@ -244,7 +296,10 @@ def input_text(c,uid,state,body,update_id):
   key=parts[2] if len(parts)>2 else ""
   if key not in SETTINGS_EDIT:raise ValueError("این گزینه قابل تغییر نیست")
   value="" if data=="-" else data
-  if type(DEFAULT[key]) is int:value=integer(int(data),0,100)
+  if type(DEFAULT[key]) is int:
+   high=10**9 if key=="points_per_toman" else 10000 if key in ("points_per_purchase_unit","points_per_referral","ai_cost") else 100
+   low=1 if key in ("points_per_toman","ai_cost") else 0
+   value=integer(int(data),low,high)
   save_settings(c,{key:value})
  elif op in ("newplan","editplan"):
   fields=[v.strip() for v in data.split("|")]
