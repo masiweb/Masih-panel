@@ -36,6 +36,8 @@ def send(c,uid,message,buttons=None):
 
 def main(c,uid):
  ensure_admin(c,uid)
+ # Discard any half-completed input workflow on return to the admin home.
+ c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  send(c,uid,bot_message(c,"welcome_admin"),[
   [("تنظیم امکانات","a:settings"),("پلن‌های فروش","a:plans")],
   [("کاربران و نمایندگان","a:users"),("سفارش‌ها","a:orders")],
@@ -67,6 +69,8 @@ def callback(c,uid,cmd):
  if op=="web":
   from runtime_config import PUBLIC_PANEL_URL
   return send(c,uid,"اطلاعات محرمانه بات، هویت مدیران و «متن‌های پیش‌فرض» تنها از پنل امن وب قابل تغییرند:\n"+PUBLIC_PANEL_URL+"/panel/sales-bot",back())
+ if op in ("settings","plans","users","orders","receipts","coupons","tickets","outbox","finance"):
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  if op=="settings":
   rows=[[(("✅" if s[k] else "◻️")+" "+label,"a:toggle:"+k)] for k,label in SETTINGS_BOOL.items()]
   rows.extend([[(label,"a:cfg:"+k)] for k,label in SETTINGS_EDIT.items()])
