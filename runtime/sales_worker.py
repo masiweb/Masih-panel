@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 import base64, contextlib, fcntl, hashlib, io, json, os, re, secrets, time, urllib.request
 from sales import *
-from sales_bot_admin import main as admin_menu, callback as admin_callback, input_text as admin_text
+from sales_bot_admin import main as admin_menu, callback as admin_callback, input_text as admin_text, queue_receipt_review
 import entertainment
 import media_library
 def quote(c,uid,pid,renew="",quantity=1,label=None):
@@ -90,7 +90,12 @@ def handle(c,up):
   with contextlib.suppress(Exception):
    candidate=int(body.split("ref_")[1])
    if candidate!=uid and c.execute("SELECT 1 FROM users WHERE id=?",(candidate,)).fetchone():ref=candidate
- c.execute("INSERT OR IGNORE INTO users(id,name,referrer,created) VALUES(?,?,?,?)",(uid,who.get("first_name","")[:100],ref,now()))
+ c.execute("INSERT OR IGNORE INTO users(id,name,referrer,created,telegram_username) VALUES(?,?,?,?,?)",
+  (uid,who.get("first_name","")[:100],ref,now(),str(who.get("username") or "")[:32]))
+ # Telegram usernames are mutable, so keep the latest value when present.
+ if "username" in who:
+  c.execute("UPDATE users SET telegram_username=? WHERE id=?",
+            (str(who.get("username") or "")[:32],uid))
  u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if u["blocked"]:return
  if s["channel"] and uid not in s["admins"]:
@@ -188,11 +193,7 @@ def handle(c,up):
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
    enqueue(c,uid,"رسید ثبت شد. بعد از تأیید مدیر، اشتراک خودکار ساخته می‌شود.")
    for aid in s["admins"]:
-    enqueue(c,aid,"رسید سفارش "+ident+"\nکاربر: "+str(uid)+"\nمبلغ: "+str(o["price"])+" تومان",[[("تأیید","approve:"+str(rid)),("رد","reject:"+str(rid))]])
-    if receipt.startswith(("photo:","document:")):
-     kind,value=receipt.split(":",1)
-     c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),aid,"sendPhoto" if kind=="photo" else "sendDocument",json.dumps({"chat_id":aid,kind:value})))
-    else:enqueue(c,aid,receipt)
+    queue_receipt_review(c,aid,rid)
    return
   if state.startswith("rename:"):
    if not s["rename"]:raise ValueError("تغییر نام غیرفعال")
@@ -222,10 +223,7 @@ def handle(c,up):
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
    enqueue(c,uid,bot_message(c,"receipt_saved"))
    for aid in s["admins"]:
-    enqueue(c,aid,"رسید شماره "+str(ident)+"؛ کاربر "+str(uid)+"؛ مبلغ "+str(amount)+" تومان",[[("تأیید","approve:"+str(ident)),("رد","reject:"+str(ident))]])
-    if receipt.startswith("photo:"):
-     c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),aid,"sendPhoto",json.dumps({"chat_id":aid,"photo":receipt[6:]})))
-    else:enqueue(c,aid,receipt)
+    queue_receipt_review(c,aid,ident)
    return
   if state=="coupon":
    code=text(body,40).upper();cp=c.execute("SELECT * FROM coupons WHERE code=? AND uses>0 AND (expires=0 OR expires>?)",(code,now())).fetchone()
