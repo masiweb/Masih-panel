@@ -23,6 +23,13 @@ FIELDS={
          ("description","خلاصه داستان")]
 }
 GENRE_LABEL={"music":"🎵 موزیک","film":"🎬 فیلم"}
+# Telegram can deliver the same file as audio/video or as a document.
+# Keep a common allowlist for both direct uploads and HTTPS media links.
+AUDIO_EXTENSIONS=frozenset(("mp3","m4a","aac","flac","wav","wave","ogg","oga","opus","wma","aiff","aif","alac","amr","mp2","m4b","3ga"))
+VIDEO_EXTENSIONS=frozenset(("mp4","m4v","mkv","mov","avi","webm","wmv","mpeg","mpg","3gp","3g2","ts","m2ts","mts","flv","vob"))
+AUDIO_MIMES=frozenset(("application/ogg","application/x-ogg","application/vnd.apple.mpegurl"))
+VIDEO_MIMES=frozenset(("application/x-matroska","application/mp4","application/x-mpegurl"))
+UNSAFE_EXTENSIONS=frozenset(("exe","dll","bat","cmd","sh","msi","apk","jar","js","html","svg","php","py","ps1","scr"))
 MAX_PAGE=20
 DAILY_METADATA_LIMIT=30
 DAILY_LIKE_LIMIT=20
@@ -164,7 +171,7 @@ def _queue_file(c,uid,method,file_id,caption,buttons):
            (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
 
 def kind_menu(c,uid,kind):
- send(c,uid,GENRE_LABEL[kind]+" | کتابخانه رسانه مسیحا\nفایل را مستقیماً ارسال یا فوروارد کنید؛ روی سرور VPN ذخیره نمی‌شود.",
+ send(c,uid,GENRE_LABEL[kind]+" | فایل را بفرستید یا فوروارد کنید.",
   [[("➕ ارسال رسانه","med:upload:"+kind),("🆕 آخرین ۲۰ مورد","med:latest:"+kind)],
    [("📂 رسانه‌های من","med:mine:"+kind),("📚 پلی‌لیست‌ها","med:lists:"+kind)],
    [("🔎 جست‌وجو","med:search:"+kind),("🔥 برترین‌ها","med:top:"+kind)],
@@ -222,37 +229,42 @@ def _url(value):
   if not ip.is_global:raise ValueError("لینک به آدرس خصوصی قابل قبول نیست")
  return candidate
 
+def _format_kind(filename="",mime=""):
+ """Recognize common audio/video documents by extension and Telegram MIME."""
+ filename=str(filename or "").strip().lower().split("?",1)[0]
+ mime=str(mime or "").split(";",1)[0].strip().lower()
+ ext=filename.rsplit(".",1)[-1] if "." in filename else ""
+ if ext in UNSAFE_EXTENSIONS:return None
+ by_extension=("music" if ext in AUDIO_EXTENSIONS else
+               "film" if ext in VIDEO_EXTENSIONS else None)
+ by_mime=("music" if mime.startswith("audio/") or mime in AUDIO_MIMES else
+          "film" if mime.startswith("video/") or mime in VIDEO_MIMES else None)
+ if by_extension and by_mime and by_extension!=by_mime:return None
+ return by_extension or by_mime
+
 def _guess(message,expected=None):
- """Telegram-native file only; reject arbitrary documents & animated GIFs."""
- for key,method,kind in (("audio","sendAudio","music"),("voice","sendVoice","music"),
-                          ("video","sendVideo","film"),("video_note","sendVideoNote","film")):
+ """Detect native Telegram audio/video and common document-backed media."""
+ for key,method,kind in (("audio","sendAudio","music"),("video","sendVideo","film"),
+                          ("voice","sendVoice","music"),("video_note","sendVideoNote","film")):
   part=message.get(key)
   if isinstance(part,dict) and part.get("file_id") and part.get("file_unique_id"):
-   if expected and expected!=kind:raise ValueError("فرمت فایل با بخش انتخابی مطابقت ندارد")
+   if expected and expected!=kind:raise ValueError("نوع فایل با بخش انتخاب‌شده سازگار نیست")
    return kind,method,part
  part=message.get("document") or {}
- if part.get("file_id") and part.get("file_unique_id"):
-  mime=part.get("mime_type","").lower()
-  extension=str(part.get("file_name","")).lower().rsplit(".",1)[-1]
-  if mime.startswith("audio/") or extension in ("mp3","m4a","flac","ogg","wav","aac"):
-   kind="music";method="sendDocument"
-  elif mime.startswith("video/") or extension in ("mp4","mkv","mov","webm","avi","m4v"):
-   kind="film";method="sendDocument"
-  else:return None
-  if expected and expected!=kind:raise ValueError("فرمت فایل با بخش انتخابی مطابقت ندارد")
-  return kind,method,part
+ if isinstance(part,dict) and part.get("file_id") and part.get("file_unique_id"):
+  kind=_format_kind(part.get("file_name"),part.get("mime_type"))
+  if not kind:return None
+  if expected and expected!=kind:raise ValueError("نوع فایل با بخش انتخاب‌شده سازگار نیست")
+  return kind,"sendDocument",part
  return None
 
 def _link_kind(value):
  if not isinstance(value,str) or not value.startswith("https://"):return None
- ext=urlparse(value).path.lower().rsplit(".",1)[-1]
- if ext in ("mp3","m4a","flac","ogg","wav","aac","opus"):return "music"
- if ext in ("mp4","mkv","mov","webm","avi","m4v"):return "film"
- return None
+ return _format_kind(urlparse(value).path)
 
 def is_media_message(m):
- # Recognize direct media URLs without hijacking ordinary support messages.
- # Voice notes are accepted only after explicit upload selection.
+ # Voice messages and circular video notes often occur in normal chat;
+ # accept them only after pressing Upload, not as unsolicited library media.
  return bool(m.get("audio") or m.get("video") or (
    m.get("document") and _guess(m)) or _link_kind(m.get("text","")))
 
@@ -260,17 +272,15 @@ def _prompt(c,uid,row,step=0):
  fields=FIELDS[row["kind"]]
  if step>=len(fields):
   _state(c,uid,"med:cover:"+str(row["id"]))
-  send(c,uid,"🖼 در صورت تمایل تصویر کاور فیلم/سریال را ارسال کنید. برای موزیک نیز کاور اختیاری است.",
-       [[("✅ ثبت بدون کاور","med:publish:"+str(row["id"])),
-         ("❌ انصراف و حذف پیش‌نویس","med:cancel:"+str(row["id"]))],
-        [("↩️ بازگشت","med:"+row["kind"])]])
+  send(c,uid,"🖼 کاور بفرستید یا بدون کاور ثبت کنید.",
+       [[("✅ ثبت بدون کاور","med:publish:"+str(row["id"]))],
+        [("❌ انصراف","med:cancel:"+str(row["id"]))]])
   return
  field,label=fields[step]
  _state(c,uid,"med:meta:"+str(row["id"])+":"+str(step))
- send(c,uid,"اطلاعات اختیاری ("+str(step+1)+"/"+str(len(fields))+")\n"+label+
-        "\nبرای هر فیلد واقعی و غیرتکراری امتیاز می‌گیرید. اگر نمی‌دانید، رد کنید.",
-      [[("⏭ رد این فیلد","med:skip:"+str(row["id"])+":"+str(step)),
-        ("⏩ رد همه و انتشار","med:finish:"+str(row["id"]))],
+ send(c,uid,label+" ("+str(step+1)+"/"+str(len(fields))+") — اختیاری",
+      [[("⏭ رد کردن","med:skip:"+str(row["id"])+":"+str(step)),
+        ("⏩ رفتن به ثبت","med:finish:"+str(row["id"]))],
        [("↩️ کتابخانه","med:"+row["kind"])]])
  
 def accept(c,uid,message,expected=None):
@@ -299,7 +309,7 @@ def accept(c,uid,message,expected=None):
   raise ValueError("این فایل قبلاً در کتابخانه ثبت شده است؛ ارسال تکراری امتیاز ندارد")
  name=clean(part.get("title") or str(part.get("file_name","")).rsplit(".",1)[0],160)
  if not name:name="بدون نام"
- # Pending submissions are not public until rights checkbox and publish.
+ # Drafts are private until the last optional metadata/cover step finishes.
  mid=c.execute("""INSERT INTO media_items(owner_id,kind,telegram_method,file_id,unique_id,
      source_url,title,artist,created) VALUES(?,?,?,?,?,?,?,?,?)""",
      (uid,kind,method,part.get("file_id",""),unique,url,name,
@@ -356,16 +366,21 @@ def _cover(c,uid,mid,message):
   raise ValueError("تصویر کاور را به‌صورت عکس تلگرام بفرستید یا «ثبت بدون کاور» را بزنید")
  c.execute("UPDATE media_items SET cover_id=? WHERE id=?",(photos[-1]["file_id"],mid))
  _mark_metadata(c,mid,"cover")
- return _ready(c,uid,mid)
+ return _publish(c,uid,mid)
 
-def _ready(c,uid,mid):
+def _publish(c,uid,mid):
  row=_owner(c,uid,mid,True)
- if row["status"]!="draft":raise ValueError("فایل قبلاً ثبت شده است")
- _state(c,uid,"med:rights:"+str(mid))
- send(c,uid,"⚖️ لطفاً تأیید کنید که حق انتشار/اشتراک این رسانه را دارید و مسئول رعایت حقوق صاحبان اثر هستید. بدون تأیید، فایل در فهرست عمومی نمایش داده نمی‌شود.",
-      [[("✅ حق انتشار دارم؛ منتشر شود","med:confirm:"+str(mid))],
-       [("❌ انصراف و حذف پیش‌نویس","med:cancel:"+str(mid))]])
- 
+ if row["status"]!="draft":raise ValueError("رسانه قبلاً ثبت شده است")
+ # No separate publishing-permission prompt. rights_ok remains false:
+ # publication must not be mistaken for an explicit rights certification.
+ c.execute("UPDATE media_items SET status='published' WHERE id=?",(row["id"],))
+ _reward_published_metadata(c,uid,row["id"])
+ _state(c,uid,"")
+ send(c,uid,"✅ "+GENRE_LABEL[row["kind"]]+" ثبت شد.",
+      [[("▶️ پخش","med:play:"+str(mid)),("➕ پلی‌لیست","med:addmenu:"+str(mid))],
+       [("↩️ کتابخانه","med:"+row["kind"])]])
+
+
 def _preview(c,uid,row):
  likes=_count(c,"media_likes","media_id",row["id"])
  comments=c.execute("SELECT COUNT(*) FROM media_comments WHERE media_id=? AND removed=0",(row["id"],)).fetchone()[0]
@@ -503,7 +518,7 @@ def callback(c,uid,cmd):
  if op in ("music","film"):return kind_menu(c,uid,op)
  if op=="upload" and x in FIELDS:
   _state(c,uid,"med:upload:"+x)
-  return send(c,uid,"➕ فایل موزیک/فیلم را آپلود یا از کانال دیگری فوروارد کنید؛ یا یک لینک مستقیم HTTPS ارسال کنید.\nفایل روی دیسک سرور ذخیره نمی‌شود. پس از دریافت، اطلاعات اختیاری پرسیده می‌شود.",
+  return send(c,uid,"📤 موزیک، فیلم یا لینک مستقیم HTTPS بفرستید.",
     [[("↩️ بازگشت","med:"+x)]])
  if op in ("latest","mine","top") and x in FIELDS:return latest(c,uid,x,op)
  if op=="lists" and x in FIELDS:return playlist_menu(c,uid,x)
@@ -512,7 +527,7 @@ def callback(c,uid,cmd):
  if op=="leaders" and x in FIELDS:return leaders(c,uid,x)
  if op=="search" and x in FIELDS:
   _state(c,uid,"med:search:"+x)
-  return send(c,uid,"🔎 نام موزیک، فیلم، خواننده، پلی‌لیست یا بخشی از متن را ارسال کنید.",
+  return send(c,uid,"🔎 نام، خواننده یا بخشی از متن را بنویسید.",
           [[("↩️ بازگشت","med:"+x)]])
  if op=="play":return play(c,uid,int(x))
  if op=="like":
@@ -556,7 +571,7 @@ def callback(c,uid,cmd):
  if op=="addmenu":
   row=_media(c,int(x))
   rows=c.execute("SELECT * FROM playlists WHERE owner_id=? AND kind=? AND removed=0 ORDER BY id DESC LIMIT 30",(uid,row["kind"])).fetchall()
-  send(c,uid,"این رسانه را به کدام پلی‌لیست خودت اضافه کنیم؟",
+  send(c,uid,"📚 انتخاب پلی‌لیست:",
        [[(p["name"][:40],"med:add:"+str(p["id"])+":"+x)] for p in rows]+
        [[("➕ ساخت پلی‌لیست","med:lists:"+row["kind"]),("↩️ رسانه","med:play:"+x)]])
   return
@@ -586,7 +601,7 @@ def callback(c,uid,cmd):
   return send(c,uid,"پلی‌لیست حذف شد.",[[("↩️ پلی‌لیست‌ها","med:lists:"+p["kind"])]])
  if op=="report":
   _media(c,int(x));_state(c,uid,"med:report:"+x)
-  return send(c,uid,"🚩 دلیل گزارش این رسانه را بنویسید (حق نشر، محتوای نامناسب یا مشکل دیگر).",
+  return send(c,uid,"🚩 دلیل گزارش را بنویسید.",
     [[("↩️ رسانه","med:play:"+x)]])
  if op=="skip":
   row=_owner(c,uid,int(x),True);index=int(parts[3])
@@ -595,18 +610,9 @@ def callback(c,uid,cmd):
  if op=="finish":
   row=_owner(c,uid,int(x),True)
   return _prompt(c,uid,row,len(FIELDS[row["kind"]]))
- if op=="publish":
-  return _ready(c,uid,int(x))
- if op=="confirm":
-  row=_owner(c,uid,int(x),True)
-  if row["status"]!="draft":raise ValueError("رسانه قبلاً منتشر شده")
-  c.execute("UPDATE media_items SET status='published',rights_ok=1 WHERE id=?",(row["id"],))
-  _reward_published_metadata(c,uid,row["id"])
-  _state(c,uid,"")
-  send(c,uid,"✅ "+GENRE_LABEL[row["kind"]]+" با موفقیت منتشر شد. برای اطلاعات اختیاری هر فیلد پاداش جداگانه دریافت می‌کنید.",
-       [[("▶️ پخش رسانه","med:play:"+x),("➕ به پلی‌لیست","med:addmenu:"+x)],
-        [("↩️ کتابخانه","med:"+row["kind"])]])
-  return
+ if op in ("publish","confirm"):
+  # "confirm" is retained solely for buttons sent by older bot versions.
+  return _publish(c,uid,int(x))
  if op=="cancel":
   row=_owner(c,uid,int(x),True)
   if row["status"]=="draft":c.execute("UPDATE media_items SET status='removed' WHERE id=?",(row["id"],))
@@ -625,8 +631,8 @@ def text_input(c,uid,state,message,update_id):
  if op=="cover":
   return _cover(c,uid,int(parts[2]),message)
  if op=="rights":
-  return send(c,uid,"برای انتشار، دکمه تأیید حق نشر را بزنید.",
-      [[("✅ تأیید حق انتشار","med:confirm:"+parts[2]),("❌ انصراف","med:cancel:"+parts[2])]])
+  # Resume unfinished submissions from older bot versions without another gate.
+  return _publish(c,uid,int(parts[2]))
  if op=="plnew":
   kind=parts[2];visibility=int(parts[3])
   name=clean(message.get("text",""),95)
@@ -652,7 +658,7 @@ def text_input(c,uid,state,message,update_id):
   c.execute("INSERT OR IGNORE INTO media_reports(media_id,reporter_id,reason,created) VALUES(?,?,?,?)",
             (mid,uid,reason,_sales().now()))
   _state(c,uid,"")
-  return send(c,uid,"✅ گزارش شما ثبت شد و توسط مدیر بررسی می‌شود.",
+  return send(c,uid,"✅ گزارش ثبت شد.",
        [[("↩️ رسانه","med:play:"+str(mid))]])
  raise ValueError("عملیات رسانه نامعتبر است")
 
