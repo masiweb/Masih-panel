@@ -63,6 +63,11 @@ def conn():
  import media_library
  media_library.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
+ # Telegram usernames are optional and can change; update on later messages.
+ if not any(col[1]=="telegram_username" for col in c.execute("PRAGMA table_info(users)")):
+  try:c.execute("ALTER TABLE users ADD COLUMN telegram_username TEXT NOT NULL DEFAULT ''")
+  except sqlite3.OperationalError as exc:
+   if "duplicate column name" not in str(exc).lower():raise
  if not any(col[1]=="is_trial" for col in c.execute("PRAGMA table_info(plans)")):
   try:c.execute("ALTER TABLE plans ADD COLUMN is_trial INTEGER NOT NULL DEFAULT 0")
   except sqlite3.OperationalError as exc:
