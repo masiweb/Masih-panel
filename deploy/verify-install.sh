@@ -33,6 +33,14 @@ db.close()
 PY
 echo "=== Extension Python syntax ==="
 python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,runtime_config}.py
+echo "=== Executable VPN hooks and QA client route helper ==="
+for helper in /opt/masiha-vpn-extension/vpn-account-hook.sh /opt/masiha-vpn-extension/test-oc-route.sh; do
+  [[ -x "$helper" ]] || {
+    echo "ERROR: helper script cannot execute: $helper" >&2
+    exit 1
+  }
+done
+echo "VPN helper file permissions: PASS"
 echo "=== Shared quota and Telegram commerce tests (isolated temporary SQLite) ==="
 (cd /opt/masiha-vpn-extension && python3 -m unittest -q test_unified.py test_sales.py)
 echo "=== Actual saved administrator login ==="
