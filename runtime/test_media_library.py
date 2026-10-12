@@ -162,6 +162,21 @@ class MediaQA(unittest.TestCase):
     self.assertEqual(lib._guess(message)[:2],("film","sendDocument"))
     self.assertEqual(lib._link_kind("https://example.com/film."+ext),"film")
 
+ def test_document_audio_video_reach_correct_bot_flow_without_upload_button(self):
+  with s.conn() as c:
+   for uid,filename,kind in [(101,"Test Song.OPUS","music"),(102,"Episode.01.MKV","film")]:
+    worker.handle(c,{"update_id":8500+uid,"message":{
+      "from":{"id":uid,"first_name":"Guest"},"chat":{"id":uid,"type":"private"},
+      "document":{"file_id":"f"+str(uid),"file_unique_id":"u"+str(uid),
+                  "file_name":filename,"mime_type":"application/octet-stream"}}})
+    row=c.execute("SELECT id,kind,status FROM media_items WHERE owner_id=?",(uid,)).fetchone()
+    self.assertEqual((row["kind"],row["status"]),(kind,"draft"))
+    self.assertTrue(c.execute("SELECT state FROM users WHERE id=?",(uid,)).fetchone()[0].startswith("med:meta:"))
+    lib.callback(c,uid,"med:finish:"+str(row["id"]))
+    lib.callback(c,uid,"med:publish:"+str(row["id"]))
+    self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(row["id"],)).fetchone()[0],"published")
+    self.assertFalse(any("حق انتشار" in p.get("text","") for p in self.payloads(c,uid)))
+
  def test_mime_only_and_conflicts_are_safe(self):
   for mime,kind in [("audio/mpeg","music"),("audio/x-flac","music"),
                     ("application/ogg","music"),("video/mp4","film"),
