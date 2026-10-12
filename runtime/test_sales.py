@@ -543,7 +543,8 @@ class Commerce(unittest.TestCase):
    buttons=[b.get("callback_data") for row in sent["reply_markup"]["inline_keyboard"] for b in row]
    self.assertNotIn("trial",buttons)
    self.assertIn("plans",buttons)
-   w.handle(c,{"update_id":43212,"callback_query":{
+   with patch.object(w,"telegram_channel_member",return_value=True):
+    w.handle(c,{"update_id":43212,"callback_query":{
      "from":{"id":98765432},"message":{"chat":{"id":98765432,"type":"private"}},"data":"plans"}})
    latest=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=98765432 ORDER BY id DESC LIMIT 1").fetchone()["payload"])
    self.assertIn("trial",[b["callback_data"] for row in latest["reply_markup"]["inline_keyboard"] for b in row])
