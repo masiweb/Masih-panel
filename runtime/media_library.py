@@ -386,11 +386,11 @@ def _preview(c,uid,row):
  comments=c.execute("SELECT COUNT(*) FROM media_comments WHERE media_id=? AND removed=0",(row["id"],)).fetchone()[0]
  caption=_media_summary(row)+"\n❤️ "+str(likes)+" | 💬 "+str(comments)
  if row["genre"]:caption+="\nسبک: "+row["genre"]
- if row["kind"]=="music" and row["lyrics"]:caption+="\nمتن: "+row["lyrics"][:330]
+ if row["kind"]=="music" and row["lyrics"]:caption+="\nمتن: "+row["lyrics"][:100]
  if row["kind"]=="film":
-  if row["actors"]:caption+="\nبازیگران: "+row["actors"][:180]
+  if row["actors"]:caption+="\nبازیگران: "+row["actors"][:95]
   if row["director"]:caption+="\nکارگردان: "+row["director"]
-  if row["description"]:caption+="\n"+row["description"][:230]
+  if row["description"]:caption+="\n"+row["description"][:120]
  return caption
 
 def play(c,uid,mid):
@@ -471,9 +471,9 @@ def _comment(c,uid,kind,id,body):
 def comments(c,uid,kind,id):
  if kind=="media":_media(c,id);table="media_comments";fk="media_id"
  else:_playlist(c,uid,id);table="playlist_comments";fk="playlist_id"
- rows=c.execute("SELECT user_id,body FROM "+table+" WHERE "+fk+"=? AND removed=0 ORDER BY id DESC LIMIT 12",(id,)).fetchall()
+ rows=c.execute("SELECT user_id,body FROM "+table+" WHERE "+fk+"=? AND removed=0 ORDER BY id DESC LIMIT 5",(id,)).fetchall()
  back="med:play:"+str(id) if kind=="media" else "med:pl:"+str(id)
- send(c,uid,"💬 تازه‌ترین نظرات:\n"+("\n\n".join("👤 "+str(r["user_id"])+": "+r["body"][:250] for r in rows) or "نظری ثبت نشده است"),
+ send(c,uid,"💬 نظرات:\n"+("\n\n".join("👤 "+str(r["user_id"])+": "+r["body"][:120] for r in rows) or "نظری ثبت نشده است"),
       [[("✍️ ثبت نظر","med:"+("comment:" if kind=="media" else "plcomment:")+str(id))],
        [("↩️ بازگشت",back)]])
 
@@ -583,7 +583,7 @@ def callback(c,uid,cmd):
   return playlist_view(c,uid,pid)
  if op=="remove":
   row=_owner(c,uid,int(x))
-  return send(c,uid,"⚠️ حذف این رسانه از فهرست عمومی قابل بازگشت نیست. مطمئن هستید؟",
+  return send(c,uid,"🗑 رسانه حذف شود؟",
     [[("بله، حذف رسانه","med:removeok:"+x),("نه، بازگشت","med:play:"+x)]])
  if op=="removeok":
   row=_owner(c,uid,int(x))
@@ -592,7 +592,7 @@ def callback(c,uid,cmd):
  if op=="plremove":
   p=_playlist(c,uid,int(x))
   if p["owner_id"]!=uid:raise ValueError("فقط مالک می‌تواند پلی‌لیست را حذف کند")
-  return send(c,uid,"⚠️ حذف پلی‌لیست قابل بازگشت نیست. مطمئن هستید؟",
+  return send(c,uid,"🗑 پلی‌لیست حذف شود؟",
     [[("بله، حذف پلی‌لیست","med:plremoveok:"+x),("نه، بازگشت","med:pl:"+x)]])
  if op=="plremoveok":
   p=_playlist(c,uid,int(x))
