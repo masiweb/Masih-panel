@@ -166,7 +166,7 @@ class _TelegramHTTPSHandler(urllib.request.HTTPSHandler):
    conn=http.client.HTTPSConnection(host,**kwargs)
    conn._create_connection=_telegram_connect
    return conn
-  return self.do_open(connection,req,context=self._context,check_hostname=self._check_hostname)
+  return self.do_open(connection,req,context=self._context)
 
 class _TelegramNoRedirect(urllib.request.HTTPRedirectHandler):
  def redirect_request(self,req,fp,code,msg,headers,newurl):
