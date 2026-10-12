@@ -2,6 +2,7 @@
 import base64, contextlib, fcntl, hashlib, io, json, os, re, secrets, time, urllib.request
 from sales import *
 from sales_bot_admin import main as admin_menu, callback as admin_callback, input_text as admin_text
+import entertainment
 def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
@@ -40,7 +41,8 @@ def home(c,uid):
     "SELECT 1 FROM orders WHERE user_id=? AND trial=1 LIMIT 1",(uid,)).fetchone():
   rows.append([("🎁 دریافت تست رایگان","trial")])
  if s["discounts"]:rows.append([("کد تخفیف / هدیه","coupon")])
- if s["referrals"]:rows.append([("دعوت دوستان","referral")])
+ if s["referrals"] or s.get("points_per_referral",0):rows.append([("دعوت دوستان","referral")])
+ rows.append([("🎮 سرگرمی و هوش مصنوعی","fun"),("⭐ امتیازات من","fun:points")])
  rows.append([("پشتیبانی","support")])
  if uid in s["admins"]:rows.append([("مدیریت فروش","admin")])
  welcome=bot_message(c,"home") if c.execute("SELECT 1 FROM message_templates WHERE id='home'").fetchone() else s["welcome"]
@@ -110,6 +112,7 @@ def handle(c,up):
   if contact.get("user_id")==uid and isinstance(contact.get("phone_number"),str) and len(contact["phone_number"])<=32:
    c.execute("UPDATE users SET phone=? WHERE id=?",(contact["phone_number"],uid))
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+   loyalty.referral(c,uid,s,now())
    enqueue(c,uid,bot_message(c,"contact_saved"))
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
      (secrets.token_hex(12),uid,"sendMessage",json.dumps({"chat_id":uid,"text":"✅","reply_markup":{"remove_keyboard":True}})))
@@ -118,10 +121,19 @@ def handle(c,up):
   else:
    payload={"chat_id":uid,"text":bot_message(c,"contact_prompt"),"reply_markup":{"keyboard":[[{"text":"ارسال شماره من","request_contact":True}]],"resize_keyboard":True,"one_time_keyboard":True}}
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"sendMessage",json.dumps(payload)));return
+ # Reward the inviter only when this account passed channel/phone gating.
+ # An idempotent ledger reference prevents duplicate points on /start retries.
+ loyalty.referral(c,uid,s,now())
  if new and s["new_user_notice"]:
   for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
- if not q and not body.startswith("/start") and u["state"]:
+ if body in ("🏠 منوی اصلی","منوی اصلی","/menu"):cmd="home"
+ if body in ("🎮 سرگرمی","سرگرمی"):cmd="fun"
+ if body in ("⭐ امتیازهای من","امتیازات من"):cmd="fun:points"
+ if not q and not body.startswith("/start") and cmd not in ("home","fun","fun:points") and u["state"]:
   state=u["state"]
+  if state=="ai:chat":
+   entertainment.ai_answer(c,uid,body,up["update_id"])
+   return
   if state.startswith("a:"):
    admin_text(c,uid,state,body,up["update_id"])
    return
@@ -218,7 +230,12 @@ def handle(c,up):
    ref="transfer:"+str(up["update_id"])
    money(c,uid,-amount,"transfer",ref+":out");money(c,target,amount,"transfer",ref+":in")
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,"انتقال انجام شد.");enqueue(c,target,"اعتبار دریافتی: "+str(amount)+" تومان");return
- if cmd.startswith("/start") or cmd=="home":home(c,uid)
+ if cmd.startswith("/start") or cmd=="home":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  home(c,uid)
+ elif cmd=="fun" or cmd.startswith("fun:"):
+  if cmd=="fun":c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  entertainment.callback(c,uid,cmd)
  elif cmd.startswith("a:"):
   admin_callback(c,uid,cmd)
  elif cmd=="plans":
@@ -307,8 +324,11 @@ def handle(c,up):
   c.execute("UPDATE users SET state=? WHERE id=?",(cmd,uid))
   enqueue(c,uid,{"topup":"مبلغ شارژ به تومان را وارد کنید.","transfer":"آیدی عددی گیرنده و مبلغ تومان را با فاصله ارسال کنید.","coupon":"کد تخفیف یا هدیه را بفرستید.","support":(bot_message(c,"support_prompt") if c.execute("SELECT 1 FROM message_templates WHERE id='support_prompt'").fetchone() else s["support"])}[cmd])
  elif cmd=="referral":
-  if not s["referrals"]:raise ValueError("زیرمجموعه غیرفعال")
-  enqueue(c,uid,"لینک دعوت شما:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+str(uid)+"\nکمیسیون: "+str(s["commission"])+"٪")
+  if not s["referrals"] and not s.get("points_per_referral",0):raise ValueError("سیستم دعوت دوستان غیرفعال است")
+  enqueue(c,uid,"لینک دعوت اختصاصی:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+str(uid)+
+   "\nامتیاز هر دعوت موفق: "+str(s["points_per_referral"])+
+   "\nکمیسیون خرید زیرمجموعه: "+(str(s["commission"])+"٪" if s["referrals"] else "غیرفعال"),
+   [[("⭐ امتیازهای من","fun:points"),("🏠 منوی اصلی","home")]])
  elif cmd=="admin":admin_menu(c,uid)
  elif cmd.startswith(("approve:","reject:")):
   if uid not in s["admins"]:raise ValueError("دسترسی مدیر لازم است")
