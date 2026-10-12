@@ -3,6 +3,7 @@
 import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, shlex, sqlite3, subprocess, sys, time, urllib.request, urllib.error, urllib.parse, uuid, unicodedata
 from pathlib import Path
 from runtime_config import DOMAIN, PUBLIC_PANEL_URL
+import gamification as loyalty
 BASE=Path(os.environ.get("MASIHA_SALES_DIR","/etc/masiha-vpn-extension/sales"))
 MESSAGE_DEFAULTS={
  "home":"به فروشگاه مسیحا خوش آمدید",
@@ -32,7 +33,7 @@ def bot_message(c,key,**values):
  except (KeyError,ValueError,AttributeError,IndexError):
   return MESSAGE_DEFAULTS[key].format_map(values)
 
-DEFAULT={"enabled":False,"token":"","admins":[],"welcome":"به فروشگاه مسیحا خوش آمدید","support":"برای پشتیبانی پیام خود را ارسال کنید.","card":"","channel":"","require_contact":False,"buy":True,"renew":True,"wallet":True,"transfer":False,"trial":False,"referrals":False,"commission":5,"discounts":True,"notifications":True,"self_delete":False,"reseller":False,"reseller_discount":10,"trial_plan":0,"warning_days":3,"usage_warning_percent":10,"report_channel":"","bulk":False,"rename":True,"rotate":False,"new_user_notice":True,"zarinpal":False,"merchant_id":""}
+DEFAULT={"enabled":False,"token":"","admins":[],"welcome":"به فروشگاه مسیحا خوش آمدید","support":"برای پشتیبانی پیام خود را ارسال کنید.","card":"","channel":"","require_contact":False,"buy":True,"renew":True,"wallet":True,"transfer":False,"trial":False,"referrals":False,"commission":5,"discounts":True,"notifications":True,"self_delete":False,"reseller":False,"reseller_discount":10,"trial_plan":0,"warning_days":3,"usage_warning_percent":10,"report_channel":"","bulk":False,"rename":True,"rotate":False,"new_user_notice":True,"zarinpal":False,"merchant_id":"","points_per_toman":100000,"points_per_purchase_unit":10,"points_per_referral":20,"ai_enabled":False,"ai_cost":5,"ai_api_url":"","ai_api_key":"","ai_model":""}
 def now():return int(time.time())
 def conn():
  BASE.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -57,6 +58,7 @@ def conn():
  CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,action TEXT,detail TEXT,created INTEGER);
  CREATE TABLE IF NOT EXISTS message_templates(id TEXT PRIMARY KEY,body TEXT NOT NULL);
  """)
+ loyalty.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
  if not any(col[1]=="is_trial" for col in c.execute("PRAGMA table_info(plans)")):
   try:c.execute("ALTER TABLE plans ADD COLUMN is_trial INTEGER NOT NULL DEFAULT 0")
@@ -194,6 +196,20 @@ def save_settings(c,r):
     membership=tg(s,"getChatMember",{"chat_id":v,"user_id":bot["id"]})
     if membership.get("status") not in ("administrator","creator"):
      raise ValueError("ربات باید ابتدا مدیر کانال عضویت اجباری شود")
+  elif k=="ai_api_key":
+   # Never erase previously saved secrets on a regular settings save.
+   if not v:continue
+   if not isinstance(v,str) or not 12<=len(v)<=256 or any(ord(x)<33 or ord(x)>126 for x in v):
+    raise ValueError("کلید API هوش مصنوعی نامعتبر است")
+  elif k=="ai_api_url":
+   if v:
+    v=text(v,300)
+    # Validate without contacting an untrusted host at form submission.
+    parsed=urllib.parse.urlparse(v)
+    if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:
+     raise ValueError("API هوش مصنوعی باید آدرس HTTPS عمومی باشد")
+  elif k=="ai_model":
+   v=text(v,100)
   elif k=="merchant_id":
    if not v:continue
    try:v=str(uuid.UUID(v))
@@ -208,6 +224,8 @@ def save_settings(c,r):
   s[k]=v
  if s["zarinpal"] and not s["merchant_id"]:s["zarinpal"]=False
  if s["enabled"] and (not s["token"] or not s["admins"]):raise ValueError("ابتدا توکن و آیدی مدیر را ثبت کنید")
+ if s["ai_enabled"] and not all(s.get(v) for v in ("ai_api_url","ai_api_key","ai_model")):
+  raise ValueError("برای فعال‌سازی AI ابتدا آدرس API، کلید و مدل را در پنل وب وارد کنید")
  if s["enabled"]:
   me=tg(s,"getMe",{});tg(s,"deleteWebhook",{"drop_pending_updates":False});put(c,"bot_username",me["username"])
  for k in DEFAULT:put(c,k,s[k])
@@ -328,7 +346,9 @@ def provision(c,o):
   vpn({"protocol":p["protocol"],"action":"update" if exists else "create","username":name,"password":data["password"] if p["protocol"]=="openconnect" else "","enabled":True,"expires":target})
  c.execute("INSERT OR REPLACE INTO services VALUES(?,?,?,?,?,?,?,0)",(sid,uid,p["protocol"],name,o["plan"],target,json.dumps(data)))
  c.execute("UPDATE orders SET status='fulfilled',error='' WHERE id=?",(o["id"],))
- s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
+ s=settings(c)
+ loyalty.purchase(c,dict(o)|{"status":"fulfilled"},s,now())
+ u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if s["referrals"] and u["referrer"] and o["price"]:
   money(c,u["referrer"],o["price"]*s["commission"]//100,"commission",o["id"]+":commission")
  enqueue(c,uid,bot_message(c,"service_ready",name=data["label"]),[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
@@ -442,8 +462,8 @@ def admin(req):
   c.execute("BEGIN IMMEDIATE")
   a=req.get("action");s=settings(c)
   if a=="get":
-   safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"])
-   return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0],"message_templates":{key:(c.execute("SELECT body FROM message_templates WHERE id=?",(key,)).fetchone() or {"body":default})["body"] for key,default in MESSAGE_DEFAULTS.items()},"message_defaults":MESSAGE_DEFAULTS}
+   safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id","ai_api_key")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"]);safe["ai_api_key_set"]=bool(s.get("ai_api_key"))
+   return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0],"message_templates":{key:(c.execute("SELECT body FROM message_templates WHERE id=?",(key,)).fetchone() or {"body":default})["body"] for key,default in MESSAGE_DEFAULTS.items()},"message_defaults":MESSAGE_DEFAULTS,"loyalty":{"total_users_with_points":c.execute("SELECT COUNT(DISTINCT user_id) FROM loyalty_points").fetchone()[0],"total_awarded":c.execute("SELECT COALESCE(SUM(points),0) FROM loyalty_points WHERE points>0").fetchone()[0],"recent":[dict(r) for r in c.execute("SELECT user_id,points,kind,created FROM loyalty_points ORDER BY id DESC LIMIT 30")]}}
   if a=="settings":return save_settings(c,req["values"])
   if a=="message_templates":
    values=req.get("values")
