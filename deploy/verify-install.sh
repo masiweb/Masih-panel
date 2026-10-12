@@ -18,7 +18,12 @@ if os.environ.get('MASIHA_EXPECT_DEFAULT_INBOUNDS')=='1':
  expected={8443:'vless',8444:'vless',8445:'vmess',8446:'trojan',8447:'vless',8448:'vless'}
  ports={int(port):proto for port,proto,enabled in rows if enabled}
  assert all(ports.get(port)==proto for port,proto in expected.items()),"Missing enabled default inbound(s)"
- print("Six preset inbounds: PASS")
+ print("Six baseline preset inbounds: PASS")
+if os.environ.get('MASIHA_EXPECT_EXTRA_INBOUNDS')=='1':
+ expected_extra={8449:'shadowsocks',8450:'vless',8451:'vless'}
+ ports={int(port):proto for port,proto,enabled in rows if enabled}
+ assert all(ports.get(port)==proto for port,proto in expected_extra.items()),"Missing additional Shadowsocks/XHTTP inbound(s)"
+ print("Three additional Shadowsocks/XHTTP inbounds: PASS")
 settings=dict(db.execute("SELECT key,value FROM settings WHERE key IN ('subURI','subPath','subPort','subListen','subEnable')"))
 print("Subscription enabled:",settings.get('subEnable'))
 if os.environ.get('MASIHA_EXPECT_DEFAULT_INBOUNDS')=='1':
