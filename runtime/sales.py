@@ -82,7 +82,7 @@ def integer(x,lo=0,hi=10**12):
 def text(x,n=4000):
  if not isinstance(x,str) or len(x)>n:raise ValueError("متن نامعتبر است")
  return x.strip()
-def enqueue(c,chat,body,keys=None,key=None):
+def enqueue(c,chat,body,keys=None,key=None,quick_nav=True):
  """Always preserve navigation; text-entry stages show only a Back control."""
  p={"chat_id":chat,"text":body[:4000]}
  buttons=[list(row) for row in (keys or [])]
@@ -96,8 +96,9 @@ def enqueue(c,chat,body,keys=None,key=None):
        ("↩️ بازگشت به سرگرمی","fun") if state.startswith("ai:") else ("↩️ انصراف / منوی اصلی","home"))
    if back[1] not in callbacks and not any(v in callbacks for v in ("a:home","home","fun")):
     buttons.append([back])
-  else:
-   # On every ordinary response keep the main navigation readily visible.
+  elif quick_nav:
+   # On regular replies preserve quick navigation; the main menu itself
+   # intentionally has exactly the user's requested compact button order.
    quick=[(label,callback) for label,callback in [
       ("🏠 منوی اصلی","home"),("🎮 سرگرمی","fun"),("⭐ امتیازها","fun:points")
    ] if callback not in callbacks]
