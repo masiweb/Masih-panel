@@ -37,7 +37,7 @@ if os.environ.get('MASIHA_EXPECT_DEFAULT_INBOUNDS')=='1':
 db.close()
 PY
 echo "=== Extension Python syntax ==="
-python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,sales_bot_admin,gamification,entertainment,runtime_config}.py
+python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,sales_bot_admin,gamification,entertainment,media_library,runtime_config}.py
 echo "=== Executable VPN hooks and QA client route helper ==="
 for helper in /opt/masiha-vpn-extension/vpn-account-hook.sh /opt/masiha-vpn-extension/test-oc-route.sh; do
   [[ -x "$helper" ]] || {
@@ -47,7 +47,7 @@ for helper in /opt/masiha-vpn-extension/vpn-account-hook.sh /opt/masiha-vpn-exte
 done
 echo "VPN helper file permissions: PASS"
 echo "=== Shared quota and Telegram commerce tests (isolated temporary SQLite) ==="
-(cd /opt/masiha-vpn-extension && python3 -m unittest -q test_unified.py test_sales.py)
+(cd /opt/masiha-vpn-extension && python3 -m unittest -q test_unified.py test_sales.py test_media_library.py)
 echo "=== Actual saved administrator login ==="
 python3 "$(cd "$(dirname "$0")/.." && pwd)/deploy/check-panel-login.py"
 echo "=== Isolated native x-ui authenticated API smoke ==="
