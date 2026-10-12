@@ -41,7 +41,6 @@ class MediaQA(unittest.TestCase):
  def publish(self,c,uid,mid):
   lib.callback(c,uid,"med:finish:"+str(mid))
   lib.callback(c,uid,"med:publish:"+str(mid))
-  lib.callback(c,uid,"med:confirm:"+str(mid))
  def playlist(self,c,uid=101,kind="music",private=False,name="My Mix"):
   lib.callback(c,uid,"med:plnew:"+kind+":"+str(int(private)))
   lib.text_input(c,uid,"med:plnew:"+kind+":"+str(int(private)),{"text":name},4000)
@@ -56,7 +55,7 @@ class MediaQA(unittest.TestCase):
    self.assertTrue(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0].startswith("med:meta:"))
    self.assertTrue(self.payloads(c,101))
 
- def test_metadata_is_optional_and_rewards_only_after_rights_confirm(self):
+ def test_metadata_is_optional_and_rewards_on_direct_publication(self):
   with s.conn() as c:
    mid=self.upload(c)
    lib.set_field(c,101,mid,0,"My track")
@@ -64,9 +63,11 @@ class MediaQA(unittest.TestCase):
    self.assertEqual(points.balance(c,101),0)
    lib.callback(c,101,"med:finish:"+str(mid))
    lib.callback(c,101,"med:publish:"+str(mid))
-   self.assertEqual(points.balance(c,101),0)
-   lib.callback(c,101,"med:confirm:"+str(mid))
    self.assertEqual(points.balance(c,101),4)
+   row=c.execute("SELECT status,rights_ok FROM media_items WHERE id=?",(mid,)).fetchone()
+   self.assertEqual(tuple(row),("published",0))
+   with self.assertRaises(ValueError):
+    lib.callback(c,101,"med:confirm:"+str(mid))
    lib.play(c,102,mid)
    sent=c.execute("SELECT method,payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()
    self.assertEqual(sent[0],"sendAudio")
@@ -88,8 +89,8 @@ class MediaQA(unittest.TestCase):
    lib.set_field(c,101,mid,2,"2")
    lib.set_field(c,101,mid,3,"8")
    lib._cover(c,101,mid,{"photo":[{"file_id":"COVER_TELEGRAM_ID"}]})
-   lib.callback(c,101,"med:confirm:"+str(mid))
    row=c.execute("SELECT * FROM media_items WHERE id=?",(mid,)).fetchone()
+   self.assertEqual(row["status"],"published")
    self.assertEqual(row["media_type"],"series")
    self.assertEqual((row["season"],row["episode"]),(2,8))
    self.assertEqual(row["cover_id"],"COVER_TELEGRAM_ID")
@@ -141,6 +142,67 @@ class MediaQA(unittest.TestCase):
    self.assertEqual(tuple(row),("film","link"))
   self.assertFalse(lib.is_media_message({"text":"https://example.org/ordinary-page"}))
   self.assertFalse(lib.is_media_message({"voice":{"file_id":"v","file_unique_id":"u"}}))
+
+ def test_audio_formats_detected_as_telegram_documents(self):
+  for ext in sorted(lib.AUDIO_EXTENSIONS):
+   with self.subTest(ext=ext):
+    message={"document":{"file_id":"file-"+ext,"file_unique_id":"u-"+ext,
+          "file_name":"آهنگ.Sample."+ext.upper(),"mime_type":"application/octet-stream"}}
+    self.assertTrue(lib.is_media_message(message))
+    kind,method,_=lib._guess(message)
+    self.assertEqual((kind,method),("music","sendDocument"))
+    self.assertEqual(lib._link_kind("https://example.com/music."+ext.upper()+"?q=1"),"music")
+
+ def test_video_formats_detected_as_telegram_documents(self):
+  for ext in sorted(lib.VIDEO_EXTENSIONS):
+   with self.subTest(ext=ext):
+    message={"document":{"file_id":"video-"+ext,"file_unique_id":"v-"+ext,
+          "file_name":"movie.S02.E03."+ext.upper(),"mime_type":"application/octet-stream"}}
+    self.assertTrue(lib.is_media_message(message))
+    self.assertEqual(lib._guess(message)[:2],("film","sendDocument"))
+    self.assertEqual(lib._link_kind("https://example.com/film."+ext),"film")
+
+ def test_mime_only_and_conflicts_are_safe(self):
+  for mime,kind in [("audio/mpeg","music"),("audio/x-flac","music"),
+                    ("application/ogg","music"),("video/mp4","film"),
+                    ("video/x-matroska","film"),("application/x-matroska","film")]:
+   with self.subTest(mime=mime):
+    m={"document":{"file_id":"fid","file_unique_id":"unique",
+       "mime_type":mime}}
+    self.assertEqual(lib._guess(m)[0],kind)
+  self.assertFalse(lib.is_media_message({"document":{
+      "file_id":"fake","file_unique_id":"f","file_name":"malware.exe","mime_type":"audio/mpeg"}}))
+  self.assertFalse(lib.is_media_message({"document":{
+      "file_id":"fake","file_unique_id":"f","file_name":"track.mp3","mime_type":"video/mp4"}}))
+  with self.assertRaises(ValueError):
+   lib._guess({"document":{"file_id":"x","file_unique_id":"y","file_name":"music.flac"}},expected="film")
+
+ def test_no_permission_stage_and_short_messages(self):
+  with s.conn() as c:
+   mid=self.upload(c)
+   prompts=self.payloads(c,101)
+   self.assertTrue(prompts)
+   self.assertLess(len(prompts[-1]["text"]),95)
+   lib.callback(c,101,"med:finish:"+str(mid))
+   prompt=self.payloads(c,101)[-1]
+   self.assertLess(len(prompt["text"]),95)
+   self.assertNotIn("med:confirm",str(prompt))
+   lib.callback(c,101,"med:publish:"+str(mid))
+   post=self.payloads(c,101)[-1]
+   self.assertIn("✅",post["text"])
+   self.assertLess(len(post["text"]),70)
+   self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(mid,)).fetchone()[0],"published")
+   self.assertFalse(any("حق انتشار" in p.get("text","") for p in self.payloads(c,101)))
+
+ def test_old_rights_state_and_confirm_button_remain_compatible(self):
+  with s.conn() as c:
+   mid=self.upload(c)
+   c.execute("UPDATE users SET state=? WHERE id=101",("med:rights:"+str(mid),))
+   lib.text_input(c,101,"med:rights:"+str(mid),{"text":"hello"},471)
+   self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(mid,)).fetchone()[0],"published")
+   mid2=self.upload(c,message=self.audio("newfile","new-unique"))
+   lib.callback(c,101,"med:confirm:"+str(mid2))
+   self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(mid2,)).fetchone()[0],"published")
 
  def test_public_private_playlists_and_membership_invite(self):
   with s.conn() as c:
