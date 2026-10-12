@@ -82,14 +82,18 @@ def enqueue(c,chat,body,keys=None,key=None):
  if user:
   state=user["state"] or ""
   callbacks={callback for row in buttons for label,callback in row}
-  if state.startswith("a:"):
-   back=("↩️ بازگشت به مدیریت","a:home")
-  elif state.startswith("ai:"):
-   back=("↩️ بازگشت به سرگرمی","fun")
+  if state:
+   # Waiting for a text answer: no full navigation row, only cancel/back.
+   back=("↩️ بازگشت به مدیریت","a:home") if state.startswith("a:") else (
+       ("↩️ بازگشت به سرگرمی","fun") if state.startswith("ai:") else ("↩️ انصراف / منوی اصلی","home"))
+   if back[1] not in callbacks and not any(v in callbacks for v in ("a:home","home","fun")):
+    buttons.append([back])
   else:
-   back=("🏠 منوی اصلی","home")
-  if back[1] not in callbacks and not any(v in callbacks for v in ("a:home","home","fun")):
-   buttons.append([back])
+   # On every ordinary response keep the main navigation readily visible.
+   quick=[(label,callback) for label,callback in [
+      ("🏠 منوی اصلی","home"),("🎮 سرگرمی","fun"),("⭐ امتیازها","fun:points")
+   ] if callback not in callbacks]
+   if quick:buttons.append(quick)
  if buttons:p["reply_markup"]={"inline_keyboard":[[{"text":a,"callback_data":b} for a,b in row] for row in buttons]}
  c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(key or secrets.token_hex(12),chat,"sendMessage",json.dumps(p,ensure_ascii=False)))
 def money(c,uid,amount,reason,ref):
