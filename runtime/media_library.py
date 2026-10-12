@@ -32,7 +32,7 @@ def setup(c):
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_id INTEGER NOT NULL,
   kind TEXT NOT NULL CHECK(kind IN ('music','film')),
-  telegram_method TEXT NOT NULL CHECK(telegram_method IN ('sendAudio','sendVideo','sendDocument','link')),
+  telegram_method TEXT NOT NULL CHECK(telegram_method IN ('sendAudio','sendVoice','sendVideo','sendVideoNote','sendDocument','link')),
   file_id TEXT NOT NULL DEFAULT '',
   unique_id TEXT NOT NULL,
   source_url TEXT NOT NULL DEFAULT '',
@@ -151,7 +151,7 @@ def _playlist(c,uid,pid):
 def _queue_file(c,uid,method,file_id,caption,buttons):
  if method=="link":
   raise AssertionError("use send for external URLs")
- field={"sendAudio":"audio","sendVideo":"video","sendDocument":"document"}[method]
+ field={"sendAudio":"audio","sendVoice":"voice","sendVideo":"video","sendVideoNote":"video_note","sendDocument":"document"}[method]
  markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in row] for row in buttons]}
  payload={"chat_id":uid,field:file_id,"caption":caption[:950],"reply_markup":markup}
  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
@@ -213,8 +213,8 @@ def _url(value):
 
 def _guess(message,expected=None):
  """Telegram-native file only; reject arbitrary documents & animated GIFs."""
- for key,method,kind in (("audio","sendAudio","music"),("voice","sendAudio","music"),
-                          ("video","sendVideo","film"),("video_note","sendVideo","film")):
+ for key,method,kind in (("audio","sendAudio","music"),("voice","sendVoice","music"),
+                          ("video","sendVideo","film"),("video_note","sendVideoNote","film")):
   part=message.get(key)
   if isinstance(part,dict) and part.get("file_id") and part.get("file_unique_id"):
    if expected and expected!=kind:raise ValueError("فرمت فایل با بخش انتخابی مطابقت ندارد")
@@ -286,13 +286,19 @@ def _daily_points(c,uid,kind):
  return c.execute("SELECT COALESCE(SUM(points),0) FROM loyalty_points WHERE user_id=? AND kind=? AND created>=?",
                   (uid,kind,start)).fetchone()[0]
 
-def _award_metadata(c,uid,mid,field):
- import gamification
+def _mark_metadata(c,mid,field):
+ # Merely records a completed field; points are NOT awarded for draft content.
+ c.execute("INSERT OR IGNORE INTO media_metadata_reward(media_id,field) VALUES(?,?)",(mid,field))
+
+def _reward_published_metadata(c,uid,mid):
+ from gamification import award
  points=setting(c,"field_points")
- if points<=0 or _daily_points(c,uid,"media_metadata")>=DAILY_METADATA_LIMIT:return
- if c.execute("INSERT OR IGNORE INTO media_metadata_reward(media_id,field) VALUES(?,?)",(mid,field)).rowcount:
-  grant=min(points,DAILY_METADATA_LIMIT-_daily_points(c,uid,"media_metadata"))
-  gamification.award(c,uid,grant,"media_metadata","metadata:"+str(mid)+":"+field,_sales().now())
+ if not points:return
+ fields=c.execute("SELECT field FROM media_metadata_reward WHERE media_id=?",(mid,)).fetchall()
+ for (field,) in fields:
+  available=DAILY_METADATA_LIMIT-_daily_points(c,uid,"media_metadata")
+  if available<=0:break
+  award(c,uid,min(points,available),"media_metadata","metadata:"+str(mid)+":"+field,_sales().now())
 
 def set_field(c,uid,mid,step,value):
  row=_owner(c,uid,mid,True)
@@ -312,7 +318,7 @@ def set_field(c,uid,mid,step,value):
    if value not in ("بله","خیر","yes","no","true","false"):raise ValueError("بله یا خیر وارد کنید")
    value="بله" if value in ("بله","yes","true") else "خیر"
   c.execute("UPDATE media_items SET "+key+"=? WHERE id=?",(value,mid))
-  _award_metadata(c,uid,mid,key)
+  _mark_metadata(c,mid,key)
  nextrow=c.execute("SELECT * FROM media_items WHERE id=?",(mid,)).fetchone()
  _prompt(c,uid,nextrow,step+1)
 
@@ -323,7 +329,7 @@ def _cover(c,uid,mid,message):
  if not photos or not photos[-1].get("file_id"):
   raise ValueError("تصویر کاور را به‌صورت عکس تلگرام بفرستید یا «ثبت بدون کاور» را بزنید")
  c.execute("UPDATE media_items SET cover_id=? WHERE id=?",(photos[-1]["file_id"],mid))
- _award_metadata(c,uid,mid,"cover")
+ _mark_metadata(c,mid,"cover")
  return _ready(c,uid,mid)
 
 def _ready(c,uid,mid):
@@ -465,6 +471,9 @@ def callback(c,uid,cmd):
  parts=cmd.split(":")
  if len(parts)<2 or parts[0]!="med":raise ValueError("فرمان رسانه نامعتبر است")
  op=parts[1];x=parts[2] if len(parts)>2 else ""
+ if op in ("music","film","latest","mine","top","lists","plfeed","plmine","pltop",
+           "leaders","play","comments","plcomments","pl","addmenu"):
+  _state(c,uid,"")
  if op in ("music","film"):return kind_menu(c,uid,op)
  if op=="upload" and x in FIELDS:
   _state(c,uid,"med:upload:"+x)
@@ -557,6 +566,7 @@ def callback(c,uid,cmd):
   row=_owner(c,uid,int(x),True)
   if row["status"]!="draft":raise ValueError("رسانه قبلاً منتشر شده")
   c.execute("UPDATE media_items SET status='published',rights_ok=1 WHERE id=?",(row["id"],))
+  _reward_published_metadata(c,uid,row["id"])
   _state(c,uid,"")
   send(c,uid,"✅ "+GENRE_LABEL[row["kind"]]+" با موفقیت منتشر شد. برای اطلاعات اختیاری هر فیلد پاداش جداگانه دریافت می‌کنید.",
        [[("▶️ پخش رسانه","med:play:"+x),("➕ به پلی‌لیست","med:addmenu:"+x)],
