@@ -79,6 +79,40 @@ sudo bash deploy/finalize-ubuntu-24.04.sh --resume
 
 **محدودیت تست:** صدور واقعی CA، گواهی سرور و CRL با Easy-RSA و شرط محافظت از سرور فعال جداگانه تأیید شده‌اند؛ اجرای end-to-end روی همان سرور تازه هنوز از راه دور تأیید نشده است.
 
+### نصب پس از «Native x-ui administrator persisted in SQLite: PASS» متوقف شد
+
+اگر پس از ساخت گواهی OpenVPN، ایجاد شش inbound و پیام موفقیت تأیید نام کاربری در SQLite، این خطا ظاهر شد:
+
+```text
+=== Verify real administrator login before enabling commerce ===
+ERROR: initial admin login verification failed
+ERROR: Masiha finalization failed
+```
+
+**این خطا به معنی شکست صدور گواهی یا ساخت اینباندها نیست**. در نسخه قبلی، اسکریپت بلافاصله پس از `systemctl start x-ui` تلاش می‌کرد وارد HTTP پنل شود؛ systemd ممکن است قبل از آماده‌شدن endpoint ورود، سرویس را `active` اعلام کند. این مرحله همچنین در صورت خطای واقعی سرویس یا ناسازگاری رمز شکست می‌خورد.
+
+در نسخه جدید، `deploy/check-panel-login.py` تا **۹۰ ثانیه فقط endpoint بدون احراز هویت CSRF** را بررسی می‌کند. پس از آماده‌شدن، **تنها یک درخواست ورود با رمز ذخیره‌شده** می‌فرستد تا تلاش‌های تکراری به قفل موقت ورود منجر نشوند. در صورت شکست، وضعیت سرویس و پورت `62053` چاپ می‌شود و نصب ناقص باقی می‌ماند تا بتوان بدون پاک‌کردن CA و SSL ادامه داد.
+
+**برای ادامه نصب نیمه‌تمام** (نه نصب جدید)، در اتصال SSH سرور:
+
+```bash
+cd ~/Masih-panel
+git pull --ff-only origin main
+sudo bash deploy/finalize-ubuntu-24.04.sh --resume
+```
+
+از اجرای دوباره `install-ubuntu-24.04.sh`، حذف دیتابیس x-ui، پاک‌کردن PKI یا درخواست دوباره گواهی خودداری کنید. نصب‌کننده اکنون وجود marker امن `/etc/masiha-vpn-extension/.finalize-in-progress` را پیش از پرسیدن دامنه تشخیص می‌دهد و شما را به `--resume` راهنمایی می‌کند.
+
+اگر پس از اصلاح همچنان پنل به HTTP محلی پاسخ نداد، ابتدا **بدون نمایش اطلاعات ورود** وضعیت را بررسی کنید:
+
+```bash
+sudo systemctl status x-ui.service --no-pager -l
+sudo ss -lntp | grep ':62053' || true
+sudo journalctl -u x-ui.service -n 40 --no-pager
+```
+
+در گزارش‌هایی که ارسال می‌کنید، رمزها، توکن‌های پنل و جزئیات خصوصی کلاینت‌ها را حذف کنید. `sudo bash deploy/check-panel-login.py` نیز به‌تنهایی می‌تواند تأیید کند که فایل root-only با حساب مدیر زنده سازگار است یا نه.
+
 ### مشکل ورود مدیر پس از نصب (فایل اولیه با دیتابیس یکسان نیست)
 
 در آزمون واقعی `exon`، نصب‌کننده قدیمی پیام «Username and password updated successfully» را نشان داده و فایل `/root/masiha-vpn-initial-login.env` را با کاربر `admin` ذخیره کرده بود، اما دیتابیس فعال x-ui هنوز نام کاربری تصادفی ایجادشده توسط نصب‌کننده upstream را داشت؛ بنابراین ورود مدیر ناموفق و به‌علت تلاش‌های تکراری، IP داخلی پنل به‌طور موقت محدود شده بود.
