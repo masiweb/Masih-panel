@@ -168,7 +168,7 @@ ufw allow 443/tcp >/dev/null
 ufw allow 1194/udp >/dev/null
 ufw allow 4443/tcp >/dev/null
 ufw allow 4443/udp >/dev/null
-for xray_port in 8443 8444 8445 8446 8447 8448; do
+for xray_port in 8443 8444 8445 8446 8447 8448 8449 8450 8451; do
   ufw allow "$xray_port/tcp" >/dev/null
 done
 systemctl daemon-reload
@@ -207,6 +207,9 @@ finally:
  db.close()
 PY
 python3 "$REPO_ROOT/deploy/bootstrap-inbounds.py" \
+  --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
+  --xray /usr/local/x-ui/bin/xray-linux-amd64
+python3 "$REPO_ROOT/deploy/extend-inbounds.py" \
   --db /etc/x-ui/x-ui.db --domain "$DOMAIN" \
   --xray /usr/local/x-ui/bin/xray-linux-amd64
 # The upstream installer creates a RANDOM admin account. An earlier 'setting'
@@ -262,6 +265,6 @@ printf ' HTTPS SSL : Let\047s Encrypt (%s)\n' "$DOMAIN"
 printf ' Recovery  : /root/masiha-vpn-initial-login.env (root only)\n'
 printf '===============================================\n'
 printf ' Subscription : https://%s/sub/ (configured automatically)\n' "$DOMAIN"
-printf ' Xray Presets : 6 TCP inbounds (8443-8448), firewall rules created\n'
+printf ' Xray Presets : 9 inbounds (8443-8451; Shadowsocks supports UDP), firewall rules created\n'
 printf ' Next         : Configure Telegram BotFather token/admins/plans in the sales UI.\n'
 
