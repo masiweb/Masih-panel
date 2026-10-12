@@ -226,10 +226,21 @@ PY
 # Starting here also loads the patched Masiha binary instead of the
 # original upstream installer process.
 systemctl enable --now x-ui.service
-# Verify the LIVE login before the commerce worker starts: repeated failed
-# internal logins otherwise block the localhost IP for several minutes.
+# systemd "active" is NOT the same as HTTP/CSRF login readiness. The checker
+# polls the unauthenticated endpoint for up to 90 seconds, then sends exactly
+# ONE login request. Do not start the commerce worker until login is verified.
 echo "=== Verify real administrator login before enabling commerce ==="
-python3 "$REPO_ROOT/deploy/check-panel-login.py"
+if ! MASIHA_PANEL_READY_TIMEOUT=90 python3 "$REPO_ROOT/deploy/check-panel-login.py"; then
+  echo "ERROR: Native x-ui did not pass real admin authentication." >&2
+  echo "Current x-ui service state: $(systemctl is-active x-ui.service || true)" >&2
+  echo "Checking whether port 62053 is accepting local connections:" >&2
+  ss -lnt '( sport = :62053 )' || true
+  echo "Installation is INCOMPLETE; no credentials have been printed as valid." >&2
+  echo "Do not repeat the fresh installer. After fixing the service, use:" >&2
+  echo "  sudo bash deploy/finalize-ubuntu-24.04.sh --resume" >&2
+  echo "The root-only interrupted-install marker remains for safe resumption." >&2
+  exit 1
+fi
 # Native upstream installer had already started x-ui before its binary was replaced.
 systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
