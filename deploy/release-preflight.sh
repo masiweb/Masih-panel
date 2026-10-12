@@ -9,7 +9,7 @@ for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/b
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/test_extend_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/test_extend_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -36,13 +36,13 @@ if [[ -n "${MASIHA_CHECK_SOURCE:-}" ]]; then
   git -C "$MASIHA_CHECK_SOURCE" apply --reverse --check "$ROOT/deploy/3x-ui.patch"
   echo "Pinned upstream source and full applied patch match"
 fi
-(cd runtime && python3 -m unittest -q test_sales.py test_unified.py)
+(cd runtime && python3 -m unittest -q test_sales.py test_unified.py test_media_library.py)
 echo "PASS: sales, named checkout, trials, Telegram and quota tests"
 # Check exact key shell scripts and source files required at deployment time.
 for f in runtime/manager.py runtime/unified.py runtime/worker.py runtime/sales.py \
-         runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/runtime_config.py \
+         runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/runtime_config.py \
          runtime/vpn-account-hook.sh runtime/smoke_panel.py \
-         runtime/test_sales.py runtime/test_unified.py \
+         runtime/test_sales.py runtime/test_media_library.py runtime/test_unified.py \
          deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/check-panel-login.py \
          deploy/repair-panel-login.sh deploy/finalize-ubuntu-24.04.sh \
          deploy/3x-ui.patch; do
