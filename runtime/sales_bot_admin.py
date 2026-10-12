@@ -52,6 +52,70 @@ def main(c,uid):
   [("پیام‌های ارسال‌نشده","a:outbox"),("گزارش مالی","a:finance")],
   [("🚩 گزارش‌های موزیک و فیلم","medadmin:reports")],
   [("آدرس پنل وب","a:web")]])
+def queue_receipt_review(c,admin_id,receipt_id):
+ """Queue receipt proof FIRST, then account/service details with approval keys.
+
+ Reuses this exact presentation for initial notifications and reopened
+ pending receipts. Approval and rejection stay in decide_receipt().
+ """
+ ensure_admin(c,admin_id)
+ ident=integer(int(receipt_id),1)
+ receipt=c.execute("SELECT * FROM topups WHERE id=? AND status='pending'",(ident,)).fetchone()
+ if not receipt:raise ValueError("رسید در انتظار یافت نشد")
+ user=c.execute("SELECT * FROM users WHERE id=?",(receipt["user_id"],)).fetchone()
+ linked=c.execute("SELECT order_id FROM receipt_orders WHERE topup_id=?",(ident,)).fetchone()
+ order=(c.execute("SELECT * FROM orders WHERE id=?",(linked["order_id"],)).fetchone()
+        if linked else None)
+ if linked and (not order or order["user_id"]!=receipt["user_id"]
+                or order["price"]!=receipt["amount"]):
+  raise ValueError("اطلاعات سفارش با رسید مطابقت ندارد")
+ # Image or document is a separate first message. For text-only receipts,
+ # show the submitted text first, with the same second review card.
+ proof=receipt["receipt"] or ""
+ kind,separator,file_id=proof.partition(":")
+ if kind in ("photo","document") and separator and file_id:
+  method="sendPhoto" if kind=="photo" else "sendDocument"
+  payload={"chat_id":admin_id,kind:file_id}
+  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+    (secrets.token_hex(12),admin_id,method,json.dumps(payload,ensure_ascii=False)))
+ else:
+  # Some historical receipts contain text or a reference instead of an image.
+  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+    (secrets.token_hex(12),admin_id,"sendMessage",json.dumps({
+     "chat_id":admin_id,"text":"🧾 رسید: "+(proof[:1800] if proof else "تصویر موجود نیست")
+    },ensure_ascii=False)))
+ name=(user["name"] if user and user["name"] else "ثبت نشده")
+ phone=(user["phone"] if user and user["phone"] else "ثبت نشده")
+ username=(user["telegram_username"] if user and user["telegram_username"] else "")
+ # A username can be absent/changed; never invent one from the numeric ID.
+ username="@"+username.lstrip("@") if username else "ثبت نشده"
+ lines=["🧾 بررسی رسید #"+str(ident),
+   "👤 نام: "+name[:100],
+   "📱 موبایل: "+phone[:40],
+   "🔗 تلگرام: "+username[:35],
+   "🆔 شناسه عددی: "+str(receipt["user_id"]),
+   "💰 مبلغ: "+format(receipt["amount"],",")+" تومان"]
+ if order:
+  try:p=json.loads(order["plan"])
+  except (TypeError,ValueError):p={}
+  quota=str(p.get("gb") or 0)
+  lines.extend([
+   "📦 اشتراک درخواستی: "+str(p.get("_display_name") or p.get("name") or "نامشخص")[:100],
+   "پلن: "+str(p.get("name") or "نامشخص")[:90],
+   "نوع: "+str(p.get("protocol") or "نامشخص"),
+   "مدت: "+str(p.get("days") or 0)+" روز",
+   "حجم: "+(quota+" گیگابایت" if quota!="0" else "نامحدود"),
+   "سفارش: "+str(order["id"])[:110],
+   "عملیات: "+("تمدید" if order["renew_id"] else "اشتراک جدید")
+  ])
+ else:
+  lines.append("📦 نوع درخواست: شارژ کیف پول")
+ # The inline controls are attached only to the second, information message.
+ send(c,admin_id,"\n".join(lines),[
+  [("✅ تأیید","approve:"+str(ident)),("❌ رد","reject:"+str(ident))],
+  [("↩️ رسیدهای در انتظار","a:receipts")]
+ ])
+
 def back():return [[("بازگشت به مدیریت","a:home")]]
 
 def plan_line(p):
@@ -232,11 +296,7 @@ def callback(c,uid,cmd):
   rows=[[(str(r["id"])+" / "+str(r["amount"])+" تومان","a:receipt:"+str(r["id"]))] for r in c.execute("SELECT id,amount FROM topups WHERE status='pending' LIMIT 30")]
   return send(c,uid,"رسیدهای در انتظار",rows+back())
  if op=="receipt":
-  rid=integer(int(ident),1)
-  row=c.execute("SELECT * FROM topups WHERE id=? AND status='pending'",(rid,)).fetchone()
-  if not row:raise ValueError("رسید در انتظار یافت نشد")
-  return send(c,uid,"رسید "+str(rid)+" | "+str(row["amount"])+" تومان | کاربر "+str(row["user_id"]),[
-   [("تأیید","approve:"+ident),("رد","reject:"+ident)]]+back())
+  return queue_receipt_review(c,uid,integer(int(ident),1))
  if op=="coupons":
   rows=[[(r["code"]+" / "+str(r["uses"])+" باقی","a:couponview:"+r["code"])] for r in c.execute("SELECT code,uses FROM coupons LIMIT 25")]
   return send(c,uid,"کدهای تخفیف",rows+[[("افزودن/ویرایش کد","a:newcoupon")]]+back())
