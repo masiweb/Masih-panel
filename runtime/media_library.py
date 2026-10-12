@@ -568,9 +568,18 @@ def callback(c,uid,cmd):
   return playlist_view(c,uid,pid)
  if op=="remove":
   row=_owner(c,uid,int(x))
+  return send(c,uid,"⚠️ حذف این رسانه از فهرست عمومی قابل بازگشت نیست. مطمئن هستید؟",
+    [[("بله، حذف رسانه","med:removeok:"+x),("نه، بازگشت","med:play:"+x)]])
+ if op=="removeok":
+  row=_owner(c,uid,int(x))
   c.execute("UPDATE media_items SET status='removed' WHERE id=?",(row["id"],))
   return send(c,uid,"فایل از فهرست عمومی حذف شد.",[[("↩️ کتابخانه","med:"+row["kind"])]])
  if op=="plremove":
+  p=_playlist(c,uid,int(x))
+  if p["owner_id"]!=uid:raise ValueError("فقط مالک می‌تواند پلی‌لیست را حذف کند")
+  return send(c,uid,"⚠️ حذف پلی‌لیست قابل بازگشت نیست. مطمئن هستید؟",
+    [[("بله، حذف پلی‌لیست","med:plremoveok:"+x),("نه، بازگشت","med:pl:"+x)]])
+ if op=="plremoveok":
   p=_playlist(c,uid,int(x))
   if p["owner_id"]!=uid:raise ValueError("فقط مالک می‌تواند پلی‌لیست را حذف کند")
   c.execute("UPDATE playlists SET removed=1 WHERE id=?",(p["id"],))
@@ -671,7 +680,8 @@ def admin_action(c,uid,cmd):
   row=c.execute("SELECT * FROM media_items WHERE id=?",(r["media_id"],)).fetchone()
   return send(c,uid,"گزارش شماره "+str(report_id)+"\nرسانه: "+
      (row["title"] if row else "حذف‌شده")+"\nدلیل: "+r["reason"][:400],
-     [[("🗑 حذف رسانه و بستن گزارش","medadmin:remove:"+str(report_id))],
+     [[("▶️ بررسی فایل","med:play:"+str(r["media_id"]))],
+      [("🗑 حذف رسانه و بستن گزارش","medadmin:remove:"+str(report_id))],
       [("✅ رد گزارش، حفظ رسانه","medadmin:dismiss:"+str(report_id))],
       [("↩️ گزارش‌ها","medadmin:reports")]])
  if operation=="remove":
