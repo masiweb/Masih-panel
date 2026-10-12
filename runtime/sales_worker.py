@@ -47,7 +47,7 @@ def home(c,uid):
  if uid in s["admins"]:buttons.append([("⚙️ منوی مدیریت","admin")])
  welcome=(bot_message(c,"home") if c.execute(
   "SELECT 1 FROM message_templates WHERE id='home'").fetchone() else s["welcome"])
- enqueue(c,uid,welcome,buttons)
+ enqueue(c,uid,welcome,buttons,quick_nav=False)
 
 def points_and_discounts(c,uid):
  import gamification as loyalty
