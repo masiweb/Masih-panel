@@ -281,10 +281,11 @@ class Commerce(unittest.TestCase):
    w.handle(c,{"update_id":500,"message":{"from":{"id":102},
     "chat":{"type":"private","id":102},"text":"/start"}})
    out=[json.loads(row["payload"]) for row in c.execute("SELECT payload FROM outbox")]
-   self.assertTrue(any("دریافت تست رایگان" in str(x) for x in out))
+   self.assertFalse(any("دریافت تست رایگان" in str(x) for x in out))
    w.handle(c,{"update_id":501,"callback_query":{"from":{"id":102},
     "message":{"chat":{"id":102,"type":"private"}},"data":"plans"}})
    out=[json.loads(row["payload"]) for row in c.execute("SELECT payload FROM outbox")]
+   self.assertTrue(any("دریافت تست رایگان" in str(x) for x in out))
    self.assertFalse(any("Free Offer" in json.dumps(x) for x in out))
    w.handle(c,{"update_id":502,"callback_query":{"from":{"id":102},
     "message":{"chat":{"id":102,"type":"private"}},"data":"trial"}})
@@ -427,6 +428,10 @@ class Commerce(unittest.TestCase):
    self.assertTrue(s.settings(c)["trial"])
    self.assertEqual(c.execute("SELECT price FROM plans WHERE is_trial=1").fetchone()[0],0)
    w.home(c,102)
+   home_rows=[json.loads(r["payload"]) for r in c.execute("SELECT payload FROM outbox")]
+   self.assertFalse(any("trial" in str(z) for z in home_rows))
+   w.handle(c,{"update_id":827,"callback_query":{"from":{"id":102},
+    "message":{"chat":{"id":102,"type":"private"}},"data":"plans"}})
    x=[json.loads(r["payload"]) for r in c.execute("SELECT payload FROM outbox")]
    self.assertTrue(any("trial" in str(z) for z in x))
  def test_admin_menu_allows_only_authorized_telegram_user(self):
@@ -536,8 +541,12 @@ class Commerce(unittest.TestCase):
      "from":{"id":98765432,"first_name":"new customer"},"text":"/start"}})
    sent=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=98765432 ORDER BY id DESC LIMIT 1").fetchone()["payload"])
    buttons=[b.get("callback_data") for row in sent["reply_markup"]["inline_keyboard"] for b in row]
-   self.assertIn("trial",buttons)
+   self.assertNotIn("trial",buttons)
    self.assertIn("plans",buttons)
+   w.handle(c,{"update_id":43212,"callback_query":{
+     "from":{"id":98765432},"message":{"chat":{"id":98765432,"type":"private"}},"data":"plans"}})
+   latest=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=98765432 ORDER BY id DESC LIMIT 1").fetchone()["payload"])
+   self.assertIn("trial",[b["callback_data"] for row in latest["reply_markup"]["inline_keyboard"] for b in row])
 
  def test_save_channel_normalizes_and_verifies_bot_is_admin(self):
   with s.conn() as c:
@@ -769,4 +778,110 @@ class Commerce(unittest.TestCase):
    self.assertIn("tracking-987",json.loads(rows[0]["payload"])["text"])
    self.assertNotIn("reply_markup",json.loads(rows[0]["payload"]))
    self.assertIn("approve:1",str(rows[1]["payload"]))
+ def test_new_home_menu_exact_order_and_admin_only(self):
+  expected=[
+    ["plans","services"],["fun:ai"],["fun:music","fun:film"],
+    ["points_discount"],["fun","support"],["wallet"]
+  ]
+  with s.conn() as c:
+   s.put(c,"admins",[101])
+   w.home(c,102)
+   first=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   layout=[[b["callback_data"] for b in row] for row in first["reply_markup"]["inline_keyboard"]]
+   self.assertEqual(layout,expected)
+   w.home(c,101)
+   second=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   admin_layout=[[b["callback_data"] for b in row] for row in second["reply_markup"]["inline_keyboard"]]
+   self.assertEqual(admin_layout,expected+[["admin"]])
+   self.assertNotIn("admin",str(first))
+   self.assertIn("🛒 خرید جدید",first["reply_markup"]["inline_keyboard"][0][0]["text"])
+
+ def test_points_discounts_only_current_unredeemed_and_methods(self):
+  import gamification
+  with s.conn() as c:
+   s.put(c,"discounts",True)
+   s.put(c,"points_per_toman",100000)
+   s.put(c,"points_per_purchase_unit",10)
+   s.put(c,"points_per_referral",20)
+   gamification.award(c,102,45,"test","test:points",s.now())
+   c.execute("INSERT INTO coupons VALUES('ACTIVE20',20,0,2,0)")
+   c.execute("INSERT INTO coupons VALUES('EXPIRED10',10,0,2,1)")
+   c.execute("INSERT INTO coupons VALUES('USED15',15,0,2,0)")
+   c.execute("INSERT INTO coupons VALUES('ZERO10',10,0,0,0)")
+   c.execute("INSERT INTO redeemed VALUES('USED15',102)")
+   w.handle(c,{"update_id":91011,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"points_discount"}})
+   item=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("ACTIVE20",item["text"])
+   self.assertIn("45",item["text"])
+   self.assertIn("100,000",item["text"])
+   for banned in ("EXPIRED10","USED15","ZERO10"):self.assertNotIn(banned,item["text"])
+   buttons={b["callback_data"] for r in item["reply_markup"]["inline_keyboard"] for b in r}
+   self.assertTrue({"coupon","referral","fun:points","home"}<=buttons)
+
+ def test_wallet_amount_first_card_approval_and_no_early_balance_credit(self):
+  with s.conn() as c:
+   s.put(c,"wallet",True);s.put(c,"card","6037-9999 TEST");s.put(c,"admins",[101])
+   w.handle(c,{"update_id":91012,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"wallet"}})
+   overview=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("موجودی: 0 تومان",overview["text"])
+   self.assertIn("walletadd",str(overview))
+   w.handle(c,{"update_id":91013,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"walletadd"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"wallet_amount")
+   w.handle(c,{"update_id":91014,"message":{"from":{"id":102},"chat":{"id":102,"type":"private"},"text":"35,000"}})
+   options=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("walletcard:35000",str(options))
+   self.assertNotIn("6037-9999",options["text"])
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],0)
+   w.handle(c,{"update_id":91015,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"walletcard:35000"}})
+   card=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("6037-9999",card["text"])
+   self.assertIn("عکس یا فایل رسید",card["text"])
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"receipt:35000")
+   w.handle(c,{"update_id":91016,"message":{"from":{"id":102},
+      "chat":{"id":102,"type":"private"},"document":{"file_id":"RECEIPT_DOC"}}})
+   topup=c.execute("SELECT * FROM topups WHERE user_id=102").fetchone()
+   self.assertEqual((topup["amount"],topup["receipt"],topup["status"]),(35000,"document:RECEIPT_DOC","pending"))
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],0)
+   s.decide_receipt(c,topup["id"],True)
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],35000)
+
+ def test_wallet_disallowed_callbacks_and_method_gate(self):
+  with s.conn() as c:
+   s.put(c,"wallet",True);s.put(c,"card","Card 123");s.put(c,"zarinpal",False)
+   with self.assertRaisesRegex(ValueError,"ابتدا مبلغ"):
+    w.handle(c,{"update_id":91017,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"walletcard:25000"}})
+   w.handle(c,{"update_id":91018,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"walletadd"}})
+   w.handle(c,{"update_id":91019,"message":{"from":{"id":102},
+      "chat":{"id":102,"type":"private"},"text":"25000"}})
+   item=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertNotIn("walletonline",str(item))
+   w.handle(c,{"update_id":91020,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"wallet"}})
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"")
+   with self.assertRaisesRegex(ValueError,"ابتدا مبلغ"):
+    w.handle(c,{"update_id":91021,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"walletcard:25000"}})
+
+ def test_wallet_zarinpal_only_after_amount_choice(self):
+  with s.conn() as c:
+   s.put(c,"wallet",True);s.put(c,"card","");s.put(c,"zarinpal",True);s.put(c,"merchant_id","a"*36)
+   w.handle(c,{"update_id":91022,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"walletadd"}})
+   w.handle(c,{"update_id":91023,"message":{"from":{"id":102},
+      "chat":{"id":102,"type":"private"},"text":"12000"}})
+   item=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("walletonline:12000",str(item))
+   self.assertNotIn("walletcard:",str(item))
+   with patch.object(w,"payment_create",return_value="A"*36) as payment:
+    w.handle(c,{"update_id":91024,"callback_query":{"from":{"id":102},
+      "message":{"chat":{"id":102,"type":"private"}},"data":"walletonline:12000"}})
+   self.assertEqual(payment.call_args.args[1:3],(102,12000))
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"")
+
 if __name__=="__main__":unittest.main()
