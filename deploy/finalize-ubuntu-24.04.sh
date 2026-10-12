@@ -250,7 +250,7 @@ fi
 systemctl enable --now openvpn-server@masiha.service
 systemctl enable --now ocserv.service
 systemctl enable --now masiha-vpn-extension.service
-MASIHA_EXPECT_DEFAULT_INBOUNDS=1 bash "$REPO_ROOT/deploy/verify-install.sh"
+MASIHA_EXPECT_DEFAULT_INBOUNDS=1 MASIHA_EXPECT_EXTRA_INBOUNDS=1 bash "$REPO_ROOT/deploy/verify-install.sh"
 # This is the ONLY point where the marker can be removed; verification proves
 # service health. Subsequent --resume calls must refuse normal installations.
 rm -f "$FINALIZE_MARKER"
