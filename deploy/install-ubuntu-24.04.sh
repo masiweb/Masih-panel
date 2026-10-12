@@ -68,7 +68,7 @@ done
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl git tar xz-utils build-essential pkg-config python3 \
-  sqlite3 jq nginx certbot openvpn openconnect ocserv easy-rsa iptables ufw openssl
+  sqlite3 jq nginx certbot openvpn openconnect ocserv easy-rsa iptables ufw openssl python3-qrcode python3-pil
 # Distribution ocserv may start on TCP/443 before Masiha config is installed.
 # Release that listener so Nginx can terminate the public HTTPS endpoint.
 systemctl stop ocserv.service 2>/dev/null || true
