@@ -160,7 +160,7 @@ def _queue_file(c,uid,method,file_id,caption,buttons):
   send(c,uid,caption,buttons)
  else:
   payload["caption"]=caption[:950]
- c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)
+ c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
            (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
 
 def kind_menu(c,uid,kind):
