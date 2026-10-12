@@ -508,7 +508,7 @@ class Commerce(unittest.TestCase):
        "description":"Bad Request: PARTICIPANT_ID_INVALID"}).encode()
   err=urllib.error.HTTPError("https://api.telegram.org/botREDACTED/getChatMember",
       400,"Bad Request",{},io.BytesIO(payload))
-  with patch.object(s.urllib.request,"urlopen",side_effect=err):
+  with patch.object(s,"telegram_open",side_effect=err):
    self.assertFalse(s.telegram_channel_member({"token":"TEST_TOKEN"},"masih_v2ray",1234567890))
 
  def test_fresh_nonmember_gets_join_buttons_not_token_error(self):
@@ -662,4 +662,43 @@ class Commerce(unittest.TestCase):
   view=s.admin({"action":"get"})
   self.assertNotIn("ai_api_key",view["settings"])
   self.assertTrue(view["settings"]["ai_api_key_set"])
+ def test_telegram_transport_prefers_ipv4_on_mixed_dns(self):
+  import socket
+  from unittest.mock import Mock
+  ipv6=(socket.AF_INET6,socket.SOCK_STREAM,6,"",("2001:db8::1",443,0,0))
+  ipv4=(socket.AF_INET,socket.SOCK_STREAM,6,"",("149.154.166.110",443))
+  sock=Mock()
+  with patch.object(s.socket,"getaddrinfo",return_value=[ipv6,ipv4]),patch.object(s.socket,"socket",return_value=sock) as opened:
+   result=s._telegram_connect(("api.telegram.org",443),timeout=3)
+  self.assertIs(result,sock)
+  self.assertEqual(opened.call_args.args[0],socket.AF_INET)
+  sock.connect.assert_called_once_with(ipv4[4])
+
+ def test_telegram_transport_falls_back_to_ipv6_if_ipv4_fails(self):
+  import socket
+  from unittest.mock import Mock
+  ipv6=(socket.AF_INET6,socket.SOCK_STREAM,6,"",("2001:db8::1",443,0,0))
+  ipv4=(socket.AF_INET,socket.SOCK_STREAM,6,"",("149.154.166.110",443))
+  bad=Mock();bad.connect.side_effect=OSError("IPv4 unreachable")
+  good=Mock()
+  with patch.object(s.socket,"getaddrinfo",return_value=[ipv6,ipv4]),patch.object(s.socket,"socket",side_effect=[bad,good]) as opened:
+   result=s._telegram_connect(("api.telegram.org",443),timeout=3)
+  self.assertIs(result,good)
+  bad.close.assert_called_once()
+  self.assertEqual(opened.call_args_list[0].args[0],socket.AF_INET)
+  self.assertEqual(opened.call_args_list[1].args[0],socket.AF_INET6)
+
+ def test_telegram_http_opener_rejects_non_telegram_hosts(self):
+  import urllib.request
+  with self.assertRaises(ValueError):
+   s.telegram_open(urllib.request.Request("https://api.telegram.org.evil.example/test"))
+  with self.assertRaises(ValueError):
+   s.telegram_open(urllib.request.Request("http://api.telegram.org/test"))
+
+ def test_tg_reuses_fast_telegram_transport_for_safe_calls(self):
+  import io
+  with patch.object(s,"telegram_open",return_value=io.BytesIO(b'{"ok":true,"result":{"is_bot":true}}')) as opener:
+   self.assertEqual(s.tg({"token":"DUMMY_TOKEN"},"getMe",{}),{"is_bot":True})
+   self.assertEqual(opener.call_count,1)
+
 if __name__=="__main__":unittest.main()
