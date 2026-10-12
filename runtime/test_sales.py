@@ -473,4 +473,26 @@ class Commerce(unittest.TestCase):
      "chat":{"id":102,"type":"private"},"contact":{"user_id":102,"phone_number":"+989121234567"}}})
    self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"+989121234567")
    self.assertTrue(any('"remove_keyboard": true' in x["payload"] for x in c.execute("SELECT payload FROM outbox WHERE chat=102")))
+ def test_admin_broadcast_requires_explicit_confirmation_and_can_cancel(self):
+  from sales_bot_admin import callback,input_text
+  with s.conn() as c:
+   s.put(c,"admins",[101])
+   callback(c,101,"a:broadcast")
+   input_text(c,101,"a:broadcast","پیام آزمایشی مدیریت",102004)
+   self.assertTrue(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0].startswith("a:broadcast-confirm:"))
+   self.assertFalse(c.execute("SELECT 1 FROM outbox WHERE chat=102").fetchone())
+   callback(c,101,"a:broadcastcancel")
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"")
+   self.assertFalse(c.execute("SELECT 1 FROM outbox WHERE chat=102").fetchone())
+ def test_admin_navigation_discards_pending_financial_input(self):
+  from sales_bot_admin import callback,input_text
+  with s.conn() as c:
+   s.put(c,"admins",[101])
+   callback(c,101,"a:credit:102")
+   self.assertTrue(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0].startswith("a:credit:"))
+   callback(c,101,"a:home")
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"")
+   with self.assertRaises(ValueError):
+    input_text(c,101,"","10000 | accidental",102005)
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=102").fetchone()[0],0)
 if __name__=="__main__":unittest.main()
