@@ -191,5 +191,50 @@ class MediaQA(unittest.TestCase):
   with s.conn() as c:
    self.assertFalse(lib.is_media_message({"document":{"file_id":"x","file_unique_id":"x","file_name":"malware.exe","mime_type":"application/octet-stream"}}))
 
+ def test_film_forward_auto_detects_without_button(self):
+  with s.conn() as c:
+   worker.handle(c,{"update_id":9907,"message":{"chat":{"id":102,"type":"private"},
+      "from":{"id":102,"first_name":"movie fan"},
+      "forward_origin":{"type":"channel"},"video":{"file_id":"telegramVideo","file_unique_id":"fwdMovie"}}})
+   row=c.execute("SELECT * FROM media_items WHERE owner_id=102").fetchone()
+   self.assertEqual((row["kind"],row["telegram_method"],row["status"]),("film","sendVideo","draft"))
+
+ def test_metadata_daily_cap_is_enforced(self):
+  with s.conn() as c:
+   for i in range(17):
+    mid=self.upload(c,message=self.audio("audio"+str(i),"newUnique"+str(i)))
+    lib.set_field(c,101,mid,0,"عنوان جدید "+str(i))
+    self.publish(c,101,mid)
+   self.assertEqual(points.balance(c,101),30)
+
+ def test_admin_report_review_and_takedown(self):
+  with s.conn() as c:
+   s.put(c,"admins",[103])
+   mid=self.upload(c)
+   self.publish(c,101,mid)
+   lib.text_input(c,102,"med:report:"+str(mid),{"text":"ادعای حق نشر"},25000)
+   rid=c.execute("SELECT id FROM media_reports").fetchone()[0]
+   with self.assertRaises(ValueError):lib.admin_action(c,102,"medadmin:report:"+str(rid))
+   lib.admin_action(c,103,"medadmin:report:"+str(rid))
+   lib.admin_action(c,103,"medadmin:remove:"+str(rid))
+   self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(mid,)).fetchone()[0],"removed")
+   self.assertEqual(c.execute("SELECT status FROM media_reports WHERE id=?",(rid,)).fetchone()[0],"removed")
+   with self.assertRaises(ValueError):lib.play(c,102,mid)
+
+ def test_web_moderator_can_set_points_and_resolve_report(self):
+  with s.conn() as c:
+   mid=self.upload(c)
+   self.publish(c,101,mid)
+   lib.text_input(c,102,"med:report:"+str(mid),{"text":"پرونده بررسی"},25001)
+  s.admin({"action":"media_settings","values":{"field_points":4,"like_points":2}})
+  data=s.admin({"action":"get"})
+  self.assertEqual((data["media"]["field_points"],data["media"]["like_points"]),(4,2))
+  self.assertEqual(len(data["media"]["reports"]),1)
+  with self.assertRaises(ValueError):
+   s.admin({"action":"media_settings","values":{"field_points":999}})
+  report_id=data["media"]["reports"][0]["id"]
+  s.admin({"action":"media_report","id":report_id,"decision":"dismiss"})
+  self.assertEqual(s.admin({"action":"get"})["media"]["reports"],[])
+
 if __name__=="__main__":
  unittest.main()
