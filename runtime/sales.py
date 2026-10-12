@@ -407,6 +407,8 @@ def admin(req):
    if type(enabled) is not bool:raise ValueError("وضعیت پلن نامعتبر است")
    if not c.execute("UPDATE plans SET active=? WHERE id=?",(int(enabled),ident)).rowcount:
     raise ValueError("پلن پیدا نشد")
+   if enabled and c.execute("SELECT is_trial FROM plans WHERE id=?",(ident,)).fetchone()["is_trial"]:
+    put(c,"trial",True)
   elif a=="plan_delete":
    ident=integer(req.get("id"),1,2**31-1)
    if not c.execute("SELECT 1 FROM plans WHERE id=?",(ident,)).fetchone():
