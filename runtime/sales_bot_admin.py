@@ -203,6 +203,9 @@ def callback(c,uid,cmd):
  if op=="broadcast":
   c.execute("UPDATE users SET state='a:broadcast' WHERE id=?",(uid,))
   return send(c,uid,"متن پیام همگانی را ارسال کنید. پس از آن تأیید جداگانه می‌خواهم.")
+ if op=="broadcastcancel":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  return send(c,uid,"ارسال پیام همگانی لغو شد.",back())
  if op=="broadcastok":
   user=c.execute("SELECT state FROM users WHERE id=?",(uid,)).fetchone()
   if not user or not user["state"].startswith("a:broadcast-confirm:"):raise ValueError("پیام در انتظار تأیید نیست")
@@ -221,10 +224,10 @@ def callback(c,uid,cmd):
  if op=="finance":
   sold=c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0]
   pending=c.execute("SELECT COUNT(*) FROM orders WHERE status IN ('paid','review','awaiting_receipt','receipt_review')").fetchone()[0]
-  rows=[[(str(r["user_id"])+": "+str(r["amount"])+" تومان","a:finance")] for r in c.execute(
-   "SELECT user_id,amount FROM ledger ORDER BY id DESC LIMIT 5")]
+  rows=list(c.execute("SELECT user_id,amount FROM ledger ORDER BY id DESC LIMIT 5"))
+  details="\n".join(str(r["user_id"])+": "+str(r["amount"])+" تومان" for r in rows) or "هنوز سندی وجود ندارد"
   return send(c,uid,"درآمد تحویل‌شده: "+str(sold)+" تومان\nسفارش‌های در انتظار: "+str(pending)+
-    "\nپنج سند اخیر:",rows+back())
+    "\nپنج سند اخیر:\n"+details,back())
  raise ValueError("فرمان مدیریتی نامعتبر است")
 
 def input_text(c,uid,state,body,update_id):
