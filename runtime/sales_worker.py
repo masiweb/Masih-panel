@@ -253,6 +253,8 @@ def handle(c,up):
   entertainment.callback(c,uid,cmd)
  elif cmd.startswith("med:"):
   media_library.callback(c,uid,cmd)
+ elif cmd.startswith("medadmin:"):
+  media_library.admin_action(c,uid,cmd)
  elif cmd.startswith("a:"):
   admin_callback(c,uid,cmd)
  elif cmd=="plans":
