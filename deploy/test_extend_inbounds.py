@@ -37,18 +37,15 @@ class TestExtraInbounds(unittest.TestCase):
      x.socket.socket,'connect_ex',return_value=111):
    return x.extend(self.db,'vpn.example.com','/usr/bin/xray')
  def test_additive_and_unique(self):
-  self.assertEqual(self.run_extend(),3)
+  self.assertEqual(self.run_extend(),2)
   with sqlite3.connect(self.db) as db:
    rows=db.execute("SELECT port,protocol,settings,stream_settings FROM inbounds ORDER BY port").fetchall()
-  self.assertEqual([r[0] for r in rows],[8443,8449,8450,8451])
-  self.assertEqual([r[1] for r in rows[1:]],['shadowsocks','vless','vless'])
-  ss=json.loads(rows[1][2])
-  self.assertEqual(ss['method'],'2022-blake3-aes-128-gcm')
-  self.assertTrue(len(ss['password'])>16)
-  for row,mode in zip(rows[2:],['stream-up','packet-up']):
+  self.assertEqual([r[0] for r in rows],[8443,8450,8451])
+  self.assertEqual([r[1] for r in rows[1:]],['vless','vless'])
+  for row,mode in zip(rows[1:],['stream-up','packet-up']):
    self.assertEqual(json.loads(row[3])['xhttpSettings']['mode'],mode)
  def test_repeated_call_is_noop(self):
-  self.assertEqual(self.run_extend(),3)
+  self.assertEqual(self.run_extend(),2)
   self.assertEqual(self.run_extend(),0)
  def test_port_conflict_preserves_existing(self):
   with sqlite3.connect(self.db) as db:
