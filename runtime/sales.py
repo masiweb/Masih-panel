@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Masiha sales: private local administration and durable Telegram commerce."""
-import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, shlex, sqlite3, subprocess, sys, time, urllib.request, urllib.error, urllib.parse, uuid, unicodedata
+import contextlib, fcntl, hashlib, http.client, http.cookiejar, io, json, os, re, secrets, shlex, socket, sqlite3, subprocess, sys, time, urllib.request, urllib.error, urllib.parse, uuid, unicodedata
 from pathlib import Path
 from runtime_config import DOMAIN, PUBLIC_PANEL_URL
 import gamification as loyalty
@@ -137,10 +137,55 @@ def subscription_url(sub_id):
  return base.rstrip("/")+"/"+urllib.parse.quote(sub_id,safe="")
 def inbound_list():
  return [{"id":r["id"],"name":r.get("remark",""),"protocol":r["protocol"],"enable":r["enable"]} for r in Panel().call("/panel/api/inbounds/list")]
+def _telegram_connect(address,timeout=socket._GLOBAL_DEFAULT_TIMEOUT,source_address=None):
+ """Prefer IPv4 when resolving Telegram, falling back to working IPv6.
+
+ Some hosts have an AAAA DNS record but no usable IPv6 route. Python's
+ default serial connect loses ~2.6 seconds on IPv6 before trying IPv4.
+ This applies only to Telegram connections, never VPN tunnel sockets.
+ """
+ host,port=address
+ addresses=socket.getaddrinfo(host,port,0,socket.SOCK_STREAM)
+ addresses.sort(key=lambda item:0 if item[0]==socket.AF_INET else 1)
+ last=None
+ for family,kind,proto,_,remote in addresses:
+  sock=socket.socket(family,kind,proto)
+  try:
+   if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:sock.settimeout(timeout)
+   if source_address:sock.bind(source_address)
+   sock.connect(remote)
+   return sock
+  except OSError as exc:
+   last=exc
+   sock.close()
+ raise last if last else OSError("Unable to connect to Telegram API")
+
+class _TelegramHTTPSHandler(urllib.request.HTTPSHandler):
+ def https_open(self,req):
+  def connection(host,**kwargs):
+   conn=http.client.HTTPSConnection(host,**kwargs)
+   conn._create_connection=_telegram_connect
+   return conn
+  return self.do_open(connection,req,context=self._context,check_hostname=self._check_hostname)
+
+class _TelegramNoRedirect(urllib.request.HTTPRedirectHandler):
+ def redirect_request(self,req,fp,code,msg,headers,newurl):
+  raise urllib.error.HTTPError(req.full_url,code,"Telegram API redirects not allowed",headers,fp)
+
+_TELEGRAM_OPENER=urllib.request.build_opener(
+ urllib.request.ProxyHandler({}),_TelegramHTTPSHandler(),_TelegramNoRedirect())
+
+def telegram_open(req,timeout=35):
+ """Open only genuine TLS Telegram Bot API requests with IPv4-first fallback."""
+ target=urllib.parse.urlsplit(req.full_url)
+ if target.scheme!="https" or target.hostname!="api.telegram.org" or target.port not in (None,443):
+  raise ValueError("Invalid Telegram API endpoint")
+ return _TELEGRAM_OPENER.open(req,timeout=timeout)
+
 def tg(s,method,payload):
  try:
   req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+"/"+method,data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
-  with urllib.request.urlopen(req,timeout=35) as r:obj=json.load(r)
+  with telegram_open(req,timeout=35) as r:obj=json.load(r)
   if not obj.get("ok"):raise ValueError()
   return obj["result"]
  except Exception:raise ValueError("ارتباط با تلگرام ناموفق است؛ توکن، شبکه و وضعیت webhook را بررسی کنید")
@@ -170,7 +215,7 @@ def telegram_channel_member(s,channel,uid):
  req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+"/getChatMember",
      data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
  try:
-  with urllib.request.urlopen(req,timeout=20) as response:
+  with telegram_open(req,timeout=20) as response:
    data=json.load(response)
  except urllib.error.HTTPError as exc:
   try: data=json.load(exc)
