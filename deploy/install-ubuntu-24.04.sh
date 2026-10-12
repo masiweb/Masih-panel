@@ -180,9 +180,12 @@ install -d -m 0700 /etc/x-ui /etc/masiha-vpn-extension /opt/masiha-vpn-extension
 for file in manager.py unified.py worker.py sales.py sales_worker.py runtime_config.py; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
 done
-for file in test_unified.py test_sales.py smoke_panel.py test_tunnels.py test-oc-route.sh; do
+for file in test_unified.py test_sales.py smoke_panel.py test_tunnels.py; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
 done
+# OpenConnect executes this route helper as a subprocess during QA. Installing
+# it without +x makes the tunnel appear connected but prevents default routing.
+install -m 0755 "$REPO_ROOT/runtime/test-oc-route.sh" /opt/masiha-vpn-extension/test-oc-route.sh
 install -m 0755 "$REPO_ROOT/runtime/vpn-account-hook.sh" /opt/masiha-vpn-extension/vpn-account-hook.sh
 # Root-only runtime configuration; account DBs, bot tokens and passwords stay OFF Git.
 python3 - "$DOMAIN" "$PANEL_PATH" <<'PY'
