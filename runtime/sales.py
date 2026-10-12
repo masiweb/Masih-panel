@@ -4,6 +4,32 @@ import contextlib, fcntl, hashlib, http.cookiejar, io, json, os, re, secrets, sh
 from pathlib import Path
 from runtime_config import DOMAIN, PUBLIC_PANEL_URL
 BASE=Path(os.environ.get("MASIHA_SALES_DIR","/etc/masiha-vpn-extension/sales"))
+MESSAGE_DEFAULTS={
+ "home":"به فروشگاه مسیحا خوش آمدید",
+ "trial_menu":"پلن تست رایگان خود را انتخاب کنید؛ هیچ پرداختی لازم نیست.",
+ "trial_empty":"در حال حاضر پلن تست فعالی وجود ندارد.",
+ "trial_confirm":"تست رایگان ثبت شد و بدون پرداخت در حال فعال‌سازی است.",
+ "trial_used":"شما قبلاً تست رایگان دریافت کرده‌اید.",
+ "plans_menu":"پلن موردنظر را انتخاب کنید.",
+ "plans_empty":"فعلاً پلنی برای فروش وجود ندارد.",
+ "service_ready":"اشتراک «{name}» آماده است. از «سرویس‌های من» دریافت کنید.",
+ "contact_prompt":"برای ادامه، شماره تلفن متعلق به حساب تلگرام خودتان را با دکمه زیر ارسال کنید.",
+ "contact_saved":"شماره تماس شما تأیید شد. می‌توانید از منوی ربات استفاده کنید.",
+ "support_saved":"پیام پشتیبانی ثبت شد.",
+ "receipt_saved":"رسید ثبت شد؛ پس از تأیید مدیر موجودی شارژ می‌شود.",
+ "order_confirm":"سفارش ثبت شد؛ در حال ساخت اشتراک.",
+ "wallet_balance":"موجودی: {balance} تومان",
+ "welcome_admin":"پنل مدیریت ربات: گزینه مدنظر را انتخاب کنید.",
+ "admin_saved":"تغییرات با موفقیت ذخیره شد."
+}
+def bot_message(c,key,**values):
+ if key not in MESSAGE_DEFAULTS:raise ValueError("شناسه متن ربات نامعتبر است")
+ row=c.execute("SELECT body FROM message_templates WHERE id=?",(key,)).fetchone()
+ source=row["body"] if row else MESSAGE_DEFAULTS[key]
+ try:return source.format_map(values)
+ except (KeyError,ValueError,AttributeError,IndexError):
+  return MESSAGE_DEFAULTS[key].format_map(values)
+
 DEFAULT={"enabled":False,"token":"","admins":[],"welcome":"به فروشگاه مسیحا خوش آمدید","support":"برای پشتیبانی پیام خود را ارسال کنید.","card":"","channel":"","require_contact":False,"buy":True,"renew":True,"wallet":True,"transfer":False,"trial":False,"referrals":False,"commission":5,"discounts":True,"notifications":True,"self_delete":False,"reseller":False,"reseller_discount":10,"trial_plan":0,"warning_days":3,"usage_warning_percent":10,"report_channel":"","bulk":False,"rename":True,"rotate":False,"new_user_notice":True,"zarinpal":False,"merchant_id":""}
 def now():return int(time.time())
 def conn():
@@ -27,6 +53,7 @@ def conn():
  CREATE TABLE IF NOT EXISTS quotes(id TEXT PRIMARY KEY,user_id INTEGER,plan_id INTEGER,plan TEXT,renew_id TEXT,expires INTEGER);
  CREATE TABLE IF NOT EXISTS receipt_orders(topup_id INTEGER UNIQUE,order_id TEXT UNIQUE);
  CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,action TEXT,detail TEXT,created INTEGER);
+ CREATE TABLE IF NOT EXISTS message_templates(id TEXT PRIMARY KEY,body TEXT NOT NULL);
  """)
  # Backward-compatible additive migration; existing plans and orders survive.
  if not any(col[1]=="is_trial" for col in c.execute("PRAGMA table_info(plans)")):
@@ -237,7 +264,7 @@ def provision(c,o):
  s=settings(c);u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if s["referrals"] and u["referrer"] and o["price"]:
   money(c,u["referrer"],o["price"]*s["commission"]//100,"commission",o["id"]+":commission")
- enqueue(c,uid,"اشتراک «"+data["label"]+"» آماده است. از «سرویس‌های من» دریافت کنید.",[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
+ enqueue(c,uid,bot_message(c,"service_ready",name=data["label"]),[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
  for admin in s["admins"]+([s["report_channel"]] if s["report_channel"] else []):enqueue(c,admin,"سفارش "+o["id"]+" تحویل شد؛ مبلغ "+str(o["price"])+" تومان.",key=o["id"]+":admin:"+str(admin))
 
 def restore_reserved_coupon(c,o):
@@ -336,6 +363,10 @@ def save_plan(c,p):
   c.execute("""INSERT INTO plans(name,category,protocol,price,days,gb,
    inbounds,capacity,active,is_trial) VALUES(?,?,?,?,?,?,?,?,?,?)""",values)
   ident=c.execute("SELECT last_insert_rowid()").fetchone()[0]
+ if is_trial and active and not settings(c)["trial"]:
+  # Creating an ACTIVE trial plan must make the bot trial menu available.
+  # Administrators can explicitly switch trials off afterward from settings.
+  put(c,"trial",True)
  audit(c,"plan_saved",str(ident))
  return ident
 
@@ -345,8 +376,24 @@ def admin(req):
   a=req.get("action");s=settings(c)
   if a=="get":
    safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"])
-   return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0]}
+   return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0],"message_templates":{key:(c.execute("SELECT body FROM message_templates WHERE id=?",(key,)).fetchone() or {"body":default})["body"] for key,default in MESSAGE_DEFAULTS.items()},"message_defaults":MESSAGE_DEFAULTS}
   if a=="settings":return save_settings(c,req["values"])
+  if a=="message_templates":
+   values=req.get("values")
+   if not isinstance(values,dict) or not values or set(values)-set(MESSAGE_DEFAULTS):
+    raise ValueError("شناسه متن‌های ربات نامعتبر است")
+   allowed=re.compile(r"\{(name|balance)\}")
+   for key,body in values.items():
+    body=text(body,1000)
+    if not body:raise ValueError("متن پاسخ نمی‌تواند خالی باشد")
+    # Only safely whitelisted placeholders are allowed: no Python expressions.
+    if re.sub(r"\{[^{}]*\}", "", body).find("{")>=0 or re.sub(r"\{[^{}]*\}", "",body).find("}")>=0:
+     raise ValueError("قالب متن دارای آکولاد نامعتبر است")
+    if any(not allowed.fullmatch(token) for token in re.findall(r"\{[^{}]*\}",body)):
+     raise ValueError("فقط متغیرهای {name} و {balance} مجاز هستند")
+    c.execute("INSERT INTO message_templates(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",(key,body))
+   audit(c,"message_templates","web only")
+   return True
   if a=="test":
    me=tg(s,"getMe",{});hook=tg(s,"getWebhookInfo",{})
    if hook.get("url"):tg(s,"deleteWebhook",{"drop_pending_updates":False})
