@@ -201,7 +201,18 @@ class MediaQA(unittest.TestCase):
    self.assertEqual(c.execute("SELECT COUNT(*) FROM media_reports").fetchone()[0],1)
    with self.assertRaises(ValueError):lib.callback(c,102,"med:remove:"+str(mid))
    lib.callback(c,101,"med:remove:"+str(mid))
+   self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(mid,)).fetchone()[0],"published")
+   lib.callback(c,101,"med:removeok:"+str(mid))
    with self.assertRaises(ValueError):lib.play(c,103,mid)
+
+ def test_playlist_delete_requires_second_confirmation(self):
+  with s.conn() as c:
+   pid=self.playlist(c,uid=101,kind="film",private=False,name="Archived movie list")
+   lib.callback(c,101,"med:plremove:"+str(pid))
+   self.assertEqual(c.execute("SELECT removed FROM playlists WHERE id=?",(pid,)).fetchone()[0],0)
+   with self.assertRaises(ValueError):lib.callback(c,102,"med:plremoveok:"+str(pid))
+   lib.callback(c,101,"med:plremoveok:"+str(pid))
+   self.assertEqual(c.execute("SELECT removed FROM playlists WHERE id=?",(pid,)).fetchone()[0],1)
 
  def test_no_arbitrary_documents_accepted(self):
   with s.conn() as c:
