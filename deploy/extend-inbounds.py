@@ -17,7 +17,10 @@ import tempfile
 from pathlib import Path
 
 PRESETS = (
-    ("07-SHADOWSOCKS-2022-TCP-UDP", "shadowsocks", 8449, "tcp", "none", ""),
+    # Do not provision SS2022 by default: native global client passwords
+    # may decode to 12/24 instead of the mandatory 16-byte PSK. This caused
+    # Xray's entire startup to fail on exon. SS2022 requires an independent
+    # validated per-inbound client-key implementation before reenabling.
     ("08-VLESS-XHTTP-STREAMUP-TLS-H2", "vless", 8450, "xhttp", "tls", "stream-up"),
     ("09-VLESS-XHTTP-PACKETUP-TLS-H2", "vless", 8451, "xhttp", "tls", "packet-up"),
 )
@@ -124,7 +127,7 @@ def extend(db_path,domain,binary):
                        ",".join("?" for _ in keys)+")",[row[k] for k in keys])
         db.commit()
     print("Additional tested Xray inbound presets inserted:",len(pending))
-    print("Shadowsocks 2022 is supported by Xray but deprecated upstream; prefer modern XHTTP.")
+    print("SS2022 is deliberately excluded until per-client PSK validation is implemented.")
     return len(pending)
 
 
