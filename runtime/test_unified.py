@@ -1,5 +1,7 @@
 import os,sys,tempfile,sqlite3,unittest,time
-sys.path.insert(0,"/opt/masiha-vpn-extension")
+from pathlib import Path
+# Test the sibling source code, not an older installed runtime elsewhere.
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 import unified as u
 class SharedQuota(unittest.TestCase):
  def setUp(self):
