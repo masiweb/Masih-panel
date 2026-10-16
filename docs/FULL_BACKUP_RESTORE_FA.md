@@ -57,10 +57,10 @@ sudo python3 deploy/full-backup.py verify \
 ```text
 /root/masiha-backups/masiha-full-....tar.gz.gpg
 /root/masiha-backups/masiha-full-....tar.gz.gpg.sha256
-/root/.masiha-backup.key
+/root/.masiha-import.key  ← کپیِ کلید مبدأ با نام متفاوت روی مقصد
 ```
 
-فایل بکاپ و **کلید رمزگشایی را به هیچ عنوان** در مخزن GitHub، فضای عمومی، سرویس فایل اشتراکی باز یا پیام تلگرام ارسال نکنید. بهتر است کلید را از کانال مستقلی انتقال دهید. در مقصد حتماً `chmod 600 /root/.masiha-backup.key` باشد.
+فایل بکاپ و **کلید رمزگشایی را به هیچ عنوان** در مخزن GitHub، فضای عمومی، سرویس فایل اشتراکی باز یا پیام تلگرام ارسال نکنید. بهتر است کلید را از کانال مستقلی انتقال دهید. در مقصد کلید مبدأ را با **نام متفاوت** `/root/.masiha-import.key` نگه دارید و `chmod 600 /root/.masiha-import.key` کنید. کلید قدیمی خود مقصد (`/root/.masiha-backup.key`) را با کلید مبدأ جایگزین نکنید؛ کلید مقصد برای بکاپ پیش از restore استفاده می‌شود.
 
 ابتدا Ubuntu 24.04 و نسخه پروژه VPN را از GitHub روی مقصد نصب کنید تا بسته‌های OpenVPN، ocserv، Nginx، Xray و سرویس‌ها وجود داشته باشند. **از اجرای هم‌زمان بات روی مبدأ و مقصد بپرهیزید.** قبل از restore فایل‌های مقصد را از تنظیمات دلخواه خودتان نیز بکاپ بگیرید.
 
@@ -83,7 +83,7 @@ sudo python3 deploy/full-backup.py restore /root/masiha-full-....tar.gz.gpg \
 ```bash
 sudo python3 /root/Masih-panel/deploy/full-backup.py restore \
   /root/masiha-full-....tar.gz.gpg \
-  --key-file /root/.masiha-backup.key --confirm-restore
+  --key-file /root/.masiha-import.key --confirm-restore
 ```
 
 فرآیند در حالت پیش‌فرض:
