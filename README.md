@@ -6,6 +6,8 @@ Masiha VPN Manager is deployed as a **patched SANAei 3x-ui** with native Xray in
 
 **[چک‌لیست انتشار و تست نصب روی سرور جدید](docs/NEW_SERVER_RELEASE_FA.md)**
 
+**[بکاپ کامل رمزگذاری‌شده و بازیابی انتقال به سرور جدید](docs/FULL_BACKUP_RESTORE_FA.md)** — سه دیتابیس، کلاینت/اینباند/نود/ترافیک، ربات و پرداخت‌ها، OpenVPN/OpenConnect، گواهی و تنظیمات سرور؛ شامل صحت‌سنجی و تست بازیابی ایزوله.
+
 **[۶ روش آزمایش سرعت Shadowsocks و VLESS + رفع خطای SS2022](docs/INBOUND_SPEED_TEST_FA.md)**
 
 **[راهنمای کتابخانه موزیک/فیلم، پلی‌لیست و گیمیفیکیشن تلگرام](docs/MEDIA_LIBRARY_FA.md)**
