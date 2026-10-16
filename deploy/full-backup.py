@@ -183,7 +183,14 @@ def crypt(source, dest, key, decrypt=False):
     dest.chmod(0o600)
 
 
-def snapshot_databases(stage):
+MEDIA_TABLES = (
+    "media_items", "media_metadata_reward", "media_likes", "media_comments",
+    "playlists", "playlist_entries", "playlist_members", "playlist_likes",
+    "playlist_comments", "media_reports",
+)
+
+
+def snapshot_databases(stage, skip_media=False):
     db_stats = {}
     for original, label in DATABASES.items():
         if not Path(original).exists():
@@ -199,6 +206,17 @@ def snapshot_databases(stage):
                 # A portable SQLite snapshot must be a SINGLE database file,
                 # not a WAL-mode database with stray -wal/-shm sidecars.
                 backup.execute("PRAGMA journal_mode=DELETE")
+                if label == "sales" and skip_media:
+                    # Export WITHOUT bot media or playlists. Preserve purchase,
+                    # wallet, account, AI and earned loyalty transactions.
+                    existing = {r[0] for r in backup.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'")}
+                    backup.execute("PRAGMA foreign_keys=OFF")
+                    for name in MEDIA_TABLES:
+                        if name in existing:
+                            backup.execute('DELETE FROM "' + name + '"')
+                    backup.commit()
+                    backup.execute("VACUUM")
                 table_counts = {}
                 for (name,) in backup.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
@@ -293,7 +311,7 @@ def pack(stage, tar_path, manifest):
                         out.add(p, arcname=str(p.relative_to(stage)), recursive=False)
 
 
-def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False):
+def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False, skip_media=False):
     ensure_root()
     key = key_file(key, generate=True)
     directory = Path(directory)
@@ -312,7 +330,7 @@ def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False):
             if running:
                 print("QUIESCING_VPN_SERVICES", len(running), flush=True)
                 stop_services(running)
-            databases = snapshot_databases(stage)
+            databases = snapshot_databases(stage, skip_media=skip_media)
             files = copy_snapshot(stage)
         finally:
             if running:
@@ -328,6 +346,7 @@ def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False):
             "source_domain": domain, "source_git_commit": commit.stdout.strip()
             if commit.returncode == 0 else "unavailable",
             "snapshot_type": "quiesced" if quiesce else "online-sqlite-consistent",
+            "telegram_media_included": not skip_media,
             "databases": databases, "files": files, "source_roots": list(SOURCES),
             "network_audit_only": network_diagnostics(),
         }
@@ -591,6 +610,8 @@ def main():
     b=sub.add_parser("backup")
     b.add_argument("--output-dir",default=str(DEFAULT_OUTPUT))
     b.add_argument("--key-file",default=str(DEFAULT_KEY))
+    b.add_argument("--skip-media",action="store_true",
+                   help="exclude bot music/films, playlists, comments and reports; preserve sales and points")
     b.add_argument("--quiesce",action="store_true",
                    help="briefly stop VPN services while taking snapshot (recommended for final migration)")
     v=sub.add_parser("verify")
@@ -606,7 +627,7 @@ def main():
                    help="start restored Telegram/extension worker immediately; ONLY after old server stops it")
     args=parser.parse_args()
     if args.action=="backup":
-        create_backup(Path(args.output_dir),Path(args.key_file),args.quiesce)
+        create_backup(Path(args.output_dir),Path(args.key_file),args.quiesce,args.skip_media)
     elif args.action=="verify":
         ensure_root()
         with tempfile.TemporaryDirectory(prefix="masiha-verify-") as tmp:
