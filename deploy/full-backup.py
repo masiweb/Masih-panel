@@ -188,6 +188,9 @@ def snapshot_databases(stage):
                 check = backup.execute("PRAGMA integrity_check").fetchone()[0]
                 if check != "ok":
                     die("SQLite integrity failure: " + label)
+                # A portable SQLite snapshot must be a SINGLE database file,
+                # not a WAL-mode database with stray -wal/-shm sidecars.
+                backup.execute("PRAGMA journal_mode=DELETE")
                 table_counts = {}
                 for (name,) in backup.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
@@ -200,6 +203,8 @@ def snapshot_databases(stage):
                     "path": original, "tables": table_counts,
                     "bytes": dst.stat().st_size, "sha256": sha_file(dst)
                 }
+        for suffix in ("-wal", "-shm"):
+            Path(str(dst) + suffix).unlink(missing_ok=True)
         dst.chmod(0o600)
     return db_stats
 
@@ -255,7 +260,7 @@ def pack(stage, tar_path, manifest):
                 out.add(path, arcname=folder, recursive=False)
             else:
                 for p in sorted(path.rglob("*")):
-                    if p.is_file():
+                    if p.is_file() and not p.name.endswith(SENSITIVE_TRANSIENT_SUFFIXES):
                         out.add(p, arcname=str(p.relative_to(stage)), recursive=False)
 
 
