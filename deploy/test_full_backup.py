@@ -53,6 +53,7 @@ class FullBackupTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as directory:
    mf,data=backup.unpack_verified(archive,self.key,Path(directory))
    self.assertEqual(len(mf["databases"]),3)
+   self.assertIsInstance(mf["network_audit_only"],dict)
    self.assertIn(str(self.config/"server-private-key.txt"),mf["files"])
    self.assertEqual({x["tables"]["accounts"] for x in mf["databases"].values()},{1})
   dest=self.root/"restored"
@@ -92,6 +93,21 @@ class FullBackupTests(unittest.TestCase):
   archive=self.make()
   with self.assertRaisesRegex(RuntimeError,"--confirm-restore"):
    backup.restore(archive,self.key,False,staging_root=self.root/"restore")
+ def test_staging_root_must_be_empty(self):
+  archive=self.make()
+  target=self.root/"occupied"
+  target.mkdir()
+  (target/"keep.txt").write_text("do not overwrite")
+  with self.assertRaisesRegex(RuntimeError,"must be empty"):
+   backup.restore(archive,self.key,True,staging_root=target)
+  self.assertEqual((target/"keep.txt").read_text(),"do not overwrite")
+
+ def test_domain_mismatch_fails_before_live_restore_changes(self):
+  archive=self.make()
+  with patch.object(backup,"get_domain",return_value="other.example.com"):
+   with self.assertRaisesRegex(RuntimeError,"Domain mismatch"):
+    backup.restore(archive,self.key,True)
+
  def test_quiesce_stops_and_restarts_even_on_failure(self):
   with patch.object(backup,"active_services",return_value=["x-ui.service"]) as active:
    with patch.object(backup,"stop_services") as stop:
