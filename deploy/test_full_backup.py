@@ -102,6 +102,32 @@ class FullBackupTests(unittest.TestCase):
    backup.restore(archive,self.key,True,staging_root=target)
   self.assertEqual((target/"keep.txt").read_text(),"do not overwrite")
 
+ def test_skip_media_strips_media_rows_and_keeps_wallet_orders_and_points(self):
+  from pathlib import Path
+  salesdb=self.state["sourceC"]
+  with sqlite3.connect(salesdb) as db:
+   db.execute("CREATE TABLE media_items(id INTEGER PRIMARY KEY,title TEXT)")
+   db.execute("CREATE TABLE playlists(id INTEGER PRIMARY KEY,name TEXT)")
+   db.execute("CREATE TABLE orders(id INTEGER PRIMARY KEY,price INTEGER)")
+   db.execute("CREATE TABLE loyalty_points(id INTEGER PRIMARY KEY,points INTEGER)")
+   db.execute("INSERT INTO media_items VALUES(1,'sample')")
+   db.execute("INSERT INTO playlists VALUES(1,'playlist')")
+   db.execute("INSERT INTO orders VALUES(1,200000)")
+   db.execute("INSERT INTO loyalty_points VALUES(1,70)")
+  with patch.object(backup,"DATABASES",{
+      str(self.state["sourceA"]):"panel",
+      str(self.state["sourceB"]):"users",
+      str(salesdb):"sales"}):
+   archive=backup.create_backup(self.backup_dir,self.key,skip_media=True)
+   with tempfile.TemporaryDirectory() as directory:
+    manifest,contents=backup.unpack_verified(archive,self.key,Path(directory))
+    self.assertFalse(manifest["telegram_media_included"])
+    with sqlite3.connect(contents/"db"/"sales.db") as db:
+     self.assertEqual(db.execute("SELECT count(*) FROM media_items").fetchone()[0],0)
+     self.assertEqual(db.execute("SELECT count(*) FROM playlists").fetchone()[0],0)
+     self.assertEqual(db.execute("SELECT price FROM orders").fetchone()[0],200000)
+     self.assertEqual(db.execute("SELECT points FROM loyalty_points").fetchone()[0],70)
+
  def test_domain_mismatch_fails_before_live_restore_changes(self):
   archive=self.make()
   with patch.object(backup,"get_domain",return_value="other.example.com"):
