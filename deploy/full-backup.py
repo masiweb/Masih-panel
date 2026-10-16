@@ -413,7 +413,9 @@ def restore_files(manifest, contents, root=None, rollback=None):
     try:
         for name,entry,source in file_specs:
             destination = map_target(name,root)
-            destination.parent.mkdir(parents=True,exist_ok=True)
+            # Preserve confidentiality when restoring PKI/private-key directories
+            # that are absent on a freshly provisioned host.
+            destination.parent.mkdir(mode=0o700, parents=True,exist_ok=True)
             if destination.is_dir() and not destination.is_symlink():
                 die("Destination is directory, expected file: " + str(destination))
             prior = None
@@ -435,11 +437,19 @@ def restore_files(manifest, contents, root=None, rollback=None):
                 if root is None:
                     os.chown(temp,int(entry.get("uid",0)),int(entry.get("gid",0)))
             os.replace(temp,destination)
-        # Never let destination WAL replay transactions from the previous DB.
+        # Never replay a destination WAL against a restored SQLite snapshot.
+        # Preserve WAL/SHM in the rollback log before clearing them.
         for path in DATABASES:
             db = map_target(path,root)
             for extra in ("-wal","-shm"):
-                Path(str(db)+extra).unlink(missing_ok=True)
+                sidecar = Path(str(db)+extra)
+                if rollback is not None:
+                    previous = None
+                    if sidecar.is_file():
+                        previous = rollback / str(len(restored))
+                        shutil.copy2(sidecar,previous)
+                    restored.append((sidecar,previous))
+                sidecar.unlink(missing_ok=True)
         return restored
     except Exception:
         if rollback is not None:
@@ -487,12 +497,17 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
         work=Path(temp)
         manifest,contents=unpack_verified(archive,key,work)
         if staging_root:
-            staging_root=Path(staging_root).resolve()
+            original_root=Path(staging_root)
+            if original_root.is_symlink():
+                die("Isolated staging directory must not be a symlink")
+            staging_root=original_root.resolve()
             if str(staging_root)=="/" or not str(staging_root).startswith(("/tmp/","/var/tmp/")):
                 die("Isolated staging root must be under /tmp or /var/tmp")
-            restored=restore_files(manifest,contents,root=staging_root)
+            if staging_root.exists() and any(staging_root.iterdir()):
+                die("Isolated staging root must be empty to avoid overwriting data")
+            staged_files=restore_files(manifest,contents,root=staging_root)
             validate_restored(root=staging_root)
-            print("ISOLATED_RESTORE_OK",staging_root,"entries",len(restored))
+            print("ISOLATED_RESTORE_OK",staging_root,"entries",len(staged_files))
             return
         destination_domain=get_domain()
         if destination_domain != manifest["source_domain"] and not allow_domain_mismatch:
@@ -506,9 +521,9 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
         rollback_backup=create_backup(quiesce=False)
         print("ROLLBACK_ARCHIVE",rollback_backup,flush=True)
         undo=work/"rollback";undo.mkdir(mode=0o700)
-        stop_services(running)
         changed=[]
         try:
+            stop_services(running)
             changed=restore_files(manifest,contents,rollback=undo)
             validate_restored()
             start_services(running)
@@ -532,6 +547,8 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
 
 
 def main():
+    # All temporary plaintext snapshots and newly created directories are private.
+    os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest="action",required=True)
     b=sub.add_parser("backup")
