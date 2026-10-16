@@ -42,7 +42,7 @@ func launchBackup(id,action string)error{
   return os.ErrInvalid
  }
  return exec.Command("systemd-run","--quiet","--collect",
-  "--unit=masiha-webbackup-"+id,"--property=Type=exec","/usr/bin/python3",
+  "--unit=masiha-webbackup-"+action+"-"+id,"--property=Type=exec","/usr/bin/python3",
   "/opt/masiha-vpn-extension/web_backup_worker.py",action,id).Run()
 }
 func privateRegular(path string)bool{
