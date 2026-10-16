@@ -1,6 +1,6 @@
 diff --git a/MASIHA-VPN.md b/MASIHA-VPN.md
 new file mode 100644
-index 0000000..b4977e2
+index 00000000..b4977e29
 --- /dev/null
 +++ b/MASIHA-VPN.md
 @@ -0,0 +1,32 @@
@@ -38,7 +38,7 @@ index 0000000..b4977e2
 +Do not commit account databases, password files, certificates or exported profiles to Git.
 diff --git a/SALES-BOT.md b/SALES-BOT.md
 new file mode 100644
-index 0000000..5594f45
+index 00000000..5594f453
 --- /dev/null
 +++ b/SALES-BOT.md
 @@ -0,0 +1,41 @@
@@ -85,7 +85,7 @@ index 0000000..5594f45
 +Amounts stored as integer tomans and sent as integer IRR (times 10). Browser status does not credit; server verifies authority and stored amount. Duplicate 100/101 responses are protected by a unique ledger reference. The callback path /xui/sales-payment has bounded concurrent verification slots and does not accept arbitrary admin actions.
 diff --git a/extensions/masiha-sales/sales.py b/extensions/masiha-sales/sales.py
 new file mode 100644
-index 0000000..16be7ef
+index 00000000..16be7efd
 --- /dev/null
 +++ b/extensions/masiha-sales/sales.py
 @@ -0,0 +1,268 @@
@@ -359,7 +359,7 @@ index 0000000..16be7ef
 + except Exception as e:print(json.dumps({"success":False,"msg":str(e)},ensure_ascii=False))
 diff --git a/extensions/masiha-sales/sales_worker.py b/extensions/masiha-sales/sales_worker.py
 new file mode 100644
-index 0000000..f4c1ce1
+index 00000000..f4c1ce1c
 --- /dev/null
 +++ b/extensions/masiha-sales/sales_worker.py
 @@ -0,0 +1,304 @@
@@ -669,7 +669,7 @@ index 0000000..f4c1ce1
 +if __name__=="__main__":main()
 diff --git a/extensions/masiha-sales/test_sales.py b/extensions/masiha-sales/test_sales.py
 new file mode 100644
-index 0000000..d9aec52
+index 00000000..d9aec523
 --- /dev/null
 +++ b/extensions/masiha-sales/test_sales.py
 @@ -0,0 +1,77 @@
@@ -752,7 +752,7 @@ index 0000000..d9aec52
 +if __name__=="__main__":unittest.main()
 diff --git a/extensions/masiha-vpn/check_live.py b/extensions/masiha-vpn/check_live.py
 new file mode 100644
-index 0000000..557378e
+index 00000000..557378e3
 --- /dev/null
 +++ b/extensions/masiha-vpn/check_live.py
 @@ -0,0 +1,34 @@
@@ -792,7 +792,7 @@ index 0000000..557378e
 +print('Live panel validation PASS')
 diff --git a/extensions/masiha-vpn/manager.py b/extensions/masiha-vpn/manager.py
 new file mode 100644
-index 0000000..910c7cd
+index 00000000..910c7cdd
 --- /dev/null
 +++ b/extensions/masiha-vpn/manager.py
 @@ -0,0 +1,157 @@
@@ -955,7 +955,7 @@ index 0000000..910c7cd
 +if __name__=="__main__": main()
 diff --git a/extensions/masiha-vpn/masiha-vpn-extension.service b/extensions/masiha-vpn/masiha-vpn-extension.service
 new file mode 100644
-index 0000000..0f418f4
+index 00000000..0f418f40
 --- /dev/null
 +++ b/extensions/masiha-vpn/masiha-vpn-extension.service
 @@ -0,0 +1,17 @@
@@ -978,7 +978,7 @@ index 0000000..0f418f4
 +WantedBy=multi-user.target
 diff --git a/extensions/masiha-vpn/ocserv.conf b/extensions/masiha-vpn/ocserv.conf
 new file mode 100644
-index 0000000..04c937a
+index 00000000..04c937af
 --- /dev/null
 +++ b/extensions/masiha-vpn/ocserv.conf
 @@ -0,0 +1,35 @@
@@ -1019,7 +1019,7 @@ index 0000000..04c937a
 +tls-priorities = "NORMAL:%SERVER_PRECEDENCE:-VERS-SSL3.0:-VERS-TLS1.0:-VERS-TLS1.1"
 diff --git a/extensions/masiha-vpn/openvpn.conf b/extensions/masiha-vpn/openvpn.conf
 new file mode 100644
-index 0000000..cf0d614
+index 00000000..cf0d614f
 --- /dev/null
 +++ b/extensions/masiha-vpn/openvpn.conf
 @@ -0,0 +1,28 @@
@@ -1053,7 +1053,7 @@ index 0000000..cf0d614
 +verb 3
 diff --git a/extensions/masiha-vpn/smoke_panel.py b/extensions/masiha-vpn/smoke_panel.py
 new file mode 100644
-index 0000000..724a5a8
+index 00000000..724a5a85
 --- /dev/null
 +++ b/extensions/masiha-vpn/smoke_panel.py
 @@ -0,0 +1,66 @@
@@ -1125,7 +1125,7 @@ index 0000000..724a5a8
 +   except subprocess.TimeoutExpired:p.kill();p.wait()
 diff --git a/extensions/masiha-vpn/test-oc-route.sh b/extensions/masiha-vpn/test-oc-route.sh
 new file mode 100755
-index 0000000..b2cea9d
+index 00000000..b2cea9d1
 --- /dev/null
 +++ b/extensions/masiha-vpn/test-oc-route.sh
 @@ -0,0 +1,8 @@
@@ -1139,7 +1139,7 @@ index 0000000..b2cea9d
 +fi
 diff --git a/extensions/masiha-vpn/test_tunnels.py b/extensions/masiha-vpn/test_tunnels.py
 new file mode 100644
-index 0000000..3f1a13a
+index 00000000..3f1a13a9
 --- /dev/null
 +++ b/extensions/masiha-vpn/test_tunnels.py
 @@ -0,0 +1,58 @@
@@ -1203,7 +1203,7 @@ index 0000000..3f1a13a
 +   run("ip","netns","delete",ns,check=False)
 diff --git a/extensions/masiha-vpn/worker.py b/extensions/masiha-vpn/worker.py
 new file mode 100644
-index 0000000..b715f5b
+index 00000000..b715f5bd
 --- /dev/null
 +++ b/extensions/masiha-vpn/worker.py
 @@ -0,0 +1,39 @@
@@ -1247,7 +1247,7 @@ index 0000000..b715f5b
 +        time.sleep(15)
 +if __name__=="__main__": main()
 diff --git a/frontend/src/layouts/AppSidebar.tsx b/frontend/src/layouts/AppSidebar.tsx
-index a86dfe1..4b75a6e 100644
+index a86dfe11..4b75a6e9 100644
 --- a/frontend/src/layouts/AppSidebar.tsx
 +++ b/frontend/src/layouts/AppSidebar.tsx
 @@ -224,6 +224,9 @@ export default function AppSidebar() {
@@ -1261,7 +1261,7 @@ index a86dfe1..4b75a6e 100644
        { key: '/nodes', icon: 'cluster', title: t('menu.nodes') },
        { key: '/hosts', icon: 'hosts', title: t('menu.hosts') },
 diff --git a/frontend/src/pages/sub/SubPage.tsx b/frontend/src/pages/sub/SubPage.tsx
-index 82acec7..74577d4 100644
+index 82acec7b..74577d45 100644
 --- a/frontend/src/pages/sub/SubPage.tsx
 +++ b/frontend/src/pages/sub/SubPage.tsx
 @@ -14,6 +14,7 @@ import { ClipboardManager, LanguageManager } from '@/utils';
@@ -1282,7 +1282,7 @@ index 82acec7..74577d4 100644
  
 diff --git a/frontend/src/pages/sub/SubVPNProfiles.tsx b/frontend/src/pages/sub/SubVPNProfiles.tsx
 new file mode 100644
-index 0000000..5181f3d
+index 00000000..5181f3de
 --- /dev/null
 +++ b/frontend/src/pages/sub/SubVPNProfiles.tsx
 @@ -0,0 +1,38 @@
@@ -1324,9 +1324,176 @@ index 0000000..5181f3d
 +  })}
 + </Space>;
 +}
+diff --git a/frontend/src/pages/vpn/BackupRestorePanel.tsx b/frontend/src/pages/vpn/BackupRestorePanel.tsx
+new file mode 100644
+index 00000000..97dbdffb
+--- /dev/null
++++ b/frontend/src/pages/vpn/BackupRestorePanel.tsx
+@@ -0,0 +1,161 @@
++import {useEffect,useMemo,useState} from 'react';
++import {Alert,Button,Card,Checkbox,Input,Space,Table,Tag,Typography,Upload,App} from 'antd';
++import type {UploadFile} from 'antd';
++import {HttpUtil} from '@/utils';
++import {httpRequest} from '@/api/http-init';
++
++type BackupEntry={name:string,size:number,created:string};
++type JobEntry={job:string,state:string,detail?:string,at?:number};
++type BackupStatus={backups:BackupEntry[],jobs:JobEntry[],has_key:boolean};
++const endpoint='/panel/api/masiha-backup';
++
++const humanSize=(n:number)=>n>1048576?(n/1048576).toFixed(1)+' MB':(n/1024).toFixed(0)+' KB';
++
++export default function BackupRestorePanel(){
++ const {message}=App.useApp();
++ const [status,setStatus]=useState<BackupStatus>({backups:[],jobs:[],has_key:false});
++ const [error,setError]=useState('');
++ const [busy,setBusy]=useState(false);
++ const [archive,setArchive]=useState<UploadFile[]>([]);
++ const [key,setKey]=useState<UploadFile[]>([]);
++ const [importID,setImportID]=useState('');
++ const [confirmation,setConfirmation]=useState('');
++ const [acknowledged,setAcknowledged]=useState(false);
++ const [restoreMode,setRestoreMode]=useState(false);
++ const jobs=status.jobs;
++ const latestJob=useMemo(()=>jobs.sort((a,b)=>(b.at||0)-(a.at||0)).slice(0,7),[jobs]);
++ const currentImport=jobs.find(j=>j.job===importID);
++ const root=(window.X_UI_BASE_PATH||'/').replace(/\/$/,'');
++ const url=(name:string)=>root+endpoint+'/download/'+encodeURIComponent(name);
++ const reload=async()=>{
++  const result=await HttpUtil.get<BackupStatus>(endpoint+'/status',undefined,{silent:true,timeout:15000});
++  if(result.success&&result.obj){setStatus(result.obj);setError('')}
++  else setError(result.msg||'خواندن وضعیت بکاپ ناموفق بود');
++ };
++ useEffect(()=>{
++  void reload();
++  const timer=setInterval(()=>void reload(),7000);
++  return ()=>clearInterval(timer);
++ },[]);
++ const create=async()=>{
++  setBusy(true);
++  try{
++   const r=await HttpUtil.post(endpoint+'/create',{}, {headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
++   if(!r.success)throw new Error(r.msg||'ساخت بکاپ آغاز نشد');
++   message.success('ساخت بکاپ آغاز شد. پس از تکمیل، دانلود فعال می‌شود.');
++   await reload();
++  }catch(e){message.error(String(e))}
++  finally{setBusy(false)}
++ };
++ const upload=async()=>{
++  if(!archive[0]?.originFileObj||!key[0]?.originFileObj){
++   message.error('فایل بکاپ رمزگذاری‌شده و فایل کلید را انتخاب کنید');return;
++  }
++  const form=new FormData();
++  form.append('archive',archive[0].originFileObj);
++  form.append('key',key[0].originFileObj);
++  setBusy(true);setImportID('');setRestoreMode(false);
++  try{
++   const r=await httpRequest('POST',endpoint+'/import',form,{timeout:300000});
++   const data=r.data as {success:boolean,msg?:string,obj?:{job:string}};
++   if(!data?.success||!data.obj?.job)throw new Error(data?.msg||'آپلود ناموفق');
++   setImportID(data.obj.job);
++   message.success('فایل دریافت شد؛ بررسی سلامت و رمزگشایی آغاز شد');
++   await reload();
++  }catch(e){message.error(String(e))}
++  finally{setBusy(false)}
++ };
++ const restore=async()=>{
++  if(!importID||currentImport?.state!=='done'||confirmation!=='RESTORE'||!acknowledged)return;
++  setBusy(true);
++  try{
++   const r=await HttpUtil.post(endpoint+'/restore',
++    {job:importID,confirm:confirmation},
++    {headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
++   if(!r.success)throw new Error(r.msg||'بازیابی آغاز نشد');
++   message.warning('بازیابی آغاز شد. پنل ممکن است موقتاً از دسترس خارج شود. ربات مقصد به‌صورت خودکار روشن نخواهد شد.');
++   setRestoreMode(false);
++  }catch(e){message.error(String(e))}
++  finally{setBusy(false)}
++ };
++ const statusTag=(job:JobEntry)=>{
++  const labels:Record<string,[string,string]>={running:['blue','در حال اجرا'],done:['green','موفق'],failed:['red','خطا']};
++  const [color,title]=labels[job.state]||['default',job.state];
++  return <Tag color={color}>{title}</Tag>;
++ };
++ return <Space direction="vertical" size="large" style={{width:'100%'}}>
++  <Alert type="info" showIcon title="انتقال کامل سرویس‌ها؛ بدون کتابخانه موزیک و فیلم"
++   description="کلاینت‌ها، نودها، اینباندها، حجم و مصرف، اشتراک‌ها، تنظیمات، کیف پول و سفارش‌ها حفظ می‌شوند. فایل‌ها، مشخصات موزیک و فیلم، نظرات و پلی‌لیست‌ها منتقل نمی‌شوند."/>
++  <Card title="۱. ساخت و دانلود نسخه پشتیبان">
++   <Space wrap style={{marginBottom:14}}>
++    <Button type="primary" onClick={()=>void create()} loading={busy}>ساخت بکاپ جدید</Button>
++    <Button onClick={()=>void reload()}>به‌روزرسانی وضعیت</Button>
++    {status.has_key&&<a href={url('backup-secret.key')} download="backup-secret.key">
++     <Button danger ghost>دانلود فایل کلید (محرمانه)</Button>
++    </a>}
++   </Space>
++   <Alert type="warning" style={{marginBottom:12}} showIcon
++    title="برای بازیابی به دو فایل نیاز دارید"
++    description="بکاپ با AES-256 رمزگذاری می‌شود. فایل GPG و فایل کلید را جداگانه در محل امن نگه دارید. هرگز آن‌ها را در GitHub یا کانال تلگرام منتشر نکنید."/>
++   <Table rowKey="name" size="small" pagination={{pageSize:6}}
++    dataSource={status.backups} columns={[
++    {title:'فایل بکاپ',dataIndex:'name',ellipsis:true},
++    {title:'حجم',render:(_:unknown,r:BackupEntry)=>humanSize(r.size)},
++    {title:'زمان ساخت (UTC)',dataIndex:'created'},
++    {title:'دانلود',render:(_:unknown,r:BackupEntry)=><a href={url(r.name)} download={r.name}>
++      <Button>دانلود بکاپ</Button>
++     </a>}
++   ]}/>
++  </Card>
++  <Card title="۲. بارگذاری و بررسی بکاپ روی سرور مقصد">
++   <Space direction="vertical" style={{width:'100%'}}>
++    <Space wrap align="start">
++     <Upload beforeUpload={()=>false} maxCount={1} fileList={archive}
++      onChange={i=>setArchive(i.fileList)} accept=".gpg,.gz" >
++      <Button>انتخاب فایل بکاپ (.gpg)</Button>
++     </Upload>
++     <Upload beforeUpload={()=>false} maxCount={1} fileList={key}
++      onChange={i=>setKey(i.fileList)}>
++      <Button>انتخاب فایل کلید (.key)</Button>
++     </Upload>
++    </Space>
++    <Button type="primary" loading={busy} disabled={!archive.length||!key.length}
++      onClick={()=>void upload()}>آپلود و بررسی سلامت فایل</Button>
++    {importID&&<Alert type={currentImport?.state==='failed'?'error':currentImport?.state==='done'?'success':'info'}
++      title={'بررسی فایل واردشده: '+(currentImport?.state==='done'?'موفق':currentImport?.state==='failed'?'ناموفق':'در حال بررسی')}
++      description={currentImport?.detail||'کد پیگیری: '+importID}/>}
++   </Space>
++  </Card>
++  <Card title="۳. بازیابی روی این سرور">
++   <Alert type="error" showIcon style={{marginBottom:12}}
++    title="هشدار: بازیابی اطلاعات فعلی این سرور را جایگزین می‌کند"
++    description="قبل از بازیابی از مقصد بکاپ محافظتی گرفته می‌شود. دامنه باید با دامنه بکاپ یکسان باشد. برای جلوگیری از اجرای هم‌زمان ربات، سرویس ربات در مقصد خاموش می‌ماند."/>
++   {!restoreMode?
++    <Button danger disabled={currentImport?.state!=='done'} onClick={()=>setRestoreMode(true)}>
++     ادامه به مرحله تأیید بازیابی
++    </Button>
++    :<Space direction="vertical">
++      <Typography.Text>برای تأیید، کلمه RESTORE را دقیقاً وارد کنید.</Typography.Text>
++      <Input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="RESTORE" dir="ltr"/>
++      <Checkbox checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}>
++       می‌دانم داده‌های فعلی مقصد جایگزین می‌شوند و سرور قدیمی نباید هم‌زمان از ربات استفاده کند.
++      </Checkbox>
++      <Space>
++       <Button danger type="primary" loading={busy}
++        disabled={confirmation!=='RESTORE'||!acknowledged}
++        onClick={()=>void restore()}>تأیید نهایی و شروع بازیابی</Button>
++       <Button onClick={()=>setRestoreMode(false)}>انصراف</Button>
++      </Space>
++     </Space>}
++  </Card>
++  {error&&<Alert type="error" title={error}/>}
++  <Card title="وضعیت عملیات‌های اخیر">
++   <Table size="small" rowKey="job" pagination={false} dataSource={latestJob}
++    columns={[
++     {title:'شناسه',dataIndex:'job',ellipsis:true},
++     {title:'وضعیت',render:(_:unknown,j:JobEntry)=>statusTag(j)},
++     {title:'جزئیات',dataIndex:'detail'},
++    ]}/>
++  </Card>
++ </Space>;
++}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.css b/frontend/src/pages/vpn/SalesBotPage.css
 new file mode 100644
-index 0000000..66e9ae5
+index 00000000..66e9ae5a
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.css
 @@ -0,0 +1,79 @@
@@ -1411,13 +1578,14 @@ index 0000000..66e9ae5
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 00000000..80ed4697
+index 00000000..468dcd68
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,181 @@
 +import {useEffect,useState} from 'react';
 +import {Alert,App,Button,Card,ConfigProvider,Form,Input,InputNumber,Modal,Popconfirm,Select,Space,Switch,Table,Tabs,Tag,Typography,theme} from 'antd';
 +import './SalesBotPage.css';
++import BackupRestorePanel from './BackupRestorePanel';
 +import {HttpUtil} from '@/utils';
 +type Row=Record<string,any>;
 +export default function SalesBotPage(){
@@ -1441,6 +1609,7 @@ index 00000000..80ed4697
 + {data?.runtime.error&&<Alert type="warning" title={data.runtime.error}/>}
 + <Alert showIcon type="info" title="راهنمای راه‌اندازی" description="ابتدا توکن BotFather و آیدی مدیر را در اتصال و امکانات ثبت کنید. پس از ذخیره و بررسی اتصال، پلن فروش یا تست رایگان بسازید. حالت تست بدون پرداخت و یک‌بار برای هر کاربر فعال می‌شود."/>
 + <Tabs items={[
++ {key:'backup',label:'پشتیبان‌گیری و بازیابی',children:<BackupRestorePanel/>},
 + {key:'settings',label:'اتصال و امکانات',children:<Form form={settings} className="masiha-sales-form" layout="vertical" onFinish={v=>void run('settings',{values:{...v,admins:String(v.admins).split(/[,،\s]+/).filter(Boolean).map(Number)}})}>
 +  <div className="masiha-sales-form-grid">
 +   <Card title="۱. اتصال و دسترسی ربات" className="masiha-sales-section">
@@ -1596,7 +1765,7 @@ index 00000000..80ed4697
 +}
 diff --git a/frontend/src/pages/vpn/VPNPage.tsx b/frontend/src/pages/vpn/VPNPage.tsx
 new file mode 100644
-index 0000000..6747662
+index 00000000..67476623
 --- /dev/null
 +++ b/frontend/src/pages/vpn/VPNPage.tsx
 @@ -0,0 +1,97 @@
@@ -1698,7 +1867,7 @@ index 0000000..6747662
 + </div>;
 +}
 diff --git a/frontend/src/routes.tsx b/frontend/src/routes.tsx
-index beb9a4e..5a3a493 100644
+index beb9a4e1..5a3a4934 100644
 --- a/frontend/src/routes.tsx
 +++ b/frontend/src/routes.tsx
 @@ -4,6 +4,8 @@ import { Spin } from 'antd';
@@ -1722,7 +1891,7 @@ index beb9a4e..5a3a493 100644
        { path: 'nodes', element: withSuspense(<NodesPage />) },
 diff --git a/frontend/src/test/sales-bot.test.tsx b/frontend/src/test/sales-bot.test.tsx
 new file mode 100644
-index 0000000..5122ca1
+index 00000000..5122ca12
 --- /dev/null
 +++ b/frontend/src/test/sales-bot.test.tsx
 @@ -0,0 +1,24 @@
@@ -1753,7 +1922,7 @@ index 0000000..5122ca1
 \ No newline at end of file
 diff --git a/frontend/src/test/vpn-page.test.tsx b/frontend/src/test/vpn-page.test.tsx
 new file mode 100644
-index 0000000..ad45849
+index 00000000..ad458494
 --- /dev/null
 +++ b/frontend/src/test/vpn-page.test.tsx
 @@ -0,0 +1,25 @@
@@ -1783,7 +1952,7 @@ index 0000000..ad45849
 + await waitFor(()=>expect(screen.getByLabelText('نام کاربری')).not.toBeNull());
 +});
 diff --git a/internal/sub/controller.go b/internal/sub/controller.go
-index 5f5b2ae..d7722eb 100644
+index 5f5b2ae3..d7722ebe 100644
 --- a/internal/sub/controller.go
 +++ b/internal/sub/controller.go
 @@ -327,6 +327,8 @@ func (a *SUBController) initRouter(g *gin.RouterGroup) {
@@ -1797,7 +1966,7 @@ index 5f5b2ae..d7722eb 100644
  		gJson := g.Group(a.subJsonPath)
 diff --git a/internal/sub/masiha_profiles.go b/internal/sub/masiha_profiles.go
 new file mode 100644
-index 0000000..33eca19
+index 00000000..33eca196
 --- /dev/null
 +++ b/internal/sub/masiha_profiles.go
 @@ -0,0 +1,65 @@
@@ -1867,22 +2036,269 @@ index 0000000..33eca19
 +	c.JSON(http.StatusOK, result.Obj)
 +}
 diff --git a/internal/web/controller/api.go b/internal/web/controller/api.go
-index c02eb2c..1d94ae9 100644
+index c02eb2cd..298d4a65 100644
 --- a/internal/web/controller/api.go
 +++ b/internal/web/controller/api.go
-@@ -177,6 +177,9 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
+@@ -177,6 +177,14 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
  	api.Use(middleware.ConfigEnvelopeMiddleware())
  	api.Use(middleware.CSRFMiddleware())
  
 +	api.POST("/masiha-vpn", masihaVPN)
 +	api.POST("/masiha-reconcile", masihaReconcile)
 +	api.POST("/sales-bot", masihaSales)
++	api.GET("/masiha-backup/status", a.backupStatus)
++	api.GET("/masiha-backup/download/:name", a.backupDownload)
++	api.POST("/masiha-backup/create", a.backupCreate)
++	api.POST("/masiha-backup/import", a.backupUpload)
++	api.POST("/masiha-backup/restore", a.backupRestore)
  	api.GET("/openapi.json", ServeOpenAPISpec)
  
  	// Inbounds API
+diff --git a/internal/web/controller/masiha_backup.go b/internal/web/controller/masiha_backup.go
+new file mode 100644
+index 00000000..00d00d0f
+--- /dev/null
++++ b/internal/web/controller/masiha_backup.go
+@@ -0,0 +1,236 @@
++package controller
++
++import (
++	"crypto/rand"
++	"encoding/hex"
++	"encoding/json"
++	"github.com/gin-gonic/gin"
++	"github.com/mhsanaei/3x-ui/v3/internal/web/session"
++	"io"
++	"net/http"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"regexp"
++	"sort"
++	"strings"
++	"time"
++)
++
++const archiveDirectory = "/root/masiha-backups"
++const uploadLimit = 512 << 20
++
++var safeArchive = regexp.MustCompile(`^masiha-full-[a-zA-Z0-9_.-]+\.tar\.gz\.gpg(?:\.sha256)?$`)
++var safeIdentifier = regexp.MustCompile(`^[a-f0-9]{32}$`)
++
++func (a *APIController) backupAdmin(c *gin.Context) bool {
++	u := session.GetLoginUser(c)
++	main, err := a.userService.GetFirstUser()
++	if err != nil || u == nil || main == nil || u.Id != main.Id {
++		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "msg": "Administrator only"})
++		return false
++	}
++	c.Header("Cache-Control", "private, no-store")
++	return true
++}
++func newBackupID() string {
++	var b [16]byte
++	if _, err := rand.Read(b[:]); err != nil {
++		return ""
++	}
++	return hex.EncodeToString(b[:])
++}
++func launchBackup(id, action string) error {
++	if !safeIdentifier.MatchString(id) || (action != "create" && action != "inspect" && action != "restore") {
++		return os.ErrInvalid
++	}
++	return exec.Command("systemd-run", "--quiet", "--collect",
++		"--unit=masiha-webbackup-"+action+"-"+id, "--property=Type=exec", "/usr/bin/python3",
++		"/opt/masiha-vpn-extension/web_backup_worker.py", action, id).Run()
++}
++func privateRegular(path string) bool {
++	fi, err := os.Lstat(path)
++	return err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0077 == 0
++}
++func (a *APIController) backupStatus(c *gin.Context) {
++	if !a.backupAdmin(c) {
++		return
++	}
++	files := []gin.H{}
++	entries, _ := os.ReadDir(archiveDirectory)
++	for _, entry := range entries {
++		name := entry.Name()
++		if entry.IsDir() || !safeArchive.MatchString(name) || !strings.HasSuffix(name, ".gpg") {
++			continue
++		}
++		info, err := entry.Info()
++		if err != nil {
++			continue
++		}
++		files = append(files, gin.H{"name": name, "size": info.Size(),
++			"created": info.ModTime().UTC().Format(time.RFC3339)})
++	}
++	sort.Slice(files, func(i, j int) bool { return files[i]["created"].(string) > files[j]["created"].(string) })
++	jobs := []json.RawMessage{}
++	found, _ := os.ReadDir(filepath.Join(archiveDirectory, "web-jobs"))
++	for _, entry := range found {
++		name := strings.TrimSuffix(entry.Name(), ".json")
++		if !strings.HasSuffix(entry.Name(), ".json") || !safeIdentifier.MatchString(name) {
++			continue
++		}
++		content, err := os.ReadFile(filepath.Join(archiveDirectory, "web-jobs", entry.Name()))
++		if err == nil && json.Valid(content) {
++			jobs = append(jobs, content)
++		}
++	}
++	c.JSON(200, gin.H{"success": true, "obj": gin.H{"backups": files, "jobs": jobs,
++		"has_key": privateRegular("/root/.masiha-backup.key")}})
++}
++func (a *APIController) backupCreate(c *gin.Context) {
++	if !a.backupAdmin(c) {
++		return
++	}
++	id := newBackupID()
++	if id == "" || launchBackup(id, "create") != nil {
++		c.JSON(503, gin.H{"success": false, "msg": "Backup service is unavailable"})
++		return
++	}
++	c.JSON(202, gin.H{"success": true, "obj": gin.H{"job": id}})
++}
++func (a *APIController) backupDownload(c *gin.Context) {
++	if !a.backupAdmin(c) {
++		return
++	}
++	name := c.Param("name")
++	if name == "backup-secret.key" {
++		const key = "/root/.masiha-backup.key"
++		if !privateRegular(key) {
++			c.AbortWithStatus(404)
++			return
++		}
++		c.FileAttachment(key, name)
++		return
++	}
++	if !safeArchive.MatchString(name) {
++		c.AbortWithStatus(404)
++		return
++	}
++	path := filepath.Join(archiveDirectory, name)
++	if !privateRegular(path) {
++		c.AbortWithStatus(404)
++		return
++	}
++	c.FileAttachment(path, name)
++}
++func saveUploaded(header io.Reader, dest string, max int64) error {
++	output, err := os.OpenFile(dest, os.O_WRONLY|os.O_EXCL|os.O_CREATE, 0600)
++	if err != nil {
++		return err
++	}
++	defer output.Close()
++	n, err := io.Copy(output, io.LimitReader(header, max+1))
++	if err != nil || n < 1 || n > max {
++		os.Remove(dest)
++		return os.ErrInvalid
++	}
++	return output.Sync()
++}
++func (a *APIController) backupUpload(c *gin.Context) {
++	if !a.backupAdmin(c) {
++		return
++	}
++	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, uploadLimit)
++	if c.Request.ParseMultipartForm(8<<20) != nil {
++		c.JSON(413, gin.H{"success": false, "msg": "Archive is too large"})
++		return
++	}
++	if c.Request.MultipartForm != nil {
++		defer c.Request.MultipartForm.RemoveAll()
++	}
++	archive, err := c.FormFile("archive")
++	if err != nil || archive.Size < 1024 || archive.Size > uploadLimit-4096 {
++		c.JSON(400, gin.H{"success": false, "msg": "Invalid archive"})
++		return
++	}
++	key, err := c.FormFile("key")
++	if err != nil || key.Size < 16 || key.Size > 4096 {
++		c.JSON(400, gin.H{"success": false, "msg": "Select your separate backup key"})
++		return
++	}
++	id := newBackupID()
++	if id == "" {
++		c.AbortWithStatus(500)
++		return
++	}
++	dir := filepath.Join(archiveDirectory, "web-imports")
++	if os.MkdirAll(dir, 0700) != nil {
++		c.AbortWithStatus(500)
++		return
++	}
++	saved := []string{}
++	save := func(field, extension string, max int64) error {
++		f, e := c.FormFile(field)
++		if e != nil {
++			return e
++		}
++		file, e := f.Open()
++		if e != nil {
++			return e
++		}
++		defer file.Close()
++		path := filepath.Join(dir, id+extension)
++		e = saveUploaded(file, path, max)
++		if e == nil {
++			saved = append(saved, path)
++		}
++		return e
++	}
++	err = save("archive", ".gpg", uploadLimit-4096)
++	if err == nil {
++		err = save("key", ".key", 4096)
++	}
++	if err == nil {
++		err = launchBackup(id, "inspect")
++	}
++	if err != nil {
++		for _, path := range saved {
++			os.Remove(path)
++		}
++		c.JSON(400, gin.H{"success": false, "msg": "Import failed"})
++		return
++	}
++	c.JSON(202, gin.H{"success": true, "obj": gin.H{"job": id}})
++}
++func (a *APIController) backupRestore(c *gin.Context) {
++	if !a.backupAdmin(c) {
++		return
++	}
++	var body struct {
++		Job     string `json:"job"`
++		Confirm string `json:"confirm"`
++	}
++	if c.ShouldBindJSON(&body) != nil || !safeIdentifier.MatchString(body.Job) || body.Confirm != "RESTORE" {
++		c.JSON(400, gin.H{"success": false, "msg": "Type RESTORE to confirm"})
++		return
++	}
++	path := filepath.Join(archiveDirectory, "web-jobs", body.Job+".json")
++	raw, err := os.ReadFile(path)
++	var state struct {
++		State string `json:"state"`
++	}
++	if err != nil || json.Unmarshal(raw, &state) != nil || state.State != "done" {
++		c.JSON(409, gin.H{"success": false, "msg": "Verify the imported archive first"})
++		return
++	}
++	for _, extension := range []string{".gpg", ".key"} {
++		if !privateRegular(filepath.Join(archiveDirectory, "web-imports", body.Job+extension)) {
++			c.JSON(409, gin.H{"success": false, "msg": "Import files are missing"})
++			return
++		}
++	}
++	if err := launchBackup(body.Job, "restore"); err != nil {
++		c.JSON(503, gin.H{"success": false, "msg": "Could not start restore"})
++		return
++	}
++	c.JSON(202, gin.H{"success": true, "obj": gin.H{"job": body.Job}})
++}
 diff --git a/internal/web/controller/masiha_reconcile.go b/internal/web/controller/masiha_reconcile.go
 new file mode 100644
-index 0000000..fae8c7e
+index 00000000..fae8c7ef
 --- /dev/null
 +++ b/internal/web/controller/masiha_reconcile.go
 @@ -0,0 +1,36 @@
@@ -1924,7 +2340,7 @@ index 0000000..fae8c7e
 +}
 diff --git a/internal/web/controller/masiha_sales.go b/internal/web/controller/masiha_sales.go
 new file mode 100644
-index 0000000..e3127f1
+index 00000000..e3127f10
 --- /dev/null
 +++ b/internal/web/controller/masiha_sales.go
 @@ -0,0 +1,75 @@
@@ -2005,7 +2421,7 @@ index 0000000..e3127f1
 +}
 diff --git a/internal/web/controller/masiha_vpn.go b/internal/web/controller/masiha_vpn.go
 new file mode 100644
-index 0000000..30a7688
+index 00000000..30a76886
 --- /dev/null
 +++ b/internal/web/controller/masiha_vpn.go
 @@ -0,0 +1,33 @@
@@ -2043,7 +2459,7 @@ index 0000000..30a7688
 +	c.Data(http.StatusOK, "application/json; charset=utf-8", out)
 +}
 diff --git a/internal/web/web.go b/internal/web/web.go
-index d726039..90afefd 100644
+index d726039a..90afefd8 100644
 --- a/internal/web/web.go
 +++ b/internal/web/web.go
 @@ -250,6 +250,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
