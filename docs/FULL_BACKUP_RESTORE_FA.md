@@ -70,7 +70,7 @@ sudo python3 deploy/full-backup.py verify \
 cd /root/Masih-panel
 sudo mkdir -m 700 /tmp/masiha-restore-check
 sudo python3 deploy/full-backup.py restore /root/masiha-full-....tar.gz.gpg \
-  --key-file /root/.masiha-backup.key \
+  --key-file /root/.masiha-import.key \
   --confirm-restore --staging-root /tmp/masiha-restore-check
 ```
 
