@@ -177,6 +177,10 @@ XUI_NONINTERACTIVE=1 XUI_SSL_MODE=none XUI_DB_TYPE=sqlite \
 systemctl stop x-ui.service 2>/dev/null || true
 install -m 0755 "$BUILD_ROOT/x-ui" /usr/local/x-ui/x-ui
 install -d -m 0700 /etc/x-ui /etc/masiha-vpn-extension /opt/masiha-vpn-extension
+# Web-based, admin-authenticated backup/restore worker runs outside x-ui
+# via systemd-run so final recovery survives panel service restarts.
+install -m 0644 "$REPO_ROOT/deploy/full-backup.py" /opt/masiha-vpn-extension/full_backup.py
+install -m 0644 "$REPO_ROOT/deploy/web-backup-worker.py" /opt/masiha-vpn-extension/web_backup_worker.py
 for file in manager.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py gamification.py entertainment.py media_library.py runtime_config.py; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
 done
@@ -230,6 +234,17 @@ server {
   ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
   ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
   client_max_body_size 16m;
+  # Restrict large uploads to the authenticated backup-import endpoint.
+  location = ${PANEL_PATH}panel/api/masiha-backup/import {
+    client_max_body_size 512m;
+    proxy_pass http://127.0.0.1:62053;
+    proxy_http_version 1.1;
+    proxy_request_buffering on;
+    proxy_read_timeout 360s;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+  }
   location /sub/ {
     proxy_pass http://127.0.0.1:2096;
     proxy_set_header Host \$host;
