@@ -40,8 +40,16 @@ SOURCES = (
     "/etc/letsencrypt",
     "/etc/nginx/sites-available/masiha-vpn",
     "/etc/nginx/sites-enabled/masiha-vpn",
+    "/etc/nginx/nginx.conf",
+    "/etc/nginx/conf.d",
+    "/etc/ufw/user.rules",
+    "/etc/ufw/user6.rules",
+    "/etc/iptables/rules.v4",
+    "/etc/iptables/rules.v6",
     "/etc/systemd/system/x-ui.service",
+    "/etc/systemd/system/x-ui.service.d",
     "/etc/systemd/system/masiha-vpn-extension.service",
+    "/etc/systemd/system/masiha-vpn-extension.service.d",
     "/etc/sysctl.d/98-masiha-vpn-forward.conf",
     "/usr/local/x-ui",
     "/opt/masiha-vpn-extension",
@@ -247,6 +255,27 @@ def start_services(services):
         run("systemctl", "start", service)
 
 
+def network_diagnostics():
+    """Encrypted audit record for network rules; never replay firewall on restore."""
+    checks = {
+        "ufw": ["ufw","status","verbose"],
+        "ipv4_routes": ["ip","-4","route","show"],
+        "ipv6_routes": ["ip","-6","route","show"],
+        "iptables": ["iptables-save"],
+        "nftables": ["nft","list","ruleset"],
+        "sysctl_forwarding": ["sysctl","net.ipv4.ip_forward","net.ipv6.conf.all.forwarding"],
+    }
+    diagnostics = {}
+    for name,cmd in checks.items():
+        try:
+            outcome=subprocess.run(cmd,capture_output=True,text=True,timeout=8)
+            if outcome.returncode == 0:
+                diagnostics[name]=outcome.stdout[:200000]
+        except (OSError,subprocess.TimeoutExpired):
+            pass
+    return diagnostics
+
+
 def pack(stage, tar_path, manifest):
     (stage / "manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True),
@@ -300,6 +329,7 @@ def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False):
             if commit.returncode == 0 else "unavailable",
             "snapshot_type": "quiesced" if quiesce else "online-sqlite-consistent",
             "databases": databases, "files": files, "source_roots": list(SOURCES),
+            "network_audit_only": network_diagnostics(),
         }
         plain = stage / "payload.tar.gz"
         pack(stage, plain, manifest)
