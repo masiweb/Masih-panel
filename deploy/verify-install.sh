@@ -59,8 +59,13 @@ if os.environ.get('MASIHA_EXPECT_DEFAULT_INBOUNDS')=='1':
  print("HTTPS subscription URL: PASS")
 db.close()
 PY
-echo "=== Extension Python syntax ==="
-python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,sales_bot_admin,gamification,entertainment,media_library,runtime_config}.py
+echo "=== Extension and secure web backup worker syntax ==="
+for helper in full_backup.py web_backup_worker.py; do
+  test -s "/opt/masiha-vpn-extension/$helper" ||
+    { echo "ERROR: missing web backup/restore helper $helper" >&2; exit 1; }
+done
+python3 -m py_compile /opt/masiha-vpn-extension/{manager,unified,worker,sales,sales_worker,sales_bot_admin,gamification,entertainment,media_library,runtime_config,full_backup,web_backup_worker}.py
+echo "Web backup/restore worker installed: PASS"
 # QR generation is a Telegram outbox feature: without both packages it
 # silently accumulates repeated failures instead of delivering a QR image.
 python3 - <<'PY'
