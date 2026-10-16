@@ -9,7 +9,7 @@ for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/b
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/web-backup-worker.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -24,6 +24,9 @@ git apply --stat deploy/3x-ui.patch >/dev/null
 test -s deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/SalesBotPage.css' deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/SalesBotPage.tsx' deploy/3x-ui.patch
+grep -Fq 'frontend/src/pages/vpn/BackupRestorePanel.tsx' deploy/3x-ui.patch
+grep -Fq 'internal/web/controller/masiha_backup.go' deploy/3x-ui.patch
+test -s deploy/web-backup-worker.py
 echo "Native 3x-ui release patch parses (includes styled Telegram sales UI)"
 if [[ -n "${MASIHA_CHECK_SOURCE:-}" ]]; then
   [[ -d "$MASIHA_CHECK_SOURCE/.git" ]] || {
