@@ -5,6 +5,7 @@ import (
  "encoding/hex"
  "encoding/json"
  "io"
+ "mime/multipart"
  "net/http"
  "os"
  "os/exec"
@@ -101,40 +102,52 @@ func saveUploaded(header io.Reader,dest string,max int64)error{
  if err!=nil||n<1||n>max {os.Remove(dest);return os.ErrInvalid}
  return output.Sync()
 }
+// importBackupParts streams multipart directly to 0600 files, without
+// buffering a full media archive in RAM or trusting uploaded filenames.
+func importBackupParts(reader *multipart.Reader,dir,id string)([]string,error){
+ if !safeIdentifier.MatchString(id){return nil,os.ErrInvalid}
+ saved:=[]string{}
+ seen:=map[string]bool{}
+ for {
+  part,err:=reader.NextPart()
+  if err==io.EOF{break}
+  if err!=nil{return saved,err}
+  field:=part.FormName()
+  if field!="archive"&&field!="key"||seen[field]{
+   part.Close()
+   return saved,os.ErrInvalid
+  }
+  seen[field]=true
+  extension,limit:=".gpg",int64(uploadLimit-4096)
+  if field=="key"{extension=".key";limit=4096}
+  path:=filepath.Join(dir,id+extension)
+  err=saveUploaded(part,path,limit)
+  part.Close()
+  if err!=nil{return saved,err}
+  saved=append(saved,path)
+ }
+ if !seen["archive"]||!seen["key"]{return saved,os.ErrInvalid}
+ statArchive,err:=os.Stat(filepath.Join(dir,id+".gpg"))
+ if err!=nil||statArchive.Size()<1024{return saved,os.ErrInvalid}
+ statKey,err:=os.Stat(filepath.Join(dir,id+".key"))
+ if err!=nil||statKey.Size()<16{return saved,os.ErrInvalid}
+ return saved,nil
+}
 func (a *APIController) backupUpload(c *gin.Context){
  if !a.backupAdmin(c){return}
  c.Request.Body=http.MaxBytesReader(c.Writer,c.Request.Body,uploadLimit)
- if c.Request.ParseMultipartForm(8<<20)!=nil{
-  c.JSON(413,gin.H{"success":false,"msg":"Archive is too large"});return
- }
- if c.Request.MultipartForm!=nil{defer c.Request.MultipartForm.RemoveAll()}
- archive,err:=c.FormFile("archive")
- if err!=nil||archive.Size<1024||archive.Size>uploadLimit-4096 {
-  c.JSON(400,gin.H{"success":false,"msg":"Invalid archive"});return
- }
- key,err:=c.FormFile("key")
- if err!=nil||key.Size<16||key.Size>4096 {
-  c.JSON(400,gin.H{"success":false,"msg":"Select your separate backup key"});return
+ reader,err:=c.Request.MultipartReader()
+ if err!=nil {
+  c.JSON(400,gin.H{"success":false,"msg":"Select an encrypted archive and key"});return
  }
  id:=newBackupID();if id==""{c.AbortWithStatus(500);return}
  dir:=filepath.Join(archiveDirectory,"web-imports")
  if os.MkdirAll(dir,0700)!=nil{c.AbortWithStatus(500);return}
- saved:=[]string{}
- save:=func(field,extension string,max int64)error{
-  f,e:=c.FormFile(field);if e!=nil{return e}
-  file,e:=f.Open();if e!=nil{return e}
-  defer file.Close()
-  path:=filepath.Join(dir,id+extension)
-  e=saveUploaded(file,path,max)
-  if e==nil{saved=append(saved,path)}
-  return e
- }
- err=save("archive",".gpg",uploadLimit-4096)
- if err==nil{err=save("key",".key",4096)}
+ saved,err:=importBackupParts(reader,dir,id)
  if err==nil{err=launchBackup(id,"inspect")}
  if err!=nil{
   for _,path:=range saved{os.Remove(path)}
-  c.JSON(400,gin.H{"success":false,"msg":"Import failed"});return
+  c.JSON(400,gin.H{"success":false,"msg":"Import failed or exceeded safe size"});return
  }
  c.JSON(202,gin.H{"success":true,"obj":gin.H{"job":id}})
 }
