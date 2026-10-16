@@ -518,7 +518,8 @@ def validate_restored(root=None):
     print("RESTORED_DATABASE_AND_SERVICE_CONFIG_VALIDATION=PASS")
 
 
-def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=False):
+def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=False,
+            activate_telegram=False):
     ensure_root()
     if not confirm:
         die("Refusing restore without --confirm-restore")
@@ -556,9 +557,15 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
             stop_services(running)
             changed=restore_files(manifest,contents,rollback=undo)
             validate_restored()
-            start_services(running)
-            # Run a second check after service start.
-            for unit in running:
+            # The same Telegram bot token must NEVER poll from two servers.
+            # Keep the commerce/Telegram worker down until source is stopped.
+            to_start=[unit for unit in running if
+                      activate_telegram or unit!="masiha-vpn-extension.service"]
+            start_services(to_start)
+            if "masiha-vpn-extension.service" in running and not activate_telegram:
+                print("TELEGRAM_AND_EXTENSION_LEFT_STOPPED_FOR_SAFE_CUTOVER")
+                print("STOP_THE_SOURCE_WORKER_THEN_START_TARGET_EXTENSION_MANUALLY")
+            for unit in to_start:
                 if subprocess.run(["systemctl","is-active","--quiet",unit]).returncode:
                     die("Restored service did not start: "+unit)
         except Exception:
@@ -595,6 +602,8 @@ def main():
     r.add_argument("--confirm-restore",action="store_true")
     r.add_argument("--staging-root",help="isolated restore-only test directory under /tmp or /var/tmp")
     r.add_argument("--allow-domain-mismatch",action="store_true")
+    r.add_argument("--activate-telegram",action="store_true",
+                   help="start restored Telegram/extension worker immediately; ONLY after old server stops it")
     args=parser.parse_args()
     if args.action=="backup":
         create_backup(Path(args.output_dir),Path(args.key_file),args.quiesce)
@@ -605,7 +614,7 @@ def main():
         print("BACKUP_INTEGRITY_VERIFIED=PASS")
     elif args.action=="restore":
         restore(args.archive,args.key_file,args.confirm_restore,args.staging_root,
-                args.allow_domain_mismatch)
+                args.allow_domain_mismatch,args.activate_telegram)
 
 
 if __name__=="__main__":
