@@ -33,6 +33,7 @@ PY
  ./node_modules/.bin/vite build --config masiha-vite.config.mjs
 )
 install -m 0644 "$SIDE/nav.js" /var/www/masiha-ui/nav.js
+install -m 0644 "$SIDE/nav.css" /var/www/masiha-ui/nav.css
 chmod -R a+rX /var/www/masiha-ui
 python3 -m py_compile /opt/masiha-vpn-extension/sidecar_server.py
 install -m 0644 "$SIDE/masiha-vpn-sidecar.service" /etc/systemd/system/masiha-vpn-sidecar.service
