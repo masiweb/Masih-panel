@@ -281,3 +281,6 @@ chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/masiha-reload.sh
 # ACME certs, credentials and an already-generated CA on interrupted installs.
 echo "=== Stage 5/5: Configure VPN services, Xray presets and Telegram extension ==="
 bash "$REPO_ROOT/deploy/finalize-ubuntu-24.04.sh" --from-installer
+# The separately hosted Masiha web modules survive future native SANAei updates.
+echo "=== Stage 6/6: Install upgrade-safe Masiha independent web controls ==="
+bash "$REPO_ROOT/deploy/install-sidecar.sh"

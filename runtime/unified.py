@@ -91,8 +91,12 @@ def reconcile():
  # Sampling precedes lifecycle decisions, so traffic on either VPN can exhaust
  # the SAME quota used by Xray and shown in the native subscription page.
  collect()
- from sales import Panel
- Panel().call("/panel/api/masiha-reconcile",{})
+ # Official SANAei updates replace the old custom Go API endpoint.
+ # Client traffic has already been committed to the native x-ui SQLite DB
+ # by collect(). The official x-ui traffic job continuously enforces shared
+ # quota/expiry from those same client_traffics counters. Do not call the
+ # now-absent custom /masiha-reconcile endpoint.
+ # Read this DB below to reconcile OpenVPN/OpenConnect credentials directly.
  with connection() as c:
   rows=[dict(r) for r in clients(c)]
   accounts={a["client_id"]:dict(a) for a in c.execute("SELECT * FROM masiha_accounts")}

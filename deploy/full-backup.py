@@ -53,6 +53,8 @@ SOURCES = (
     "/etc/sysctl.d/98-masiha-vpn-forward.conf",
     "/usr/local/x-ui",
     "/opt/masiha-vpn-extension",
+    "/var/www/masiha-ui",
+    "/etc/systemd/system/masiha-vpn-sidecar.service",
 )
 EXCLUDED_DIRS = frozenset((
     "backups", "release-staging", "toolchain", ".git", "__pycache__",
@@ -60,7 +62,7 @@ EXCLUDED_DIRS = frozenset((
 ))
 SENSITIVE_TRANSIENT_SUFFIXES = (".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm")
 SERVICES = (
-    "masiha-vpn-extension.service", "x-ui.service",
+    "masiha-vpn-extension.service", "masiha-vpn-sidecar.service", "x-ui.service",
     "openvpn-server@masiha.service", "ocserv.service",
 )
 DEFAULT_KEY = Path("/root/.masiha-backup.key")

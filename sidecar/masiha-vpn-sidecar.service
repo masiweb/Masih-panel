@@ -1,0 +1,19 @@
+[Unit]
+Description=Masiha independent web extension for upstream 3x-ui
+Wants=network-online.target x-ui.service
+After=network-online.target x-ui.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -W ignore::DeprecationWarning /opt/masiha-vpn-extension/sidecar_server.py
+WorkingDirectory=/opt/masiha-vpn-extension
+Restart=always
+RestartSec=3
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
