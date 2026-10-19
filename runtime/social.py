@@ -79,6 +79,19 @@ def setup(c):
   id INTEGER PRIMARY KEY,conversation INTEGER NOT NULL,sender INTEGER NOT NULL,
   body TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL
  );
+ CREATE TABLE IF NOT EXISTS social_admin_adjustments(
+   request_id TEXT PRIMARY KEY,manager TEXT NOT NULL,
+   user_id INTEGER NOT NULL,operation TEXT NOT NULL,
+   amount INTEGER NOT NULL,before_balance INTEGER NOT NULL,
+   after_balance INTEGER NOT NULL,note TEXT NOT NULL DEFAULT '',
+   created INTEGER NOT NULL
+ );
+ CREATE INDEX IF NOT EXISTS social_admin_adjustments_user ON social_admin_adjustments(user_id,created DESC);
+ CREATE TABLE IF NOT EXISTS social_admin_adjust_drafts(
+   token TEXT PRIMARY KEY,manager INTEGER NOT NULL,code TEXT NOT NULL,
+   operation TEXT NOT NULL,amount INTEGER NOT NULL,
+   note TEXT NOT NULL DEFAULT '',expires INTEGER NOT NULL
+ );
  CREATE INDEX IF NOT EXISTS social_messages_by_chat ON social_chat_messages(conversation,id);
  CREATE TABLE IF NOT EXISTS social_chat_queue(user_id INTEGER PRIMARY KEY,
    mode TEXT NOT NULL,joined INTEGER NOT NULL);
@@ -115,6 +128,84 @@ def setup(c):
    if name not in existing:
     c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+sql_type)
  c.commit()
+
+ADMIN_OPERATIONS={
+ "points_add":("⭐ افزایش امتیاز","امتیاز",1),
+ "points_sub":("⭐ کاهش امتیاز","امتیاز",-1),
+ "wallet_add":("💰 افزایش کیف پول","تومان",1),
+ "wallet_sub":("💰 کاهش کیف پول","تومان",-1),
+}
+ADJUST_REQUEST_RE=r"[a-zA-Z0-9_-]{16,64}"
+AMOUNT_MAX={"points_add":1000000,"points_sub":1000000,
+            "wallet_add":1000000000,"wallet_sub":1000000000}
+
+def _admin_buttons(code):
+ return [
+  [("➕ افزایش امتیاز","soc:adjust:points_add:"+code),
+   ("➖ کاهش امتیاز","soc:adjust:points_sub:"+code)],
+  [("💰 افزایش کیف پول","soc:adjust:wallet_add:"+code),
+   ("💸 کاهش کیف پول","soc:adjust:wallet_sub:"+code)]
+ ]
+
+def _check_bot_admin(c,uid):
+ if uid not in _sales().settings(c)["admins"]:
+  raise ValueError("این عملیات فقط برای مدیر ربات مجاز است")
+
+def _adjust_info(c,uid):
+ user=c.execute("SELECT balance FROM users WHERE id=?",(uid,)).fetchone()
+ if not user:raise ValueError("حساب کاربر یافت نشد")
+ from gamification import balance
+ return {"wallet":int(user["balance"]),"points":balance(c,uid)}
+
+def adjust_account(c,code,operation,amount,request_id,note="",manager="web-admin"):
+ """DB-atomic adjustment, unique event, independent of repeat requests."""
+ if not isinstance(code,str):raise ValueError("شناسه عمومی نامعتبر است")
+ uid=by_code(c,code)
+ if operation not in ADMIN_OPERATIONS:raise ValueError("نوع عملیات نامعتبر است")
+ if type(amount) is not int or not 1<=amount<=AMOUNT_MAX[operation]:
+  raise ValueError("مقدار باید عدد صحیح مثبت و در محدوده مجاز باشد")
+ if not isinstance(request_id,str) or not re.fullmatch(ADJUST_REQUEST_RE,request_id):
+  raise ValueError("شناسه یکتای درخواست نامعتبر است")
+ if not isinstance(note,str) or len(note)>200 or any(ord(x)<32 and x not in "\n\t" for x in note):
+  raise ValueError("توضیح نامعتبر است")
+ note=note.strip()
+ if not isinstance(manager,str) or not 1<=len(manager)<=65:
+  raise ValueError("هویت مدیر نامعتبر است")
+ previous=c.execute("SELECT * FROM social_admin_adjustments WHERE request_id=?",(request_id,)).fetchone()
+ if previous:
+  if previous["user_id"]!=uid or previous["operation"]!=operation or previous["amount"]!=amount or previous["manager"]!=manager:
+   raise ValueError("این شناسه درخواست قبلاً برای عملیات دیگری استفاده شده است")
+  return {"applied":False,"before":previous["before_balance"],"after":previous["after_balance"],
+          "operation":operation,"amount":amount,"code":code}
+ column="points" if operation.startswith("points_") else "wallet"
+ sign=ADMIN_OPERATIONS[operation][2]
+ before=_adjust_info(c,uid)[column]
+ after=before+sign*amount
+ if after<0:raise ValueError("موجودی "+("امتیاز" if column=="points" else "کیف پول")+" برای کاهش کافی نیست")
+ if column=="wallet":
+  _sales().money(c,uid,sign*amount,"social_admin_"+operation,
+                 "social:admin-adjust:"+request_id)
+ else:
+  c.execute("""INSERT INTO loyalty_points(user_id,points,kind,reference,created)
+               VALUES(?,?,'social_admin',?,?)""",
+            (uid,sign*amount,"social:admin-adjust:"+request_id,_now()))
+ actual=_adjust_info(c,uid)[column]
+ if actual!=after:raise RuntimeError("مانده حساب مطابق عملیات نیست")
+ c.execute("""INSERT INTO social_admin_adjustments
+ (request_id,manager,user_id,operation,amount,before_balance,after_balance,note,created)
+ VALUES(?,?,?,?,?,?,?,?,?)""",(request_id,manager,uid,operation,amount,before,after,note,_now()))
+ action_label,unit,_=ADMIN_OPERATIONS[operation]
+ notice=("🔔 اطلاعیه تغییر حساب از طرف مدیریت\n"+
+          action_label+"\nمقدار: "+format(amount,",")+" "+unit+
+          "\nموجودی جدید: "+format(after,",")+" "+unit+
+          ("\nتوضیح مدیریت: "+note if note else "")+
+          "\nاین تغییر توسط مدیر ربات ثبت شده است.")
+ _sales().enqueue(c,uid,notice,[[("👤 پروفایل من","soc:profile"),
+                                  ("🏠 منوی اصلی","home")]],
+                  "social:admin-adjust-notice:"+request_id)
+ _sales().audit(c,"social_admin_"+operation,manager+" | "+code+" | "+str(amount)+" | "+request_id)
+ return {"applied":True,"before":before,"after":after,
+         "operation":operation,"amount":amount,"code":code}
 
 def _sales():
  import sales
@@ -390,10 +481,12 @@ def my_profile(c,uid):
   [("🖼 مشاهده گالری خودم","soc:mygallery")],
   [("🌐 تنظیمات حریم خصوصی","soc:privacy"),("🔗 لینک دعوت","soc:invite")],
   [("👁 بازدیدکنندگان","soc:visitors"),("👥 دنبال‌کنندگان","soc:followers")],
-  [("🏠 بازگشت به کلاب ناشناس","soc:home")]])
+  ]+(_admin_buttons(p["code"]) if uid in _sales().settings(c)["admins"] else [])+
+  [[("🏠 بازگشت به کلاب ناشناس","soc:home")]])
 
 def _public_card(c,viewer,p):
- if not _can_view(c,viewer,p) or _blocked(c,viewer,p["user_id"]):
+ if not _can_view(c,viewer,p) or (_blocked(c,viewer,p["user_id"]) and
+     viewer not in _sales().settings(c)["admins"]):
   raise ValueError("این پروفایل قابل نمایش نیست")
  if viewer!=p["user_id"]:
   # Viewer identity is visible only if they consent to appearing.
@@ -425,7 +518,13 @@ def public_card(c,uid,target):
   [(("➖ لغو دنبال‌کردن" if following else "➕ دنبال‌کردن"),"soc:follow:"+p["code"])],
   [("💬 درخواست شروع گفتگو","soc:friendchat:"+p["code"])],
   [("🚩 گزارش","soc:report:"+p["code"]),("⛔ مسدودکردن","soc:block:"+p["code"])],
-  [("↩️ کلاب ناشناس","soc:home")]]
+  ]
+ if uid in _sales().settings(c)["admins"]:
+  values=_adjust_info(c,target)
+  msg+=("\n\n🔐 مدیریت حساب\n⭐ امتیاز: "+format(values["points"],",")+
+        "\n💰 کیف پول: "+format(values["wallet"],",")+" تومان")
+  buttons+=_admin_buttons(p["code"])
+ buttons.append([("↩️ کلاب ناشناس","soc:home")])
  _send(c,uid,msg,buttons)
 
 def by_code(c,code):
@@ -671,6 +770,37 @@ def callback(c,uid,cmd):
      _active_chat(c,uid) or
      c.execute("SELECT 1 FROM social_chat_queue WHERE user_id=?",(uid,)).fetchone()):
   _leave(c,uid)
+ if op=="adjust":
+  _check_bot_admin(c,uid)
+  if len(parts)!=4 or parts[2] not in ADMIN_OPERATIONS:raise ValueError("عملیات مدیریتی نامعتبر است")
+  code=parts[3];target=by_code(c,code)
+  values=_adjust_info(c,target)
+  operation=parts[2]
+  label,unit,_=ADMIN_OPERATIONS[operation]
+  _state(c,uid,"soc:adminamount:"+operation+":"+code)
+  return _send(c,uid,"🔐 "+label+"\nکاربر: "+_public_name(c,target)+
+   "\nشناسه: "+code+"\nموجودی فعلی: "+
+   format(values["points"] if operation.startswith("points_") else values["wallet"],",")+" "+unit+
+   "\n\nمقدار صحیح مثبت را ارسال کنید؛ می‌توانید بعد از آن توضیح کوتاه هم بنویسید. "+
+   "\nمثال: 25 هدیه مدیریت",
+   [[("❌ انصراف","soc:view:"+code)]])
+ if op=="adjustconfirm":
+  _check_bot_admin(c,uid)
+  if len(parts)!=3 or not re.fullmatch(r"[0-9a-f]{20}",parts[2]):
+   raise ValueError("تأیید عملیات نامعتبر است")
+  row=c.execute("SELECT * FROM social_admin_adjust_drafts WHERE token=? AND manager=?",
+                (parts[2],uid)).fetchone()
+  if not row or row["expires"]<_now():raise ValueError("این تأییدیه منقضی یا مصرف شده است")
+  result=adjust_account(c,row["code"],row["operation"],row["amount"],row["token"],
+                        note=row["note"],manager="telegram:"+str(uid))
+  c.execute("DELETE FROM social_admin_adjust_drafts WHERE token=?",(parts[2],))
+  _state(c,uid,"")
+  label,unit,_=ADMIN_OPERATIONS[row["operation"]]
+  _send(c,uid,"✅ "+label+" برای "+row["code"]+" ثبت شد.\nمقدار: "+
+        format(row["amount"],",")+" "+unit+"\nموجودی جدید: "+
+        format(result["after"],",")+" "+unit+"\n🔔 اعلان به کاربر در صف ارسال قرار گرفت.",
+        [[("👤 بازگشت به پروفایل","soc:view:"+row["code"])]])
+  return
  if op=="home":return menu(c,uid)
  if op=="profile":return my_profile(c,uid)
  if op=="setup":
@@ -924,6 +1054,40 @@ def callback(c,uid,cmd):
 
 def input_text(c,uid,state,m,update_id):
  parts=state.split(":");op=parts[1]
+ if op=="adminamount":
+  _check_bot_admin(c,uid)
+  if len(parts)!=4 or parts[2] not in ADMIN_OPERATIONS:raise ValueError("فیلد مدیریت نامعتبر است")
+  code=parts[3];uid_target=by_code(c,code)
+  raw=(m.get("text") or "").strip()
+  digit_chars="۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"
+  raw=raw.translate(str.maketrans(digit_chars,"01234567890123456789"))
+  match=re.fullmatch(r"([0-9][0-9,٬]{0,15})(?:\s+(.{1,200}))?",raw,flags=re.DOTALL)
+  if not match:raise ValueError("مقدار باید عدد صحیح مثبت و توضیح حداکثر ۲۰۰ حرف باشد")
+  number=match.group(1)
+  if not re.fullmatch(r"[0-9]+|[0-9]{1,3}(?:[,٬][0-9]{3})+",number):
+   raise ValueError("فرمت عدد یا جداکننده هزارگان معتبر نیست")
+  amount=int(number.replace(",","").replace("٬",""))
+  operation=parts[2];note=(match.group(2) or "").strip()
+  if not 1<=amount<=AMOUNT_MAX[operation]:raise ValueError("مقدار خارج از محدوده مجاز است")
+  values=_adjust_info(c,uid_target)
+  balance=values["points"] if operation.startswith("points_") else values["wallet"]
+  direction=ADMIN_OPERATIONS[operation][2]
+  if balance+direction*amount<0:raise ValueError("موجودی کافی برای این کاهش وجود ندارد")
+  token=secrets.token_hex(10)
+  c.execute("""INSERT INTO social_admin_adjust_drafts
+   (token,manager,code,operation,amount,note,expires) VALUES(?,?,?,?,?,?,?)""",
+   (token,uid,code,operation,amount,note,_now()+600))
+  _state(c,uid,"")
+  label,unit,_=ADMIN_OPERATIONS[operation]
+  return _send(c,uid,"⚠️ تأیید نهایی عملیات مدیریت\n"+label+
+    "\nکاربر: "+_public_name(c,uid_target)+" ("+code+")"+
+    "\nمقدار: "+format(amount,",")+" "+unit+
+    "\nموجودی قبلی: "+format(balance,",")+" "+unit+
+    "\nموجودی پس از عملیات: "+format(balance+direction*amount,",")+" "+unit+
+    ("\nتوضیح: "+note if note else "")+
+    "\nپس از تأیید، کاربر به‌صورت خودکار پیام دریافت می‌کند.",
+    [[("✅ تأیید و اعمال","soc:adjustconfirm:"+token),
+      ("❌ لغو","soc:view:"+code)]])
  if op=="chat":return _chat_message(c,uid,m,int(parts[2]))
  if op=="waiting":
   return _send(c,uid,"⏳ هنوز در صف گفتگو هستید.",
@@ -1017,10 +1181,20 @@ def admin_view(c,req):
  if mode=="users":
   rows=c.execute("""SELECT p.user_id,p.code,p.display_name,p.gender,p.age,p.province,p.interests,
        p.visibility,p.discoverable,u.name,u.phone,u.telegram_username,u.blocked,
+       u.balance AS wallet_balance,
+       (SELECT COALESCE(SUM(l.points),0) FROM loyalty_points l WHERE l.user_id=p.user_id) AS points_balance,
        g.lat AS location_lat,g.lon AS location_lon,g.updated AS location_updated
     FROM social_profiles p JOIN users u ON u.id=p.user_id
     LEFT JOIN social_geo g ON g.user_id=p.user_id AND g.enabled=1
     ORDER BY p.created DESC LIMIT 200""").fetchall()
+  return [dict(r) for r in rows]
+ if mode=="adjustments":
+  code=req.get("code")
+  if not isinstance(code,str):raise ValueError("شناسه عمومی معتبر نیست")
+  uid=by_code(c,code)
+  rows=c.execute("""SELECT request_id,manager,operation,amount,before_balance,
+       after_balance,note,created FROM social_admin_adjustments
+       WHERE user_id=? ORDER BY created DESC,rowid DESC LIMIT 30""",(uid,)).fetchall()
   return [dict(r) for r in rows]
  if mode=="chats":
   rows=c.execute("""SELECT t.id,t.first_user,t.second_user,t.type,t.created,t.closed,

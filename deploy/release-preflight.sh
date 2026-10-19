@@ -33,6 +33,9 @@ test -s deploy/web-backup-worker.py
  { echo "Missing social management UI" >&2; exit 1; }
 grep -Fq "social.py" deploy/install-ubuntu-24.04.sh
 grep -Fq "SocialAdminPage.tsx" deploy/install-sidecar.sh
+grep -Fq "social_admin_adjustments" runtime/social.py
+grep -Fq "social_adjust" runtime/sales.py
+grep -Fq "افزایش کیف پول" sidecar/SocialAdminPage.tsx
 [[ -s sidecar/MediaBroadcastSettings.tsx ]] ||
  { echo "Missing media announcement web controls" >&2;exit 1; }
 grep -Fq "MediaBroadcastSettings.tsx" deploy/install-sidecar.sh

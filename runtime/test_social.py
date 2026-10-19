@@ -16,10 +16,11 @@ class SocialQA(unittest.TestCase):
      [(0,"social_chat_cost_"+key) for key in social.CHAT_COST_LABELS])
    for name in ("social_reports","social_geo","social_blocks","social_chat_messages",
                  "social_chat_pairs","social_chat_queue","social_chat_invites",
-                "social_chat_quotes","social_discovery","social_profile_comments",
+                "social_chat_quotes","social_discovery","social_admin_adjust_drafts",
+                "social_admin_adjustments","social_profile_comments",
                 "social_reactions","social_profile_views","social_follows","social_profiles",
                 "playlist_likes","playlists","media_likes","media_items","loyalty_points",
-                "outbox","users","settings"):
+                "outbox","users","settings","audit","ledger"):
     c.execute("DELETE FROM "+name)
    for u in (970012341,970012342,970012343):
     c.execute("INSERT INTO users(id,name,created) VALUES(?,?,?)",
@@ -31,6 +32,142 @@ class SocialQA(unittest.TestCase):
   c.execute("UPDATE social_profiles SET display_name=?,gender='زن',age=23,province='تهران',interests=? WHERE user_id=?",
    ("سارا" if uid==970012341 else "نیلوفر",json.dumps(["🎵 موسیقی"]),uid))
   return social.profile(c,uid)
+ def test_four_admin_adjustments_send_notices_and_record_exact_balances(self):
+  with s.conn() as c:
+   p=self.ready(c,970012341)
+   from gamification import award,balance
+   award(c,970012341,60,"test","test:f1",s.now())
+   s.money(c,970012341,200000,"test","test:w1")
+   targets=[("points_add",25,60,85),("points_sub",15,85,70),
+            ("wallet_add",50000,200000,250000),("wallet_sub",12000,250000,238000)]
+   for i,(op,amount,before,after) in enumerate(targets):
+    request="test-event-unique-"+str(i)+"-AAAAAAA"
+    result=social.adjust_account(c,p["code"],op,amount,request,note="تغییر با تأیید مدیر")
+    self.assertTrue(result["applied"])
+    self.assertEqual((result["before"],result["after"]),(before,after))
+    latest=c.execute("SELECT payload FROM outbox WHERE dedupe=?",("social:admin-adjust-notice:"+request,)).fetchone()
+    self.assertIsNotNone(latest)
+    notification=json.loads(latest[0])
+    self.assertIn(social.ADMIN_OPERATIONS[op][0],notification["text"])
+    self.assertIn(f"{amount:,}",notification["text"])
+    self.assertIn("تغییر با تأیید مدیر",notification["text"])
+    self.assertNotIn(str(970012341),notification["text"])
+   self.assertEqual(balance(c,970012341),70)
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=970012341").fetchone()[0],238000)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM social_admin_adjustments").fetchone()[0],4)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM audit WHERE action LIKE 'social_admin_%'").fetchone()[0],4)
+   log=social.admin_view(c,{"view":"adjustments","code":p["code"]})
+   self.assertEqual(len(log),4)
+   self.assertEqual(log[0]["operation"],"wallet_sub")
+
+ def test_adjustment_replay_never_charges_twice_or_notifies_twice(self):
+  with s.conn() as c:
+   p=self.ready(c,970012341)
+   ref="abc0123456789-unique-test"
+   a=social.adjust_account(c,p["code"],"points_add",30,ref)
+   b=social.adjust_account(c,p["code"],"points_add",30,ref)
+   self.assertTrue(a["applied"])
+   self.assertFalse(b["applied"])
+   self.assertEqual(social._adjust_info(c,970012341)["points"],30)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe=?",("social:admin-adjust-notice:"+ref,)).fetchone()[0],1)
+   with self.assertRaises(ValueError):
+    social.adjust_account(c,p["code"],"points_add",999,ref)
+   with self.assertRaises(ValueError):
+    social.adjust_account(c,p["code"],"wallet_add",30,ref)
+
+ def test_reductions_cannot_go_negative_and_invalid_inputs_do_not_touch_ledger(self):
+  with s.conn() as c:
+   p=self.ready(c,970012341)
+   for op in ("points_sub","wallet_sub"):
+    with self.assertRaisesRegex(ValueError,"موجودی"):
+     social.adjust_account(c,p["code"],op,1,"negative-block-"+op)
+   for amount in (0,-1,10**13,2.5,True,"123"):
+    with self.assertRaises(ValueError):
+     social.adjust_account(c,p["code"],"points_add",amount,"amount-invalid-aaaaaa")
+   for token in ("short","unsafe-!@@-not-good"):
+    with self.assertRaises(ValueError):
+     social.adjust_account(c,p["code"],"wallet_add",1,token)
+   with self.assertRaises(ValueError):
+    social.adjust_account(c,p["code"],"points_add",1,"nonexistent-user-a",note="\x00")
+   with self.assertRaises(ValueError):
+    social.adjust_account(c,"MS-00000000","points_add",1,"nonexistent-user-a")
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM social_admin_adjustments").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'social:admin-adjust-notice:%'").fetchone()[0],0)
+
+ def test_admin_only_profile_buttons_and_confirmation_replay(self):
+  with s.conn() as c:
+   target=self.ready(c,970012341)
+   manager=self.ready(c,970012343)
+   s.put(c,"admins",[970012343])
+   social.public_card(c,970012342,970012341)
+   payload=json.dumps(self.payloads(c,970012342),ensure_ascii=False)
+   self.assertNotIn("soc:adjust:",payload)
+   with self.assertRaisesRegex(ValueError,"فقط برای مدیر"):
+    social.callback(c,970012342,"soc:adjust:points_add:"+target["code"])
+   social.public_card(c,970012343,970012341)
+   payload=json.dumps(self.payloads(c,970012343)[-1],ensure_ascii=False)
+   for op in social.ADMIN_OPERATIONS:
+    self.assertIn("soc:adjust:"+op+":"+target["code"],payload)
+   social.callback(c,970012343,"soc:adjust:points_add:"+target["code"])
+   self.assertTrue(c.execute("SELECT state FROM users WHERE id=970012343").fetchone()[0].startswith("soc:adminamount:"))
+   social.input_text(c,970012343,"soc:adminamount:points_add:"+target["code"],
+                     {"text":"35 هدیه مدیریت"},90001)
+   self.assertEqual(social._adjust_info(c,970012341)["points"],0)
+   row=c.execute("SELECT token FROM social_admin_adjust_drafts").fetchone()
+   token=row["token"]
+   with self.assertRaisesRegex(ValueError,"فقط برای مدیر"):
+    social.callback(c,970012342,"soc:adjustconfirm:"+token)
+   social.callback(c,970012343,"soc:adjustconfirm:"+token)
+   self.assertEqual(social._adjust_info(c,970012341)["points"],35)
+   with self.assertRaises(ValueError):
+    social.callback(c,970012343,"soc:adjustconfirm:"+token)
+   self.assertEqual(social._adjust_info(c,970012341)["points"],35)
+   queued=c.execute("SELECT payload FROM outbox WHERE dedupe='social:admin-adjust-notice:"+token+"'").fetchone()
+   self.assertIn("هدیه مدیریت",json.loads(queued[0])["text"])
+
+ def test_bot_admin_accepts_persian_amount_with_thousands_separator(self):
+  with s.conn() as c:
+   p=self.ready(c,970012341)
+   s.put(c,"admins",[970012343])
+   social.input_text(c,970012343,"soc:adminamount:wallet_add:"+p["code"],
+     {"text":"۱۲٬۵۰۰ هدیه شرکت"},9033)
+   row=c.execute("SELECT token,amount,note FROM social_admin_adjust_drafts").fetchone()
+   self.assertEqual((row["amount"],row["note"]),(12500,"هدیه شرکت"))
+   self.assertEqual(social._adjust_info(c,970012341)["wallet"],0)
+   social.callback(c,970012343,"soc:adjustconfirm:"+row["token"])
+   self.assertEqual(social._adjust_info(c,970012341)["wallet"],12500)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM ledger WHERE user_id=970012341 AND reason='social_admin_wallet_add'").fetchone()[0],1)
+
+ def test_admin_can_manage_hidden_and_blocked_account_but_regular_user_cannot(self):
+  with s.conn() as c:
+   p=self.ready(c,970012341)
+   s.put(c,"admins",[970012343])
+   c.execute("UPDATE social_profiles SET visibility='hidden' WHERE user_id=970012341")
+   c.execute("INSERT INTO social_blocks(blocker,blocked,created) VALUES(?,?,?)",
+             (970012341,970012343,s.now()))
+   social.public_card(c,970012343,970012341)
+   bot_buttons=json.dumps(self.payloads(c,970012343)[-1],ensure_ascii=False)
+   self.assertIn("soc:adjust:wallet_sub:"+p["code"],bot_buttons)
+   with self.assertRaises(ValueError):
+    social.public_card(c,970012342,970012341)
+
+ def test_web_admin_action_through_sales_admin_and_history(self):
+  with s.conn() as c:
+   p=self.ready(c,970012341);identifier=p["code"]
+  reply=s.admin({"action":"social_adjust","code":identifier,"operation":"wallet_add",
+                 "amount":12500,"request_id":"admin-web-unique-ID-00001","note":"پاداش شرکت"})
+  self.assertEqual(reply["after"],12500)
+  again=s.admin({"action":"social_adjust","code":identifier,"operation":"wallet_add",
+                 "amount":12500,"request_id":"admin-web-unique-ID-00001","note":"پاداش شرکت"})
+  self.assertFalse(again["applied"])
+  rows=s.admin({"action":"social_admin","view":"users"})
+  target=next(x for x in rows if x["code"]==identifier)
+  self.assertEqual(target["wallet_balance"],12500)
+  self.assertEqual(target["points_balance"],0)
+  rows=s.admin({"action":"social_admin","view":"adjustments","code":identifier})
+  self.assertEqual(len(rows),1)
+  self.assertEqual(rows[0]["manager"],"web-admin")
+
  def test_public_code_random_and_immutable_after_profile_edit(self):
   with s.conn() as c:
    p=social.profile(c,970012341)

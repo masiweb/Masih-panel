@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import {Alert,App,Button,Card,Form,InputNumber,Modal,Space,Table,Tag,Typography} from 'antd';
+import {Alert,App,Button,Card,Form,Input,InputNumber,Modal,Space,Table,Tag,Typography} from 'antd';
 import {HttpUtil} from '@/utils';
 type Row=Record<string,any>;
 const labels:Record<string,string>={
@@ -23,14 +23,28 @@ const chatCosts:Record<string,string>={
  social_chat_cost_followers:'👥 چت از «دنبال‌کنندگان»',
  social_chat_cost_direct:'💬 چت از لینک یا پروفایل مستقیم'
 };
+const adjustLabels:Record<string,string>={
+  points_add:'⭐ افزایش امتیاز',
+  points_sub:'⭐ کاهش امتیاز',
+  wallet_add:'💰 افزایش کیف پول',
+  wallet_sub:'💸 کاهش کیف پول'
+};
+const adjustLimits:Record<string,number>={points_add:1000000,points_sub:1000000,
+  wallet_add:1000000000,wallet_sub:1000000000};
 export default function SocialAdminPage(){
-  const {message}=App.useApp();
+  const {message,modal}=App.useApp();
   const [stats,setStats]=useState<Row>({});
   const [profiles,setProfiles]=useState<Row[]>([]);
   const [chats,setChats]=useState<Row[]>([]);
   const [reports,setReports]=useState<Row[]>([]);
   const [messages,setMessages]=useState<Row[]>([]);
   const [selected,setSelected]=useState<Row|null>(null);
+  const [editingUser,setEditingUser]=useState<Row|null>(null);
+  const [editOperation,setEditOperation]=useState('');
+  const [editAmount,setEditAmount]=useState<number|null>(null);
+  const [editNote,setEditNote]=useState('');
+  const [accountHistory,setAccountHistory]=useState<Row[]>([]);
+  const [accountBusy,setAccountBusy]=useState(false);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [form]=Form.useForm();
@@ -59,6 +73,53 @@ export default function SocialAdminPage(){
     try{await call('media_settings',{values});message.success('قوانین امتیاز ثبت شد');await reload();}
     catch(e){message.error(String(e));}
     finally{setBusy(false);}
+  };
+  const openAccount=async(row:Row)=>{
+    setEditingUser(row);setEditOperation('');setEditAmount(null);setEditNote('');
+    setAccountHistory([]);
+    try{setAccountHistory((await call('social_admin',{view:'adjustments',code:row.code}))||[]);}
+    catch(e){message.error(String(e));}
+  };
+  const confirmAdjustment=()=>{
+    if(!editingUser||!editOperation||editAmount===null||!Number.isSafeInteger(editAmount)||
+       editAmount<1||editAmount>adjustLimits[editOperation]){
+      message.error('مقدار صحیح و مثبت وارد کنید.');return;
+    }
+    const key=editOperation.startsWith('points_')?'points_balance':'wallet_balance';
+    const before=Number(editingUser[key]??0);
+    const after=before+(editOperation.endsWith('_sub')?-editAmount:editAmount);
+    if(after<0){message.error('موجودی برای انجام این کاهش کافی نیست.');return;}
+    const unit=editOperation.startsWith('points_')?'امتیاز':'تومان';
+    const requestId=crypto.randomUUID().replace(/-/g,'');
+    const current=editingUser;
+    const operation=editOperation;
+    const amount=editAmount;
+    const note=editNote.trim();
+    modal.confirm({
+      title:'تأیید نهایی: '+adjustLabels[operation],
+      content:<Space direction="vertical" size="small">
+        <Typography.Text>کاربر: {current.display_name||current.name||'کاربر'} ({current.code})</Typography.Text>
+        <Typography.Text>مقدار: {amount.toLocaleString('fa-IR')} {unit}</Typography.Text>
+        <Typography.Text>موجودی قبلی: {before.toLocaleString('fa-IR')} {unit}</Typography.Text>
+        <Typography.Text strong>موجودی پس از اعمال: {after.toLocaleString('fa-IR')} {unit}</Typography.Text>
+        {note&&<Typography.Text>توضیح: {note}</Typography.Text>}
+        <Typography.Text type="secondary">پس از اعمال، پیام تغییر موجودی برای کاربر در صف ارسال قرار می‌گیرد.</Typography.Text>
+      </Space>,
+      okText:'تأیید و ثبت تغییر',cancelText:'انصراف',okButtonProps:{danger:operation.endsWith('_sub')},
+      onOk:async()=>{
+        setAccountBusy(true);
+        try{
+          const result=await call('social_adjust',{code:current.code,operation,amount,request_id:requestId,note});
+          message.success(result?.applied?'عملیات ثبت شد و اعلان کاربر در صف قرار گرفت.':'درخواست قبلاً ثبت شده بود؛ دوباره اعمال نشد.');
+          const rows=(await call('social_admin',{view:'users'}))||[];
+          setProfiles(rows);
+          setEditingUser(rows.find((u:Row)=>u.code===current.code)||null);
+          setAccountHistory((await call('social_admin',{view:'adjustments',code:current.code}))||[]);
+          setEditAmount(null);setEditNote('');setEditOperation('');
+        }catch(e){message.error(String(e));throw e;}
+        finally{setAccountBusy(false);}
+      }
+    });
   };
   const inspect=async(chat:Row)=>{
     setSelected(chat);setMessages([]);
@@ -121,7 +182,13 @@ export default function SocialAdminPage(){
         {title:'سن',dataIndex:'age'},{title:'استان',dataIndex:'province'},
         {title:'موقعیت (فقط مدیر)',render:(_:any,r:Row)=>r.location_lat!=null
           ?String(r.location_lat)+', '+String(r.location_lon):'—'},
-        {title:'جنسیت',dataIndex:'gender'},{title:'نمایش',dataIndex:'visibility'}
+        {title:'جنسیت',dataIndex:'gender'},{title:'نمایش',dataIndex:'visibility'},
+        {title:'امتیاز',dataIndex:'points_balance',
+          render:(v:number)=>(v??0).toLocaleString('fa-IR')},
+        {title:'کیف پول (تومان)',dataIndex:'wallet_balance',
+          render:(v:number)=>(v??0).toLocaleString('fa-IR')},
+        {title:'مدیریت حساب',fixed:'right' as const,
+          render:(_:any,r:Row)=><Button type="primary" onClick={()=>void openAccount(r)}>👤 پروفایل / عملیات مالی</Button>}
       ]}/>
     </Card>
     <Card title="💬 آرشیو گفتگوهای دوستانه و ناشناس" size="small">
@@ -147,6 +214,53 @@ export default function SocialAdminPage(){
         </Space>:<Tag>بررسی‌شده</Tag>}
       ]}/>
     </Card>
+    <Modal open={!!editingUser}
+      title={'👤 پروفایل و مدیریت حساب • '+(editingUser?.display_name||editingUser?.name||'کاربر')}
+      onCancel={()=>{if(!accountBusy)setEditingUser(null);}}
+      footer={<Button onClick={()=>setEditingUser(null)} disabled={accountBusy}>بستن</Button>}
+      width={790} destroyOnHidden>
+      {editingUser&&<Space direction="vertical" size="middle" style={{width:'100%'}}>
+        <Space wrap>
+          <Tag>شناسه عمومی: {editingUser.code}</Tag>
+          <Tag>استان: {editingUser.province||'ثبت نشده'}</Tag>
+          <Tag>سن: {editingUser.age||'ثبت نشده'}</Tag>
+        </Space>
+        <Space size="large" wrap>
+          <Typography.Text strong>⭐ امتیاز: {Number(editingUser.points_balance||0).toLocaleString('fa-IR')}</Typography.Text>
+          <Typography.Text strong>💰 کیف پول: {Number(editingUser.wallet_balance||0).toLocaleString('fa-IR')} تومان</Typography.Text>
+        </Space>
+        <Typography.Text strong>عملیات مدیر روی این کاربر</Typography.Text>
+        <Space wrap>
+          {Object.entries(adjustLabels).map(([op,label])=><Button key={op}
+            type={editOperation===op?'primary':'default'} danger={op.endsWith('_sub')}
+            onClick={()=>{setEditOperation(op);setEditAmount(null);setEditNote('');}}>{label}</Button>)}
+        </Space>
+        {editOperation&&<>
+          <Alert type="info" showIcon
+            title={adjustLabels[editOperation]}
+            description="مقدار را مشخص کنید و پس از مشاهده مانده جدید، عملیات را تأیید کنید. نتیجه با اعلان تلگرام به کاربر اطلاع داده خواهد شد."/>
+          <Space direction="vertical" style={{width:'100%'}}>
+            <Typography.Text>مقدار ({editOperation.startsWith('points_')?'امتیاز':'تومان'})</Typography.Text>
+            <InputNumber value={editAmount} onChange={setEditAmount} min={1}
+              max={adjustLimits[editOperation]} precision={0} style={{width:'100%'}}/>
+            <Typography.Text>توضیح برای کاربر (اختیاری)</Typography.Text>
+            <Input.TextArea rows={2} maxLength={200} showCount value={editNote} onChange={e=>setEditNote(e.target.value)}
+              placeholder="مثلاً پاداش فعالیت، اصلاح موجودی یا هدیه مدیریت"/>
+          </Space>
+          <Button loading={accountBusy} type="primary" danger={editOperation.endsWith('_sub')}
+            onClick={confirmAdjustment}>بررسی مانده و تأیید عملیات</Button>
+        </>}
+        <Typography.Text strong>تاریخچه تغییرات مدیریتی</Typography.Text>
+        <Table size="small" rowKey="request_id" dataSource={accountHistory}
+          pagination={{pageSize:5}} scroll={{x:500}} columns={[
+            {title:'عملیات',render:(_:any,r:Row)=>adjustLabels[r.operation]||r.operation},
+            {title:'مقدار',render:(_:any,r:Row)=>Number(r.amount).toLocaleString('fa-IR')},
+            {title:'موجودی جدید',render:(_:any,r:Row)=>Number(r.after_balance).toLocaleString('fa-IR')},
+            {title:'توضیح',dataIndex:'note'},
+            {title:'تاریخ',render:(_:any,r:Row)=>fmt(r.created)}
+          ]}/>
+      </Space>}
+    </Modal>
     <Modal open={!!selected} title={'آرشیو گفتگو '+(selected?.id??'')}
       onCancel={()=>setSelected(null)} footer={<Button onClick={()=>setSelected(null)}>بستن</Button>}
       width={780}>

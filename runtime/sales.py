@@ -572,6 +572,10 @@ def admin(req):
   if a=="social_admin":
    import social
    return social.admin_view(c,req)
+  if a=="social_adjust":
+   import social
+   return social.adjust_account(c,req.get("code"),req.get("operation"),
+     req.get("amount"),req.get("request_id"),req.get("note",""),manager="web-admin")
   if a=="social_report":
    ident=integer(req.get("id"),1,2**31-1)
    decision=req.get("decision")
