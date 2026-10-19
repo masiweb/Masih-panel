@@ -116,7 +116,9 @@ export default function ClubUserProfileModal({userId,onClose,onChanged,adminIds=
      <Descriptions.Item label="شناسه عمومی">{item.code}</Descriptions.Item>
      <Descriptions.Item label="شناسه عددی تلگرام (فقط مدیر)">{item.id}</Descriptions.Item>
      <Descriptions.Item label="یوزرنیم تلگرام">{item.telegram_username?'@'+item.telegram_username:'ثبت نشده'}</Descriptions.Item>
-     <Descriptions.Item label="شماره تماس">{item.phone||'ثبت نشده'}</Descriptions.Item>
+     <Descriptions.Item label="شماره تماس">
+       {item.phone||<Tag color="orange">⚠️ تأیید نشده — منتظر ارسال Contact حساب تلگرام</Tag>}
+     </Descriptions.Item>
      <Descriptions.Item label="زمان عضویت">{date(item.created)}</Descriptions.Item>
      <Descriptions.Item label="معرف">{item.referrer||'بدون معرف'}</Descriptions.Item>
      <Descriptions.Item label="امتیاز">⭐ {fmt(item.points_balance)}</Descriptions.Item>
@@ -129,6 +131,14 @@ export default function ClubUserProfileModal({userId,onClose,onChanged,adminIds=
      <Switch disabled={busy} checked={!!item.blocked} onChange={v=>void toggle('blocked',v)}/>
      <Typography.Text>نماینده:</Typography.Text>
      <Switch disabled={busy} checked={!!item.reseller} onChange={v=>void toggle('reseller',v)}/>
+     {!item.phone&&<Button type="primary" loading={busy} onClick={async()=>{
+        setBusy(true);
+        try{
+          await call('social_request_contact',{id:item.id});
+          message.success('درخواست ارسال شماره حساب تلگرام برای کاربر در صف ارسال قرار گرفت');
+        }catch(e){message.error(String(e));}
+        finally{setBusy(false);}
+       }}>📱 درخواست مجدد شماره از کاربر</Button>}
      <Button onClick={()=>void reload(item.id)}>بازخوانی اطلاعات</Button>
     </Space>
    </Card>

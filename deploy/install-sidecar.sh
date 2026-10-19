@@ -14,13 +14,6 @@ NODE=/opt/masiha-vpn-toolchains/node-v24.21.0-linux-x64/bin
 [[ -x "$NODE/node" ]] || { echo "Missing pinned Node.js" >&2;exit 1; }
 [[ -f /etc/masiha-vpn-extension/config.json ]] || { echo "Missing Masiha config" >&2;exit 1; }
 [[ -f /etc/nginx/sites-available/masiha-vpn ]] || { echo "Missing Masiha nginx site" >&2;exit 1; }
-python3 - <<'PYCFG'
-import json
-from pathlib import Path
-c=json.loads(Path('/etc/masiha-vpn-extension/config.json').read_text())
-if c.get('panel_path')!='/xui/':
-    raise SystemExit('This release currently requires panel_path=/xui/')
-PYCFG
 install -d -m 0755 /var/www/masiha-ui /opt/masiha-vpn-extension
 install -m 0644 "$SIDE/server.py" /opt/masiha-vpn-extension/sidecar_server.py
 install -m 0644 "$SIDE/masiha-standalone.html" "$SRC/masiha-standalone.html"
@@ -92,10 +85,31 @@ if [[ -s "$ROOT/runtime/rozmusic_importer.py" &&
     { echo "Missing Telegram MP3 uploader" >&2; exit 1; }
   install -m 0644 "$ROOT/runtime/roz_telegram_upload.py" /opt/masiha-vpn-extension/roz_telegram_upload.py
   install -m 0644 "$ROOT/runtime/rozmusic_importer.py" /opt/masiha-vpn-extension/rozmusic_importer.py
+  install -m 0644 "$ROOT/runtime/audio_fingerprint.py" /opt/masiha-vpn-extension/audio_fingerprint.py
   install -m 0644 "$ROOT/deploy/masiha-rozmusic-import.service" /etc/systemd/system/masiha-rozmusic-import.service
 fi
 
 NGINX=/etc/nginx/sites-available/masiha-vpn
+# Upgrade existing installations; keep all unrelated routing and SSL untouched.
+python3 - "$NGINX" <<'PYSESSION'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]);s=p.read_text()
+needle='  location = /masiha-ui/api/session {'
+if needle not in s:
+    location="""  # Native-path-independent authenticated Masiha session
+  location = /masiha-ui/api/session {
+    proxy_pass http://127.0.0.1:61794;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_read_timeout 12s;
+  }
+"""
+    anchor='  location = /xui/sales-payment {'
+    if s.count(anchor)!=1:raise SystemExit('Could not find stable sidecar location')
+    s=s.replace(anchor,location+anchor,1)
+    p.write_text(s)
+PYSESSION
 if ! grep -q 'MASIHA-SIDECAR BEGIN' "$NGINX"; then
   cp -a "$NGINX" "$NGINX.before-masiha-sidecar.$(date -u +%Y%m%dT%H%M%SZ).bak"
   python3 - "$NGINX" "$SIDE/nginx-locations.conf" <<'PY'

@@ -236,6 +236,14 @@ def handle(c,up):
    not u["state"] or u["state"].startswith("med:upload:")):
   media_library.accept(c,uid,m,u["state"].split(":")[2] if u["state"].startswith("med:upload:") else None)
   return
+ # Unsolicited Telegram Voice (while no other state is active) is a music
+ # identification query, without having to press a menu button first.
+ if not q and not u["state"] and isinstance(m.get("voice"),dict):
+  import audio_fingerprint
+  audio_fingerprint.enqueue(c,uid,up["update_id"],m["voice"])
+  enqueue(c,uid,"🎙 نمونه دریافت شد. شناسایی صوتی در آرشیو موزیک آغاز شد؛ نتیجه به همین ربات ارسال می‌شود.",
+   [[("🎙 جستجوی صوتی دیگر","med:voicefind"),("🎵 موزیک","med:music")]])
+  return
  if body in ("🏠 منوی اصلی","منوی اصلی","/menu"):cmd="home"
  if body in ("🎮 سرگرمی","سرگرمی"):cmd="fun"
  if body in ("⭐ امتیازهای من","امتیازات من"):cmd="fun:points"

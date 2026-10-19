@@ -64,6 +64,8 @@ def conn():
  media_library.setup(c)
  import social
  social.setup(c)
+ import audio_fingerprint
+ audio_fingerprint.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
  # Telegram usernames are optional and can change; update on later messages.
  if not any(col[1]=="telegram_username" for col in c.execute("PRAGMA table_info(users)")):
@@ -572,6 +574,14 @@ def admin(req):
   if a=="social_admin":
    import social
    return social.admin_view(c,req)
+  if a=="social_request_contact":
+   ident=integer(req.get("id"),1,2**63-1)
+   user=c.execute("SELECT id,phone FROM users WHERE id=?",(ident,)).fetchone()
+   if not user:raise ValueError("کاربر پیدا نشد")
+   if str(user["phone"] or "").strip():raise ValueError("شماره کاربر قبلاً ثبت شده است")
+   prompt_for_own_contact(c,ident,"phone-gate:admin-request:web:"+str(ident)+":"+secrets.token_hex(6))
+   audit(c,"admin_resend_contact","web-admin -> "+str(ident))
+   return {"requested":True}
   if a=="social_gallery_to_admin":
    target=integer(req.get("id"),1,2**63-1)
    destination=integer(req.get("admin_id"),1,2**63-1)

@@ -215,6 +215,7 @@ def kind_menu(c,uid,kind):
   [[("➕ ارسال رسانه","med:upload:"+kind),("🆕 آخرین ۲۰ مورد","med:latest:"+kind)],
    [("📂 رسانه‌های من","med:mine:"+kind),("📚 پلی‌لیست‌ها","med:lists:"+kind)],
    [("🔎 جست‌وجو","med:search:"+kind),("🔥 برترین‌ها","med:top:"+kind)],
+   *([[("🎙 جستجوی صوتی موزیک","med:voicefind")]] if kind=="music" else []),
    [("🏆 برترین کاربران","med:leaders:"+kind),("↩️ سرگرمی","fun")]])
 
 def playlist_menu(c,uid,kind):
@@ -625,6 +626,13 @@ def callback(c,uid,cmd):
             (parts[3],row["id"]))
   return _prompt(c,uid,c.execute("SELECT * FROM media_items WHERE id=?",
                                  (row["id"],)).fetchone())
+ if op=="voicefind":
+  _state(c,uid,"med:voicefind")
+  return send(c,uid,
+   "🎙 ۵ تا ۴۵ ثانیه از *صدای واقعی موزیک* را ضبط یا ارسال کنید. "
+   "ربات آن را با اثرانگشت آهنگ‌های موجود در کتابخانه مقایسه می‌کند. "
+   "زمزمه‌کردن ملودی فعلاً پشتیبانی نمی‌شود.",
+   [[("❌ انصراف","med:music")]])
  if op=="upload" and x in FIELDS:
   _state(c,uid,"med:upload:"+x)
   return send(c,uid,"📤 موزیک، فیلم یا لینک مستقیم HTTPS بفرستید.",
@@ -758,6 +766,14 @@ def callback(c,uid,cmd):
 def text_input(c,uid,state,message,update_id):
  parts=state.split(":")
  op=parts[1] if len(parts)>1 else ""
+ if op=="voicefind":
+  audio=message.get("voice") or message.get("audio")
+  if audio is None:raise ValueError("🎙 لطفاً فایل صوتی یا Voice حاوی ۵ تا ۴۵ ثانیه موزیک ارسال کنید")
+  import audio_fingerprint
+  audio_fingerprint.enqueue(c,uid,update_id,audio)
+  _state(c,uid,"")
+  return send(c,uid,"🔎 نمونه صوتی دریافت شد. موتور محلی در حال جستجو در آرشیو موزیک است. نتیجه به همین گفتگو ارسال می‌شود.",
+    [[("🎙 شناسایی صوتی جدید","med:voicefind"),("🎵 بازگشت به موزیک","med:music")]])
  if op=="upload":
   return accept(c,uid,message,parts[2])
  if op in ("season","episode"):

@@ -1,0 +1,28 @@
+[Unit]
+Description=Masiha low-memory audio fingerprint index and voice lookup
+Wants=network-online.target
+After=network-online.target masiha-vpn-extension.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/masiha-vpn-extension
+ExecStart=/usr/bin/python3 /opt/masiha-vpn-extension/audio_fingerprint.py worker
+UMask=0077
+Nice=15
+CPUQuota=40%
+MemoryHigh=600M
+MemoryMax=770M
+TimeoutStartSec=140
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/etc/masiha-vpn-extension/sales /var/lib/masiha-audio-fp
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=1
+
+[Install]
+WantedBy=multi-user.target

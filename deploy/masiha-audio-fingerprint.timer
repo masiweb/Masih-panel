@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule Masiha audio fingerprint matching and indexing
+
+[Timer]
+OnBootSec=35s
+OnUnitInactiveSec=40s
+AccuracySec=10s
+Persistent=true
+Unit=masiha-audio-fingerprint.service
+
+[Install]
+WantedBy=timers.target

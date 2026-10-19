@@ -224,17 +224,125 @@ def callback(c,uid,cmd):
    pass  # absence or Telegram privacy restrictions must not block the card
   invites=c.execute("SELECT COUNT(*) FROM loyalty_points WHERE reference LIKE 'referral:%' AND user_id=?",(user["id"],)).fetchone()[0]
   subs=c.execute("SELECT COUNT(*) FROM services WHERE user_id=?",(user["id"],)).fetchone()[0]
+  import social
+  details=social.admin_view(c,{"view":"user_detail","id":user["id"]})
+  pr=details["profile"];stats=details["stats"]
+  status=("✅ تکمیل شده" if pr["completed"] else
+          "⚠️ ناقص: "+("، ".join(pr["missing"]) or "نامشخص"))
   text_card=("👤 "+(user["name"] or "بدون نام")+"\nشناسه: "+str(user["id"])+
      "\nموجودی: "+str(user["balance"])+" تومان\nشماره: "+(user["phone"] or "ثبت نشده")+
      "\n⭐ امتیاز: "+str(loyalty.balance(c,user["id"]))+
      "\nدعوت موفق: "+str(invites)+"\nاشتراک‌های خریداری‌شده: "+str(subs)+
      "\nوضعیت: "+("مسدود" if user["blocked"] else "فعال")+
-     " | نماینده: "+("بله" if user["reseller"] else "خیر"))
+     " | نماینده: "+("بله" if user["reseller"] else "خیر")+
+     "\n\n🌐 پروفایل کلاب ناشناس: "+status+
+     "\n🆔 شناسه عمومی: "+details["code"]+
+     "\nنام نمایشی: "+(details["display_name"] or "تکمیل نشده")+
+     "\nسن: "+str(pr["age"] or "ثبت نشده")+" | استان: "+(pr["province"] or "ثبت نشده")+
+     "\n❤️ علاقه‌مندی‌ها: "+("، ".join(pr["interests"]) or "ثبت نشده")+
+     "\n🖼 تصاویر کلاب: "+str(len(pr["photos"]))+
+     "\n👥 دنبال‌کنندگان: "+str(stats["followers"])+
+     " | دنبال می‌کند: "+str(stats["following"])+
+     "\n⭐ لایک: "+str(stats["profile_likes"])+
+     " | 👎 دیسلایک: "+str(stats["profile_dislikes"])+
+     "\n🎵 موزیک: "+str(stats["music"])+
+     " | 🎬 فیلم: "+str(stats["films"])+
+     " | 📚 پلی‌لیست: "+str(stats["playlists"])+
+     " | 💬 گفتگوها: "+str(stats["chats"]))
   return send(c,uid,text_card,[
    [("📦 لیست اشتراک‌های کاربر","a:usubs:"+ident)],
    [("مسدود/آزاد","a:block:"+ident),("نمایندگی روشن/خاموش","a:reseller:"+ident)],
-   [("تغییر اعتبار","a:credit:"+ident)],
+   [("⭐ افزایش امتیاز","soc:adjust:points_add:"+details["code"]),
+    ("⭐ کاهش امتیاز","soc:adjust:points_sub:"+details["code"])],
+   [("💰 افزایش کیف پول","soc:adjust:wallet_add:"+details["code"]),
+    ("💸 کاهش کیف پول","soc:adjust:wallet_sub:"+details["code"])],
+   [("👤 اطلاعات کامل کلاب","a:clubprofile:"+ident),
+    ("🖼 گالری کلاب","a:clubgallery:"+ident)],
+   [("🎵 آثار و پلی‌لیست‌ها","a:clubmedia:"+ident),
+    ("💬 گفتگوها و گزارش‌ها","a:clubchats:"+ident)],
+   [("📜 تراکنش‌ها و تغییرات","a:clubhistory:"+ident),
+    ("📱 درخواست مجدد شماره","a:phoneprompt:"+ident)],
+   [("تغییر اعتبار (قدیمی)","a:credit:"+ident)],
    [("↩️ فهرست کاربران","a:users")]]+back())
+ if op in ("clubprofile","clubgallery","clubmedia","clubchats","clubhistory","phoneprompt","clubchat"):
+  import social
+  if op=="clubchat":
+   chat_id=integer(int(ident),1)
+   conversation=c.execute("SELECT id,first_user,second_user,type,created,closed FROM social_chat_pairs WHERE id=?",(chat_id,)).fetchone()
+   if not conversation:raise ValueError("گفتگو وجود ندارد")
+   texts=c.execute("""SELECT m.sender,m.body,m.created,COALESCE(p.display_name,'') AS display_name
+       FROM social_chat_messages m LEFT JOIN social_profiles p ON p.user_id=m.sender
+       WHERE m.conversation=? ORDER BY m.id DESC LIMIT 15""",(chat_id,)).fetchall()
+   records="\n".join("👤 "+(v["display_name"] or "کاربر "+str(v["sender"]))+
+      ": "+v["body"][:250] for v in reversed(texts))
+   return send(c,uid,"🔐 گزارش گفتگوی "+str(chat_id)+"\nنوع: "+conversation["type"]+
+     "\nکاربران: "+str(conversation["first_user"])+" / "+str(conversation["second_user"])+
+     "\n\n"+(records or "بدون پیام ثبت شده"),
+     [[("↩️ کاربر اول","a:user:"+str(conversation["first_user"]))],
+      [("↩️ کاربر دوم","a:user:"+str(conversation["second_user"]))]]+back())
+  target=integer(int(ident),1)
+  info=social.admin_view(c,{"view":"user_detail","id":target})
+  pr=info["profile"];st=info["stats"]
+  back_user=[[("↩️ پرونده کاربر","a:user:"+str(target))]]+back()
+  if op=="phoneprompt":
+   if info["phone"]:
+    return send(c,uid,"✅ شماره این کاربر قبلاً ثبت شده است: "+info["phone"],back_user)
+   from sales import prompt_for_own_contact
+   prompt_for_own_contact(c,target,"phone-gate:admin-request:"+str(uid)+":"+str(target)+":"+secrets.token_hex(6))
+   audit(c,"admin_resend_contact",str(uid)+" -> "+str(target))
+   return send(c,uid,"📱 درخواست تأیید شماره متعلق به حساب تلگرام برای کاربر ارسال شد. تا زمانی که خود کاربر Contact حسابش را ارسال نکند، شماره ثبت نخواهد شد.",back_user)
+  if op=="clubgallery":
+   if not pr["photos"]:
+    return send(c,uid,"این کاربر هنوز عکسی در گالری کلاب ثبت نکرده است.",back_user)
+   for file_id in pr["photos"][:5]:
+    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+     (secrets.token_hex(12),uid,"sendPhoto",json.dumps({"chat_id":uid,"photo":file_id})))
+   return send(c,uid,"🖼 "+str(len(pr["photos"]))+" تصویر پروفایل کلاب به شما ارسال می‌شود.",back_user)
+  if op=="clubprofile":
+   flags=("✅ بله" if pr["completed"] else "❌ خیر")
+   lines=["🌐 کلاب ناشناس — پروفایل کاربر","کامل: "+flags,
+     "فیلدهای ناقص: "+("، ".join(pr["missing"]) or "ندارد"),
+     "شناسه عمومی: "+info["code"],"نام نمایشی: "+(info["display_name"] or "ثبت نشده"),
+     "سن: "+str(pr["age"] or "ثبت نشده"),"جنسیت: "+(pr["gender"] or "ثبت نشده"),
+     "استان: "+(pr["province"] or "ثبت نشده"),
+     "علاقه‌مندی‌ها: "+("، ".join(pr["interests"]) or "ثبت نشده"),
+     "تعداد عکس: "+str(len(pr["photos"])),
+     "حریم خصوصی: "+pr["visibility"],
+     "قابل جستجو: "+("بله" if pr["discoverable"] else "خیر"),
+     "نمایش بازدیدها: "+("بله" if pr["show_visitors"] else "خیر"),
+     "لوکیشن: "+(str(info["location"]["lat"])+", "+str(info["location"]["lon"])
+                    if info["location"] else "ثبت نشده"),
+     "دنبال‌کننده: "+str(st["followers"])+" | دنبال می‌کند: "+str(st["following"]),
+     "بازدید: "+str(st["profile_views"])+" | لایک: "+str(st["profile_likes"])+" | دیسلایک: "+str(st["profile_dislikes"]),
+     "کامنت: "+str(st["profile_comments"])+" | گزارش: "+str(st["reports"]),
+     "مدال‌ها: "+("، ".join(info["medals"]) or "ندارد")]
+   return send(c,uid,"\n".join(lines),[
+      [("🖼 تصاویر","a:clubgallery:"+ident),
+       ("🎵 آثار","a:clubmedia:"+ident)],
+      [("⭐ افزایش امتیاز","soc:adjust:points_add:"+info["code"]),
+       ("⭐ کاهش امتیاز","soc:adjust:points_sub:"+info["code"])],
+      [("💰 افزایش کیف پول","soc:adjust:wallet_add:"+info["code"]),
+       ("💸 کاهش کیف پول","soc:adjust:wallet_sub:"+info["code"])]]+back_user)
+  if op=="clubmedia":
+   lines=["🎵 آثار و پلی‌لیست‌های کاربر"]
+   lines += [(("🎵" if r["kind"]=="music" else "🎬")+" "+str(r["title"] or "بدون عنوان")[:70]+
+             " | "+str(r["status"])) for r in info["recent_media"]]
+   lines += [("📚 "+r["name"][:70]) for r in info["recent_playlists"]]
+   return send(c,uid,"\n".join(lines) if len(lines)>1 else "این کاربر هنوز اثری منتشر نکرده است.",back_user)
+  if op=="clubchats":
+   lines=["💬 گفتگوهای کاربر"]
+   rows=[[("گفتگو "+str(r["id"])+" / "+r["type"],"a:clubchat:"+str(r["id"]))] for r in info["recent_chats"]]
+   lines.append("تعداد: "+str(st["chats"])+" | گزارش‌ها: "+str(st["reports"]))
+   return send(c,uid,"\n".join(lines),rows+back_user)
+  if op=="clubhistory":
+   items=social.admin_view(c,{"view":"adjustments","code":info["code"]})
+   lines=["📜 سابقه تغییرات مدیریتی و گردش حساب",
+     "⭐ امتیاز: "+str(info["points_balance"])+" | 💰 کیف پول: "+str(info["wallet_balance"])+" تومان"]
+   lines.extend(r["operation"]+": "+str(r["amount"])+" | قبل "+str(r["before_balance"])+
+     " ← بعد "+str(r["after_balance"]) for r in items[:12])
+   lines.extend("⭐ "+str(r["points"])+" | "+r["kind"] for r in info["recent_points"][:7])
+   lines.extend("💰 "+str(r["amount"])+" | "+r["reason"] for r in info["recent_wallet"][:7])
+   return send(c,uid,"\n".join(lines),back_user)
  if op=="usubs":
   user_id=integer(int(ident),1)
   if not c.execute("SELECT 1 FROM users WHERE id=?",(user_id,)).fetchone():

@@ -22,7 +22,22 @@ CONFIG = json.loads(Path("/etc/masiha-vpn-extension/config.json").read_text())
 HOST = CONFIG["domain"]
 if not isinstance(HOST, str) or not re.fullmatch(r"[A-Za-z0-9.-]{1,250}", HOST):
     raise RuntimeError("Invalid extension domain")
-PANEL = "http://127.0.0.1:62053/" + CONFIG.get("panel_path", "/xui/").strip("/")
+# Discover the current native panel URL from x-ui itself, never from a
+# deployment-time copy. Changing webBasePath must not invalidate the sidecar.
+PANEL_BASE = "http://127.0.0.1:62053"
+PANEL_PATH_PATTERN = re.compile(r"^/(?:[A-Za-z0-9._~-]+/){1,6}$")
+
+def current_panel_path():
+    con = sqlite3.connect("file:/etc/x-ui/x-ui.db?mode=ro", uri=True, timeout=2)
+    try:
+        record = con.execute("SELECT value FROM settings WHERE key='webBasePath' LIMIT 1").fetchone()
+    finally:
+        con.close()
+    path = record[0] if record else ""
+    if not isinstance(path, str) or not PANEL_PATH_PATTERN.fullmatch(path) or ".." in path:
+        raise ValueError("Invalid native panel path")
+    return path
+
 BIND = ("127.0.0.1", 61794)
 BACKUPS = Path("/root/masiha-backups")
 IMPORTS = BACKUPS / "web-imports"
@@ -77,7 +92,7 @@ def upstream_panel_token(cookie):
     if not cookie or len(cookie) > 8192 or not user_is_only_admin():
         return None
     req = urllib.request.Request(
-        PANEL + "/panel/csrf-token",
+        PANEL_BASE + current_panel_path().rstrip("/") + "/panel/csrf-token",
         headers={"Host": HOST, "Cookie": cookie,
                  "X-Requested-With": "XMLHttpRequest",
                  "Accept": "application/json"})
@@ -93,7 +108,7 @@ def upstream_panel_token(cookie):
             payload = json.loads(r.read(2048))
             token = payload.get("obj")
             return token if payload.get("success") is True and isinstance(token, str) and 10 <= len(token) <= 512 else None
-    except (OSError, ValueError, urllib.error.URLError):
+    except (OSError, ValueError, sqlite3.Error, urllib.error.URLError):
         return None
 
 
@@ -179,6 +194,13 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/healthz":
             return self.send_bytes(200, {"up": True, "native_xui": "independent"})
+        if path == "/masiha-ui/api/session":
+            if not self.auth():return
+            return self.send_bytes(200, envelope(True,{
+              "csrf_token":upstream_panel_token(self.headers.get("Cookie","")),
+              "native_panel":current_panel_path(),
+              "api_base":"/xui/"
+            }))
         if path == "/xui/sales-payment":
             return self.payment()
         if not self.auth():

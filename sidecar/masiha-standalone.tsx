@@ -18,6 +18,7 @@ const tabs = [
 ];
 function Panel() {
   const [selected,setSelected]=useState((location.hash.slice(1)||'bot'));
+  const nativePanel = (window as any).__masihaNativePanel || '/';
   useEffect(()=>{
     const changed=()=>setSelected(location.hash.slice(1)||'bot');
     addEventListener('hashchange', changed);
@@ -25,7 +26,7 @@ function Panel() {
   },[]);
   return <div className="m-root" dir="rtl">
     <header className="m-header"><div><span className="m-eyebrow">MASIHA · VPN MANAGER</span><h1>مدیریت سرویس‌های اختصاصی</h1><p>ماژول مستقل از بروزرسانی‌های پنل اصلی سنایی</p></div>
-      <a className="m-upstream" href="/xui/panel/">بازگشت به پنل x-ui ←</a></header>
+      <a className="m-upstream" href={nativePanel+'panel/'}>بازگشت به پنل x-ui ←</a></header>
     <nav className="m-nav">{tabs.map(t=><a key={t.key} href={'#'+t.key} className={selected===t.key?'active':''}>{t.title}</a>)}</nav>
     <main className="m-content">{selected==='bot'?<SalesBotPage/>:
       selected==='openvpn'?<VPNPage protocol="openvpn"/>:
@@ -39,16 +40,18 @@ async function boot(){
   const root=createRoot(document.getElementById('app')!);
   root.render(<div className="m-loading"><Spin size="large"/>در حال تأیید ورود مدیر…</div>);
   try {
-    const r=await fetch('/xui/panel/csrf-token', {credentials:'same-origin', headers:{'X-Requested-With':'XMLHttpRequest'}});
-    if (!r.ok) throw new Error('ابتدا به پنل x-ui وارد شوید.');
+    const r=await fetch('/masiha-ui/api/session', {credentials:'same-origin', headers:{'X-Requested-With':'XMLHttpRequest'}});
+    if (!r.ok) throw new Error('نشست مدیر معتبر نیست. از مسیر فعلی و محرمانه پنل سنایی وارد شوید و مجدداً این صفحه را باز کنید.');
     const data=await r.json();
-    if (!data.success || typeof data.obj!=='string') throw new Error('نشست مدیریت معتبر نیست.');
-    const meta=document.createElement('meta');meta.name='csrf-token';meta.content=data.obj;
+    if (!data.success || typeof data.obj?.csrf_token!=='string' || typeof data.obj?.native_panel!=='string')
+      throw new Error('نشست مدیریت معتبر نیست.');
+    (window as any).__masihaNativePanel=data.obj.native_panel;
+    const meta=document.createElement('meta');meta.name='csrf-token';meta.content=data.obj.csrf_token;
     document.head.appendChild(meta);
     setupHttp();
     root.render(<ConfigProvider direction="rtl"><App><Panel/></App></ConfigProvider>);
   }catch(e) {
-    root.render(<div className="m-auth"><h2>احراز هویت مدیر</h2><p>{String(e)}</p><Button type="primary" href="/xui/">ورود به پنل سنایی</Button></div>);
+    root.render(<div className="m-auth"><h2>احراز هویت مدیر</h2><p>{String(e)}</p><Button type="primary" onClick={()=>window.location.reload()}>بررسی مجدد نشست مدیر</Button></div>);
   }
 }
 void boot();

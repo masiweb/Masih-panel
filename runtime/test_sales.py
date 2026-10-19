@@ -788,6 +788,68 @@ class Commerce(unittest.TestCase):
    x=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 AND method='sendMessage' ORDER BY id DESC LIMIT 1").fetchone()[0])
    self.assertIn("a:usub:test-sub-02",[b["callback_data"] for row in x["reply_markup"]["inline_keyboard"] for b in row])
 
+ def test_complete_telegram_admin_profile_and_submenus(self):
+  import sales_bot_admin as adm
+  import social
+  with s.conn() as c:
+   s.put(c,"admins",[101])
+   pr=social.profile(c,102)
+   with patch.object(adm,"tg",return_value={"photos":[]}):
+    adm.callback(c,101,"a:user:102")
+   card=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("پروفایل کلاب ناشناس",card["text"])
+   self.assertIn("ناقص",card["text"])
+   self.assertIn(pr["code"],card["text"])
+   keys=[b["callback_data"] for row in card["reply_markup"]["inline_keyboard"] for b in row]
+   for required in ("a:clubprofile:102","a:clubgallery:102","a:clubmedia:102",
+                    "a:clubchats:102","a:clubhistory:102","a:phoneprompt:102",
+                    "soc:adjust:points_add:"+pr["code"],"soc:adjust:wallet_sub:"+pr["code"]):
+    self.assertIn(required,keys)
+   adm.callback(c,101,"a:clubprofile:102")
+   detail=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=101 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("فیلدهای ناقص",detail["text"])
+   adm.callback(c,101,"a:clubmedia:102")
+   adm.callback(c,101,"a:clubchats:102")
+   adm.callback(c,101,"a:clubhistory:102")
+   for route in ("a:clubprofile:102","a:clubchats:102","a:phoneprompt:102"):
+    with self.assertRaises(ValueError):adm.callback(c,102,route)
+
+ def test_admin_phone_request_queues_own_contact_only_not_arbitrary_number(self):
+  import sales_bot_admin as adm
+  with s.conn() as c:
+   s.put(c,"admins",[101]);s.put(c,"require_contact",True)
+   adm.callback(c,101,"a:phoneprompt:102")
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"")
+   msg=c.execute("SELECT payload FROM outbox WHERE chat=102 AND dedupe LIKE 'phone-gate:admin-request:%'").fetchone()
+   self.assertIsNotNone(msg)
+   keyboard=json.loads(msg["payload"])["reply_markup"]["keyboard"]
+   self.assertTrue(keyboard[0][0]["request_contact"])
+   adm.callback(c,101,"a:phoneprompt:102")
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE chat=102 AND dedupe LIKE 'phone-gate:admin-request:%'").fetchone()[0],2)
+  result=s.admin({"action":"social_request_contact","id":102})
+  self.assertTrue(result["requested"])
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"")
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE chat=102 AND dedupe LIKE 'phone-gate:admin-request:%'").fetchone()[0],3)
+   c.execute("UPDATE users SET phone=? WHERE id=102",("+989121234567",))
+  with self.assertRaises(ValueError):s.admin({"action":"social_request_contact","id":102})
+
+ def test_voice_sent_without_pressing_search_enqueues_music_lookup(self):
+  import audio_fingerprint as fingerprint
+  from tempfile import TemporaryDirectory
+  with TemporaryDirectory() as root, s.conn() as c:
+   from pathlib import Path
+   db=Path(root)/"fp.pklz";db.write_bytes(b"dummy fingerprint db")
+   with patch.object(fingerprint,"DATABASE",db),patch.object(fingerprint,"available",return_value=True):
+    w.handle(c,{"update_id":410020,"message":{
+     "from":{"id":102,"first_name":"Listener"},
+     "chat":{"id":102,"type":"private"},
+     "voice":{"file_id":"VALID_VOICE_FILE_ID_XYZ","duration":14,"file_size":60000}}})
+   row=c.execute("SELECT state,file_id,user_id FROM audio_fp_queries WHERE update_id=410020").fetchone()
+   self.assertEqual(tuple(row),("queued","VALID_VOICE_FILE_ID_XYZ",102))
+   latest=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("شناسایی صوتی",latest["text"])
+
  def test_default_navigation_buttons_available_in_every_message(self):
   with s.conn() as c:
    s.enqueue(c,101,"standard reply")

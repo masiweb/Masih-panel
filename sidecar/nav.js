@@ -139,7 +139,7 @@
     var existing = document.getElementById('masiha-nav-fallback');
     // Only show a fallback on an authenticated-looking panel route.
     // No unauthenticated navigation widget on the x-ui login screen.
-    var eligible = /^\/xui\/panel(?:\/|$)/.test(location.pathname);
+    var eligible = /^\/(?:[A-Za-z0-9._~-]+\/){1,6}panel(?:\/|$)/.test(location.pathname);
     if (!eligible) {
       if (existing) existing.remove();
       return;

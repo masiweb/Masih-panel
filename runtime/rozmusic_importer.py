@@ -266,7 +266,7 @@ def run(c,pid,delay=3.0,max_posts=0):
      for source in sources:
       try:
        file_id,unique_id,size,deleted=telegram_upload.stream_once(
-           source,data["artist"],data["title"],cfg)
+           source,data["artist"],data["title"],cfg,article_url=url)
        break
       except (ValueError,HTTPError) as exc:
        # e.g. old 320kbps version is over 47MiB or no longer available.

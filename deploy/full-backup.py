@@ -53,7 +53,11 @@ SOURCES = (
     "/etc/sysctl.d/98-masiha-vpn-forward.conf",
     "/usr/local/x-ui",
     "/opt/masiha-vpn-extension",
+    # Audio fingerprints are derived metadata, not Telegram MP3s.
+    "/var/lib/masiha-audio-fp/fingerprints.pklz",
     "/var/www/masiha-ui",
+    "/etc/systemd/system/masiha-audio-fingerprint.service",
+    "/etc/systemd/system/masiha-audio-fingerprint.timer",
     "/etc/systemd/system/masiha-vpn-sidecar.service",
 )
 EXCLUDED_DIRS = frozenset((

@@ -19,6 +19,7 @@ done
 sh -n runtime/test-oc-route.sh
 echo "Python syntax and portable tunnel route shell syntax OK"
 echo "=== Isolated Xray presets test (no server changes) ==="
+python3 -m unittest -q sidecar/test_dynamic_auth.py
 python3 -m unittest -q deploy/test_bootstrap_inbounds.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/test_full_backup.py deploy/test_check_panel_login.py
 echo "=== Complete fresh-install pipeline regression tests ==="
 python3 -m unittest -q deploy/test_install_pipeline.py
@@ -61,6 +62,12 @@ grep -Fq "request_missing_phones" runtime/sales.py
 grep -Fq "دریافت اجباری شماره حساب تلگرام" deploy/install-sidecar.sh
 
 (cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py)
+for f in runtime/audio_fingerprint.py runtime/test_audio_fingerprint.py
+           do [[ -s "$f" ]] || { echo "Missing audio fingerprint: $f" >&2; exit 1; }; done
+for f in deploy/install-audio-fingerprint.sh deploy/masiha-audio-fingerprint.service deploy/masiha-audio-fingerprint.timer sidecar/test_dynamic_auth.py
+           do [[ -s "$f" ]] || { echo "Missing audio installer: $f" >&2; exit 1; }; done
+grep -Fq "audio_fingerprint.py" deploy/install-ubuntu-24.04.sh
+python3 -m unittest -q runtime/test_audio_fingerprint.py
 for f in runtime/social.py runtime/test_social.py sidecar/SocialAdminPage.tsx docs/MASIHA_SOCIAL_FA.md; do
  [[ -s "$f" ]] || { echo "Missing social feature: $f" >&2; exit 1; }
 done

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import subprocess
 import signal
 import ssl
 import tempfile
@@ -159,7 +160,7 @@ def verified_storage_chat(settings):
     return admins[0]
 
 
-def stream_once(url, artist, title, settings):
+def stream_once(url, artist, title, settings, article_url=None):
     """Even on a failed transfer or interruption, remove the temporary MP3."""
     if not settings.get("token") or not settings.get("enabled"):
         raise RuntimeError("Bot is not enabled or its token is not configured")
@@ -168,6 +169,14 @@ def stream_once(url, artist, title, settings):
         path = Path(temp) / "track.mp3"
         size = download_mp3(url, path)
         response = upload_to_telegram(path, artist, title, settings["token"], chat_id)
+        # The temporary MP3 is available only here: persist a fingerprint,
+        # never the original audio. An indexing failure must not lose media.
+        if article_url:
+            try:
+                import audio_fingerprint
+                audio_fingerprint.index_imported_source(article_url,path)
+            except (ImportError,OSError,ValueError,RuntimeError,subprocess.SubprocessError):
+                pass
         # Delete the *message* silently. file_id remains usable by the same bot,
         # as confirmed by real getFile check before full-archive activation.
         removed = delete_storage_message(settings, chat_id, response["message_id"])
