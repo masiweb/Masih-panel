@@ -67,7 +67,7 @@ class MediaQA(unittest.TestCase):
    self.assertEqual(points.balance(c,101),0)
    lib.callback(c,101,"med:finish:"+str(mid))
    lib.callback(c,101,"med:publish:"+str(mid))
-   self.assertEqual(points.balance(c,101),4)
+   self.assertEqual(points.balance(c,101),14)  # 4 metadata + 10 published music
    row=c.execute("SELECT status,rights_ok FROM media_items WHERE id=?",(mid,)).fetchone()
    self.assertEqual(tuple(row),("published",0))
    with self.assertRaises(ValueError):
@@ -98,7 +98,7 @@ class MediaQA(unittest.TestCase):
    self.assertEqual(row["media_type"],"series")
    self.assertEqual((row["season"],row["episode"]),(2,8))
    self.assertEqual(row["cover_id"],"COVER_TELEGRAM_ID")
-   self.assertEqual(points.balance(c,101),8)
+   self.assertEqual(points.balance(c,101),23)  # 8 metadata + 15 published episode
    lib.play(c,102,mid)
    self.assertEqual({r[0] for r in c.execute("SELECT method FROM outbox WHERE chat=102")},
                    {"sendVideo","sendPhoto"})
@@ -259,11 +259,12 @@ class MediaQA(unittest.TestCase):
    self.publish(c,101,mid)
    with self.assertRaisesRegex(ValueError,"خودتان"):
     lib._like(c,101,"media",mid)
+   before=points.balance(c,101)
    self.assertTrue(lib._like(c,102,"media",mid))
-   self.assertEqual(points.balance(c,101),1)
+   self.assertEqual(points.balance(c,101),before+1)
    self.assertFalse(lib._like(c,102,"media",mid))
    self.assertTrue(lib._like(c,102,"media",mid))
-   self.assertEqual(points.balance(c,101),1)
+   self.assertEqual(points.balance(c,101),before+1)
 
  def test_comments_rate_limit(self):
   with s.conn() as c:
@@ -373,7 +374,9 @@ class MediaQA(unittest.TestCase):
     mid=self.upload(c,message=self.audio("audio"+str(i),"newUnique"+str(i)))
     lib.set_field(c,101,mid,0,"عنوان جدید "+str(i))
     self.publish(c,101,mid)
-   self.assertEqual(points.balance(c,101),30)
+   metadata=c.execute("SELECT COALESCE(SUM(points),0) FROM loyalty_points WHERE user_id=101 AND kind='media_metadata'").fetchone()[0]
+   posted=c.execute("SELECT COALESCE(SUM(points),0) FROM loyalty_points WHERE user_id=101 AND kind='social_post'").fetchone()[0]
+   self.assertEqual((metadata,posted),(30,50))  # Separate 30pt metadata + 50pt daily posting limits
 
  def test_admin_report_review_and_takedown(self):
   with s.conn() as c:

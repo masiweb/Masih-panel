@@ -9,7 +9,7 @@ for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/f
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/web-backup-worker.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/social.py runtime/test_social.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/web-backup-worker.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -29,6 +29,10 @@ grep -Fq 'frontend/src/pages/vpn/SalesBotPage.tsx' deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/BackupRestorePanel.tsx' deploy/3x-ui.patch
 grep -Fq 'internal/web/controller/masiha_backup.go' deploy/3x-ui.patch
 test -s deploy/web-backup-worker.py
+[[ -s sidecar/SocialAdminPage.tsx ]] ||
+ { echo "Missing social management UI" >&2; exit 1; }
+grep -Fq "social.py" deploy/install-ubuntu-24.04.sh
+grep -Fq "SocialAdminPage.tsx" deploy/install-sidecar.sh
 [[ -s sidecar/MediaBroadcastSettings.tsx ]] ||
  { echo "Missing media announcement web controls" >&2;exit 1; }
 grep -Fq "MediaBroadcastSettings.tsx" deploy/install-sidecar.sh
@@ -45,12 +49,15 @@ if [[ -n "${MASIHA_CHECK_SOURCE:-}" ]]; then
   git -C "$MASIHA_CHECK_SOURCE" apply --reverse --check "$ROOT/deploy/3x-ui.patch"
   echo "Pinned upstream source and full applied patch match"
 fi
-(cd runtime && python3 -m unittest -q test_sales.py test_unified.py test_media_library.py)
+(cd runtime && python3 -m unittest -q test_sales.py test_unified.py test_media_library.py test_social.py)
 grep -Fq "contact_onboarding_rollout_v2" runtime/sales_worker.py
 grep -Fq "request_missing_phones" runtime/sales.py
 grep -Fq "دریافت اجباری شماره حساب تلگرام" deploy/install-sidecar.sh
 
 (cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py)
+for f in runtime/social.py runtime/test_social.py sidecar/SocialAdminPage.tsx docs/MASIHA_SOCIAL_FA.md; do
+ [[ -s "$f" ]] || { echo "Missing social feature: $f" >&2; exit 1; }
+done
 for f in runtime/roz_telegram_upload.py runtime/rozmusic_importer.py runtime/test_rozmusic_upload.py runtime/test_rozmusic_importer.py deploy/masiha-rozmusic-import.service; do
   [[ -s "$f" ]] || { echo "Missing Telegram audio import file: $f" >&2; exit 2; }
 done

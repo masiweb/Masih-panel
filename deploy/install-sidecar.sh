@@ -28,6 +28,7 @@ install -m 0644 "$SIDE/masiha-standalone.tsx" "$SRC/src/masiha-standalone.tsx"
 install -m 0644 "$SIDE/standalone.css" "$SRC/src/masiha-standalone.css"
 install -m 0644 "$SIDE/masiha-vite.config.mjs" "$SRC/masiha-vite.config.mjs"
 install -m 0644 "$SIDE/MediaBroadcastSettings.tsx" "$SRC/src/pages/vpn/MediaBroadcastSettings.tsx"
+install -m 0644 "$SIDE/SocialAdminPage.tsx" "$SRC/src/pages/vpn/SocialAdminPage.tsx"
 # The official 3x-ui frontend is rebuilt from a pinned source revision.
 # Inject media settings as an independent addon, never a native binary patch.
 python3 - "$SRC/src/pages/vpn/SalesBotPage.tsx" <<'PYMEDIA'
@@ -47,6 +48,20 @@ if old in s:s=s.replace(old,new)
 elif new not in s:raise SystemExit("Could not patch mandatory Telegram contact label")
 p.write_text(s)
 PYMEDIA
+python3 - "$SRC/src/pages/vpn/SalesBotPage.tsx" <<'PYSOC'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+anchor="{key:'media_library',label:'کتابخانه موزیک و فیلم',children:"
+imp="import MediaBroadcastSettings from './MediaBroadcastSettings';"
+if "<SocialAdminPage/>" not in s:
+ if s.count(anchor)!=1 or s.count(imp)!=1:
+  raise SystemExit("Cannot mount SocialAdminPage on unsupported frontend")
+ s=s.replace(anchor,"{key:'social_manager',label:'🌐 مدیریت مسیحا سوشال',children:<SocialAdminPage/>},\n "+anchor,1)
+ s=s.replace(imp,imp+"\nimport SocialAdminPage from './SocialAdminPage';",1)
+ p.write_text(s)
+PYSOC
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys
 from pathlib import Path

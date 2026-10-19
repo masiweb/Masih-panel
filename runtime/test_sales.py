@@ -9,7 +9,7 @@ import sales_worker as w
 class Commerce(unittest.TestCase):
  def setUp(self):
   with s.conn() as c:
-   for t in ("settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
+   for t in ("social_reports","social_geo","social_blocks","social_chat_messages","social_chat_pairs","social_chat_queue","social_chat_invites","social_profile_comments","social_reactions","social_profile_views","social_follows","social_profiles","media_items","playlists","playlist_likes","media_likes","settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
    c.execute("INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
@@ -682,6 +682,49 @@ class Commerce(unittest.TestCase):
     s.provision(c,c.execute("SELECT * FROM orders WHERE id='trial-no-points'").fetchone())
    self.assertEqual(loyalty.balance(c,101),0)
 
+ def test_social_invitation_survives_mandatory_phone_registration(self):
+  import social
+  with s.conn() as c:
+   s.put(c,"require_contact",True)
+   sender=social.profile(c,101)
+   c.execute("UPDATE social_profiles SET display_name='دعوت‌کننده',visibility='public' WHERE user_id=101")
+   link="/start soc_"+sender["code"]
+   w.handle(c,{"update_id":99001,"message":{
+    "from":{"id":105,"first_name":"NewGuest"},
+    "chat":{"id":105,"type":"private"},"text":link}})
+   self.assertTrue(c.execute("SELECT state FROM users WHERE id=105").fetchone()[0].startswith("soc:pendinginvite:"))
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=105").fetchone()[0],"")
+   w.handle(c,{"update_id":99002,"message":{
+    "from":{"id":105,"first_name":"NewGuest"},
+    "chat":{"id":105,"type":"private"},
+    "contact":{"user_id":105,"phone_number":"+989121111111"}}})
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=105").fetchone()[0],"+989121111111")
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=105").fetchone()[0],"")
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM social_profile_views WHERE owner=101 AND viewer=105").fetchone()[0],1)
+   latest=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=105 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn(sender["code"],latest["text"])
+   self.assertNotIn("user_id",latest["text"])
+
+ def test_referral_url_uses_public_opaque_code_and_not_telegram_id(self):
+  with s.conn() as c:
+   s.put(c,"bot_username","test_social_bot")
+   s.put(c,"referrals",True)
+   w.handle(c,{"update_id":50001,"message":{
+      "from":{"id":101,"first_name":"Sender"},
+      "chat":{"id":101,"type":"private"},"text":"/start"}})
+   w.handle(c,{"update_id":50002,"callback_query":{
+      "from":{"id":101},"message":{"chat":{"id":101,"type":"private"}},
+      "data":"referral"}})
+   from social import code
+   opaque=code(c,101)
+   payload=c.execute("SELECT payload FROM outbox WHERE chat=101 ORDER BY id DESC LIMIT 1").fetchone()[0]
+   self.assertIn("ref_"+opaque,payload)
+   self.assertNotIn("ref_101",payload)
+   w.handle(c,{"update_id":50003,"message":{
+      "from":{"id":144,"first_name":"Invitee"},
+      "chat":{"id":144,"type":"private"},"text":"/start ref_"+opaque}})
+   self.assertEqual(c.execute("SELECT referrer FROM users WHERE id=144").fetchone()[0],101)
+
  def test_referral_reward_once_after_verified_new_user_onboarding(self):
   import gamification as loyalty
   with s.conn() as c:
@@ -870,7 +913,7 @@ class Commerce(unittest.TestCase):
  def test_new_home_menu_exact_order_and_admin_only(self):
   expected=[
     ["plans","services"],["fun:ai"],["fun:music","fun:film"],
-    ["points_discount"],["fun","support"],["wallet"]
+    ["soc:home"],["points_discount"],["fun","support"],["wallet"]
   ]
   with s.conn() as c:
    s.put(c,"admins",[101])

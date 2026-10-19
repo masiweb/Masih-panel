@@ -434,6 +434,10 @@ def _publish(c,uid,mid):
  c.execute("UPDATE media_items SET status='published' WHERE id=?",(row["id"],))
  broadcast_new_media(c,row["id"])
  _reward_published_metadata(c,uid,row["id"])
+ import social
+ social.reward_post(c,uid,"music" if row["kind"]=="music" else row["media_type"],row["id"])
+ social.notify_followers(c,uid,"music" if row["kind"]=="music" else row["media_type"],
+                         row["id"],row["title"])
  _state(c,uid,"")
  send(c,uid,"✅ "+GENRE_LABEL[row["kind"]]+" ثبت شد.",
       [[("▶️ پخش","med:play:"+str(mid)),("➕ پلی‌لیست","med:addmenu:"+str(mid))],
@@ -443,7 +447,9 @@ def _publish(c,uid,mid):
 def _preview(c,uid,row):
  likes=_count(c,"media_likes","media_id",row["id"])
  comments=c.execute("SELECT COUNT(*) FROM media_comments WHERE media_id=? AND removed=0",(row["id"],)).fetchone()[0]
- caption=_media_summary(row)+"\n❤️ "+str(likes)+" | 💬 "+str(comments)
+ dislikes=c.execute("SELECT COUNT(*) FROM social_reactions WHERE item_id=? AND kind=? AND vote=-1",
+   (row["id"],"music" if row["kind"]=="music" else row["media_type"])).fetchone()[0]
+ caption=_media_summary(row)+"\n❤️ "+str(likes)+" | 👎 "+str(dislikes)+" | 💬 "+str(comments)
  if row["genre"]:caption+="\nسبک: "+row["genre"]
  if row["kind"]=="music" and row["lyrics"]:caption+="\nمتن: "+row["lyrics"][:100]
  if row["kind"]=="film":
@@ -455,11 +461,15 @@ def _preview(c,uid,row):
 def play(c,uid,mid):
  row=_media(c,mid)
  buttons=[
-  [("❤️ لایک","med:like:"+str(mid)),("💬 نظرات","med:comments:"+str(mid))],
+  [("❤️ لایک","med:like:"+str(mid)),("👎 دیسلایک","med:dislike:"+str(mid))],
+  [("💬 نظرات","med:comments:"+str(mid))],
   [("✍️ نظر جدید","med:comment:"+str(mid)),("➕ به پلی‌لیست من","med:addmenu:"+str(mid))],
   [("🚩 گزارش","med:report:"+str(mid))]]
  if row["kind"]=="music" and row["lyrics"]:
   buttons.append([("🎼 متن کامل آهنگ","med:lyrics:"+str(mid))])
+ if row["owner_id"]>0:
+  import social
+  buttons.append([("👤 پروفایل منتشرکننده","soc:view:"+social.code(c,row["owner_id"]))])
  if uid==row["owner_id"] and uid>0:
   buttons.append([("🗑 حذف فایل من","med:remove:"+str(mid))])
  buttons.append([("↩️ "+GENRE_LABEL[row["kind"]],"med:"+row["kind"])])
@@ -497,6 +507,8 @@ def playlist_view(c,uid,pid,page=0):
  p=_playlist(c,uid,pid)
  if type(page)!=int or not 0<=page<=100000:raise ValueError("صفحه نامعتبر است")
  likes=_count(c,"playlist_likes","playlist_id",pid)
+ dislikes=c.execute("SELECT COUNT(*) FROM social_reactions WHERE item_id=? AND kind='playlist' AND vote=-1",
+                    (pid,)).fetchone()[0]
  total=c.execute("""SELECT COUNT(*) FROM playlist_entries e JOIN media_items m ON m.id=e.media_id
    WHERE e.playlist_id=? AND m.status='published'""",(pid,)).fetchone()[0]
  if page*40>=total and page>0:raise ValueError("صفحه وجود ندارد")
@@ -508,14 +520,18 @@ def playlist_view(c,uid,pid,page=0):
  if page>0:navigation.append(("⬅️ قبلی","med:plpage:"+str(pid)+":"+str(page-1)))
  if (page+1)*40<total:navigation.append(("بعدی ➡️","med:plpage:"+str(pid)+":"+str(page+1)))
  if navigation:actions.append(navigation)
- actions += [[("❤️ لایک پلی‌لیست","med:pllike:"+str(pid)),("💬 نظرات","med:plcomments:"+str(pid))],
+ actions += [[("❤️ لایک پلی‌لیست","med:pllike:"+str(pid)),("👎 دیسلایک","med:pldislike:"+str(pid))],
+            [("💬 نظرات","med:plcomments:"+str(pid))],
             [("✍️ نظر جدید","med:plcomment:"+str(pid))]]
+ if p["owner_id"]>0:
+  import social
+  actions.append([("👤 پروفایل سازنده","soc:view:"+social.code(c,p["owner_id"]))])
  if uid==p["owner_id"]:
   actions.append([("🔗 لینک دعوت" if p["private"] else "📢 اشتراک‌گذاری","med:invite:"+str(pid)),
                   ("🗑 حذف پلی‌لیست","med:plremove:"+str(pid))])
  actions.append([("↩️ پلی‌لیست‌ها","med:lists:"+p["kind"])])
  send(c,uid,("🔒 " if p["private"] else "🌎 ")+"پلی‌لیست: "+p["name"]+
-   "\n❤️ "+str(likes)+" | 🎞 "+str(total)+" رسانه | صفحه "+str(page+1)+"/"+str(max(1,(total+39)//40))+
+   "\n❤️ "+str(likes)+" | 👎 "+str(dislikes)+" | 🎞 "+str(total)+" رسانه | صفحه "+str(page+1)+"/"+str(max(1,(total+39)//40))+
    ("\n"+p["description"] if p["description"] else ""),actions)
 
 def _like(c,uid,kind,id):
@@ -532,9 +548,13 @@ def _like(c,uid,kind,id):
  c.execute("INSERT INTO "+table+"("+target+",user_id,created) VALUES(?,?,?)",(id,uid,_sales().now()))
  # Reward content creators only, capped daily and uniquely by (liker, item).
  from gamification import award
- if owner["owner_id"]>0 and setting(c,"like_points") and _daily_points(c,owner["owner_id"],"media_like")<DAILY_LIKE_LIMIT:
-  award(c,owner["owner_id"],min(setting(c,"like_points"),DAILY_LIKE_LIMIT-_daily_points(c,owner["owner_id"],"media_like")),
-        "media_like","liked:"+kind+":"+str(id)+":"+str(uid),_sales().now())
+ if owner["owner_id"]>0:
+  row=c.execute("SELECT kind,media_type FROM media_items WHERE id=?",(id,)).fetchone() if kind=="media" else None
+  label=("music" if row and row["kind"]=="music" else row["media_type"] if row else "playlist")
+  points=setting(c,"social_like_"+label)
+  if points and _daily_points(c,owner["owner_id"],"media_like")<DAILY_LIKE_LIMIT:
+   award(c,owner["owner_id"],min(points,DAILY_LIKE_LIMIT-_daily_points(c,owner["owner_id"],"media_like")),
+         "media_like","liked:"+kind+":"+str(id)+":"+str(uid),_sales().now())
  return True
 
 def _comment(c,uid,kind,id,body):
@@ -551,7 +571,8 @@ def comments(c,uid,kind,id):
  else:_playlist(c,uid,id);table="playlist_comments";fk="playlist_id"
  rows=c.execute("SELECT user_id,body FROM "+table+" WHERE "+fk+"=? AND removed=0 ORDER BY id DESC LIMIT 5",(id,)).fetchall()
  back="med:play:"+str(id) if kind=="media" else "med:pl:"+str(id)
- send(c,uid,"💬 نظرات:\n"+("\n\n".join("👤 "+str(r["user_id"])+": "+r["body"][:120] for r in rows) or "نظری ثبت نشده است"),
+ import social
+ send(c,uid,"💬 نظرات:\n"+("\n\n".join("👤 "+social.public_name(c,r["user_id"])+": "+r["body"][:120] for r in rows) or "نظری ثبت نشده است"),
       [[("✍️ ثبت نظر","med:"+("comment:" if kind=="media" else "plcomment:")+str(id))],
        [("↩️ بازگشت",back)]])
 
@@ -620,8 +641,18 @@ def callback(c,uid,cmd):
  if op=="play":return play(c,uid,int(x))
  if op=="like":
   liked=_like(c,uid,"media",int(x))
+  import social
+  row=_media(c,int(x))
+  genre="music" if row["kind"]=="music" else row["media_type"]
+  c.execute("DELETE FROM social_reactions WHERE kind=? AND item_id=? AND user_id=?",(genre,int(x),uid))
+  if liked:c.execute("INSERT INTO social_reactions VALUES(?,?,?,?,?)",(genre,int(x),uid,1,_sales().now()))
   send(c,uid,"❤️ لایک شد." if liked else "لایک شما برداشته شد.",[[("↩️ بازگشت به رسانه","med:play:"+x)]])
   return
+ if op=="dislike":
+  row=_media(c,int(x))
+  import social
+  genre="music" if row["kind"]=="music" else row["media_type"]
+  return social.vote(c,uid,genre,int(x),-1,"med:play:"+x)
  if op=="lyrics":
   row=_media(c,int(x))
   if row["kind"]!="music" or not row["lyrics"]:raise ValueError("متن ترانه ثبت نشده است")
@@ -645,8 +676,13 @@ def callback(c,uid,cmd):
   return playlist_view(c,uid,int(x),int(parts[3]))
  if op=="pllike":
   liked=_like(c,uid,"playlist",int(x))
+  c.execute("DELETE FROM social_reactions WHERE kind='playlist' AND item_id=? AND user_id=?",(int(x),uid))
+  if liked:c.execute("INSERT INTO social_reactions VALUES(?,?,?,?,?)",("playlist",int(x),uid,1,_sales().now()))
   send(c,uid,"❤️ لایک شد." if liked else "لایک برداشته شد.",[[("↩️ بازگشت به پلی‌لیست","med:pl:"+x)]])
   return
+ if op=="pldislike":
+  import social
+  return social.vote(c,uid,"playlist",int(x),-1,"med:pl:"+x)
  if op=="plnew" and x in FIELDS:
   visibility=parts[3] if len(parts)>3 else ""
   if visibility not in ("0","1"):raise ValueError("نوع پلی‌لیست نامعتبر است")
@@ -748,6 +784,8 @@ def text_input(c,uid,state,message,update_id):
   p=c.execute("INSERT INTO playlists(owner_id,kind,name,private,invite_token,created) VALUES(?,?,?,?,?,?)",
     (uid,kind,name,visibility,secrets.token_urlsafe(12),_sales().now())).lastrowid
   _state(c,uid,"")
+  import social
+  social.reward_post(c,uid,"playlist",p)
   return playlist_view(c,uid,p)
  if op=="comment":
   mid=int(parts[2]);_comment(c,uid,"media",mid,message.get("text",""))

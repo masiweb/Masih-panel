@@ -62,6 +62,8 @@ def conn():
  # Media database stores only Telegram file IDs and text metadata, never bytes.
  import media_library
  media_library.setup(c)
+ import social
+ social.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
  # Telegram usernames are optional and can change; update on later messages.
  if not any(col[1]=="telegram_username" for col in c.execute("PRAGMA table_info(users)")):
@@ -566,11 +568,30 @@ def admin(req):
   a=req.get("action");s=settings(c)
   if a=="get":
    safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id","ai_api_key")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"]);safe["ai_api_key_set"]=bool(s.get("ai_api_key"))
-   return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0],"message_templates":{key:(c.execute("SELECT body FROM message_templates WHERE id=?",(key,)).fetchone() or {"body":default})["body"] for key,default in MESSAGE_DEFAULTS.items()},"message_defaults":MESSAGE_DEFAULTS,"loyalty":{"total_users_with_points":c.execute("SELECT COUNT(DISTINCT user_id) FROM loyalty_points").fetchone()[0],"total_awarded":c.execute("SELECT COALESCE(SUM(points),0) FROM loyalty_points WHERE points>0").fetchone()[0],"recent":[dict(r) for r in c.execute("SELECT user_id,points,kind,created FROM loyalty_points ORDER BY id DESC LIMIT 30")]},"media":{"total_music":c.execute("SELECT COUNT(*) FROM media_items WHERE kind='music' AND status='published'").fetchone()[0],"total_films":c.execute("SELECT COUNT(*) FROM media_items WHERE kind='film' AND status='published'").fetchone()[0],"playlists":c.execute("SELECT COUNT(*) FROM playlists WHERE removed=0").fetchone()[0],"field_points":c.execute("SELECT v FROM media_settings WHERE k='field_points'").fetchone()[0],"like_points":c.execute("SELECT v FROM media_settings WHERE k='like_points'").fetchone()[0], "broadcast_music":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_music'").fetchone()[0]),"broadcast_movie":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_movie'").fetchone()[0]),"broadcast_series":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_series'").fetchone()[0]),"reports":[dict(r) for r in c.execute("SELECT r.id,r.media_id,r.reporter_id,r.reason,r.created,m.title FROM media_reports r JOIN media_items m ON m.id=r.media_id WHERE r.status='pending' ORDER BY r.id DESC LIMIT 40")]}}
+   return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0],"message_templates":{key:(c.execute("SELECT body FROM message_templates WHERE id=?",(key,)).fetchone() or {"body":default})["body"] for key,default in MESSAGE_DEFAULTS.items()},"message_defaults":MESSAGE_DEFAULTS,"loyalty":{"total_users_with_points":c.execute("SELECT COUNT(DISTINCT user_id) FROM loyalty_points").fetchone()[0],"total_awarded":c.execute("SELECT COALESCE(SUM(points),0) FROM loyalty_points WHERE points>0").fetchone()[0],"recent":[dict(r) for r in c.execute("SELECT user_id,points,kind,created FROM loyalty_points ORDER BY id DESC LIMIT 30")]},"media":{"total_music":c.execute("SELECT COUNT(*) FROM media_items WHERE kind='music' AND status='published'").fetchone()[0],"total_films":c.execute("SELECT COUNT(*) FROM media_items WHERE kind='film' AND status='published'").fetchone()[0],"playlists":c.execute("SELECT COUNT(*) FROM playlists WHERE removed=0").fetchone()[0],"field_points":c.execute("SELECT v FROM media_settings WHERE k='field_points'").fetchone()[0],"like_points":c.execute("SELECT v FROM media_settings WHERE k='like_points'").fetchone()[0], "social_rewards":{k:c.execute("SELECT v FROM media_settings WHERE k=?",(k,)).fetchone()[0] for k in __import__("social").DEFAULT_POINTS}, "broadcast_music":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_music'").fetchone()[0]),"broadcast_movie":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_movie'").fetchone()[0]),"broadcast_series":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_series'").fetchone()[0]),"reports":[dict(r) for r in c.execute("SELECT r.id,r.media_id,r.reporter_id,r.reason,r.created,m.title FROM media_reports r JOIN media_items m ON m.id=r.media_id WHERE r.status='pending' ORDER BY r.id DESC LIMIT 40")]}}
+  if a=="social_admin":
+   import social
+   return social.admin_view(c,req)
+  if a=="social_report":
+   ident=integer(req.get("id"),1,2**31-1)
+   decision=req.get("decision")
+   if decision not in ("resolved","block"):raise ValueError("وضعیت گزارش نامعتبر است")
+   row=c.execute("SELECT target FROM social_reports WHERE id=? AND status='pending'",
+                 (ident,)).fetchone()
+   if not row:raise ValueError("گزارش پیدا نشد یا قبلاً بررسی شده است")
+   if decision=="block":
+    c.execute("UPDATE users SET blocked=1 WHERE id=?",(row["target"],))
+    c.execute("DELETE FROM social_chat_queue WHERE user_id=?",(row["target"],))
+    c.execute("""UPDATE social_chat_pairs SET closed=? WHERE closed=0 AND
+      (first_user=? OR second_user=?)""",(now(),row["target"],row["target"]))
+   c.execute("UPDATE social_reports SET status=? WHERE id=?",(decision,ident))
+   audit(c,"social_report_"+decision,str(ident))
+   return True
   if a=="media_settings":
    val=req.get("values",{})
    toggle_keys={"broadcast_music","broadcast_movie","broadcast_series"}
-   numeric_keys={"field_points","like_points"}
+   import social
+   numeric_keys={"field_points","like_points","social_chat_retention_days"}|set(social.DEFAULT_POINTS)
    if not isinstance(val,dict) or not val or set(val)-(toggle_keys|numeric_keys):
     raise ValueError("تنظیمات رسانه نامعتبر است")
    for field,value in val.items():
@@ -583,7 +604,9 @@ def admin(req):
       c.execute("""UPDATE outbox SET done=2,payload='{}'
         WHERE done=0 AND dedupe LIKE ?""",("media-broadcast:"+genre+":%",))
     else:
-     c.execute("UPDATE media_settings SET v=? WHERE k=?",(integer(value,0,10),field))
+     ceiling=365 if field=="social_chat_retention_days" else 10000 if field in social.DEFAULT_POINTS else 10
+     floor=30 if field=="social_chat_retention_days" else 0
+     c.execute("UPDATE media_settings SET v=? WHERE k=?",(integer(value,floor,ceiling),field))
    audit(c,"media_settings","moderator:"+",".join(sorted(val)))
    return True
   if a=="media_report":

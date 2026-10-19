@@ -4,6 +4,7 @@ from sales import *
 from sales_bot_admin import main as admin_menu, callback as admin_callback, input_text as admin_text, queue_receipt_review
 import entertainment
 import media_library
+import social
 def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
@@ -34,12 +35,16 @@ def purchase_quote(c,uid,ident,card=False):
  return ident
 def home(c,uid):
  """Compact user-first keyboard; managers see a single extra control."""
+ if c.execute("SELECT 1 FROM social_chat_pairs WHERE closed=0 AND (first_user=? OR second_user=?)",
+              (uid,uid)).fetchone() or c.execute("SELECT 1 FROM social_chat_queue WHERE user_id=?",(uid,)).fetchone():
+  social._leave(c,uid)
  s=settings(c)
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  buttons=[
   [("🛒 خرید جدید","plans"),("📦 اشتراک‌های من","services")],
   [("🤖 هوش مصنوعی","fun:ai")],
   [("🎵 موزیک","fun:music"),("🎬 فیلم","fun:film")],
+  [("🌐 مسیحا سوشال • پروفایل و دوستان","soc:home")],
   [("⭐ امتیاز و تخفیف","points_discount")],
   [("🎮 سرگرمی","fun"),("🛟 پشتیبانی","support")],
   [("💳 کیف پول","wallet")]
@@ -145,7 +150,9 @@ def handle(c,up):
  ref=0
  if new and body.startswith("/start ref_"):
   with contextlib.suppress(Exception):
-   candidate=int(body.split("ref_")[1])
+   code_or_legacy=body.split("ref_",1)[1].split()[0]
+   candidate=(social.by_code(c,code_or_legacy) if code_or_legacy.startswith("MS-")
+              else int(code_or_legacy))
    if candidate!=uid and c.execute("SELECT 1 FROM users WHERE id=?",(candidate,)).fetchone():ref=candidate
  c.execute("INSERT OR IGNORE INTO users(id,name,referrer,created,telegram_username) VALUES(?,?,?,?,?)",
   (uid,who.get("first_name","")[:100],ref,now(),str(who.get("username") or "")[:32]))
@@ -155,6 +162,14 @@ def handle(c,up):
             (str(who.get("username") or "")[:32],uid))
  u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if u["blocked"]:return
+ # Immutable random public ID exists from first contact with the bot.
+ social.profile(c,uid)
+ if body.startswith("/start soc_"):
+  with contextlib.suppress(ValueError):
+   social.by_code(c,body.split("soc_",1)[1].strip().split()[0])
+   c.execute("UPDATE users SET state=? WHERE id=?",("soc:pendinginvite:"+
+    body.split("soc_",1)[1].strip().split()[0],uid))
+   u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
  if s["channel"] and uid not in s["admins"]:
   # An unknown or nonmember account can cause Telegram HTTP 400. The
   # membership helper maps that response to False, never "bot token failed".
@@ -187,6 +202,11 @@ def handle(c,up):
      (secrets.token_hex(12),uid,"sendMessage",json.dumps(
       {"chat_id":uid,"text":"✅ شماره حساب تلگرام تأیید شد.",
        "reply_markup":{"remove_keyboard":True}},ensure_ascii=False)))
+   pending=u["state"] or ""
+   if pending.startswith("soc:pendinginvite:"):
+    with contextlib.suppress(ValueError):
+     if social.invite_start(c,uid,"/start soc_"+pending.split(":",2)[2]):
+      return
    home(c,uid)
    return
   # A forged/shared contact, normal message, deep link, and every callback
@@ -196,10 +216,17 @@ def handle(c,up):
  # Reward the inviter only when this account passed channel/phone gating.
  # An idempotent ledger reference prevents duplicate points on /start retries.
  loyalty.referral(c,uid,s,now())
+ if u["state"].startswith("soc:pendinginvite:") and (cmd=="home" or body.startswith("/start")):
+  invite=u["state"].split(":",2)[2]
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  with contextlib.suppress(ValueError):
+   if social.invite_start(c,uid,"/start soc_"+invite):return
  if new and s["new_user_notice"]:
   for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
  # Private playlist invitations are resolved only after mandatory channel/
  # contact onboarding has succeeded, and are scoped to the invitee.
+ if not q and social.invite_start(c,uid,body):
+  return
  if not q and media_library.invite_start(c,uid,body):
   return
  # Received/forwarded Telegram audio and video are accepted directly, even
@@ -215,6 +242,9 @@ def handle(c,up):
  if body in ("کیف پول","💳 کیف پول"):cmd="wallet"
  if not q and not body.startswith("/start") and cmd not in ("home","fun","fun:points","wallet") and u["state"]:
   state=u["state"]
+  if state.startswith("soc:"):
+   social.input_text(c,uid,state,m,up["update_id"])
+   return
   if state.startswith("med:"):
    media_library.text_input(c,uid,state,m,up["update_id"])
    return
@@ -304,7 +334,10 @@ def handle(c,up):
    c.execute("INSERT INTO tickets(user_id,body,created) VALUES(?,?,?)",(uid,text(body,3000),now()))
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,bot_message(c,"support_saved"));return
   if state=="transfer":
-   target,amount=map(int,body.split());integer(target,1);integer(amount,1,10**9)
+   chunks=body.split()
+   if len(chunks)!=2:raise ValueError("شناسه عمومی MS-... و مبلغ را وارد کنید")
+   target=social.by_code(c,chunks[0].upper())
+   amount=integer(int(chunks[1]),1,10**9)
    if target==uid:raise ValueError("گیرنده باید متفاوت باشد")
    ref="transfer:"+str(up["update_id"])
    money(c,uid,-amount,"transfer",ref+":out");money(c,target,amount,"transfer",ref+":in")
@@ -317,6 +350,8 @@ def handle(c,up):
   # including when AI or media is opened directly from the main menu.
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   entertainment.callback(c,uid,cmd)
+ elif cmd.startswith("soc:"):
+  social.callback(c,uid,cmd)
  elif cmd.startswith("med:"):
   media_library.callback(c,uid,cmd)
  elif cmd.startswith("medadmin:"):
@@ -438,7 +473,7 @@ def handle(c,up):
   if cmd=="transfer" and not s["transfer"]:raise ValueError("انتقال غیرفعال است")
   if cmd=="coupon" and not s["discounts"]:raise ValueError("کد تخفیف غیرفعال است")
   c.execute("UPDATE users SET state=? WHERE id=?",(cmd,uid))
-  prompt={"transfer":"آیدی عددی گیرنده و مبلغ تومان را وارد کنید.",
+  prompt={"transfer":"شناسه عمومی مسیحا (MS-XXXXXXXX) و مبلغ تومان را وارد کنید.",
           "coupon":"کد تخفیف یا هدیه را بفرستید.",
           "support":(bot_message(c,"support_prompt") if c.execute(
               "SELECT 1 FROM message_templates WHERE id='support_prompt'").fetchone() else s["support"])}[cmd]
@@ -448,7 +483,7 @@ def handle(c,up):
   enqueue(c,uid,prompt,back)
  elif cmd=="referral":
   if not s["referrals"] and not s.get("points_per_referral",0):raise ValueError("سیستم دعوت دوستان غیرفعال است")
-  enqueue(c,uid,"لینک دعوت اختصاصی:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+str(uid)+
+  enqueue(c,uid,"لینک دعوت اختصاصی:\nhttps://t.me/"+s.get("bot_username","")+"?start=ref_"+social.code(c,uid)+
    "\nامتیاز هر دعوت موفق: "+str(s["points_per_referral"])+
    "\nکمیسیون خرید زیرمجموعه: "+(str(s["commission"])+"٪" if s["referrals"] else "غیرفعال"),
    [[("⭐ امتیازهای من","fun:points"),("🏠 منوی اصلی","home")]])
@@ -501,6 +536,14 @@ def tick():
   s=settings(c);put(c,"heartbeat",now());c.commit()
   if not s["enabled"]:
    put(c,"last_error","");c.commit();return
+  if now()-s.get("social_cleanup_checked",0)>86400:
+   # Drop private chat message bodies after the configured retention period.
+   retention=c.execute("SELECT v FROM media_settings WHERE k='social_chat_retention_days'").fetchone()
+   days=int(retention[0]) if retention else 90
+   c.execute("DELETE FROM social_chat_messages WHERE created<?",(now()-max(30,min(365,days))*86400,))
+   c.execute("DELETE FROM social_geo WHERE updated<?",(now()-30*86400,))
+   put(c,"social_cleanup_checked",now())
+   c.commit()
   if s["require_contact"] and not s.get("contact_onboarding_rollout_v2"):
    request_missing_phones(c)
    put(c,"contact_onboarding_rollout_v2",True)
