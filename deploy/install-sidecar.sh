@@ -41,7 +41,11 @@ if '<MediaBroadcastSettings/>' not in s:
   raise SystemExit('Unsupported SalesBotPage version for media broadcast controls')
  s=s.replace(anchor,'  <MediaBroadcastSettings/>\n'+anchor,1)
  s=s.replace(import_anchor,import_anchor+"\nimport MediaBroadcastSettings from './MediaBroadcastSettings';",1)
- p.write_text(s)
+old="require_contact:'دریافت شماره متعلق به حساب تلگرام'"
+new="require_contact:'دریافت اجباری شماره حساب تلگرام (برای همه اعضای قدیمی و جدید)'"
+if old in s:s=s.replace(old,new)
+elif new not in s:raise SystemExit("Could not patch mandatory Telegram contact label")
+p.write_text(s)
 PYMEDIA
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys

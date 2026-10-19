@@ -478,6 +478,94 @@ class Commerce(unittest.TestCase):
      "chat":{"id":102,"type":"private"},"contact":{"user_id":102,"phone_number":"+989121234567"}}})
    self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"+989121234567")
    self.assertTrue(any('"remove_keyboard": true' in x["payload"] for x in c.execute("SELECT payload FROM outbox WHERE chat=102")))
+ def test_phone_gate_rejects_all_features_and_foreign_contacts(self):
+  def msg(uid,**payload):
+   return {"update_id":secrets.randbelow(100000),"message":{
+    "chat":{"id":uid,"type":"private"},"from":{"id":uid,"first_name":"Existing"},
+    **payload}}
+  def callback(uid,data):
+   return {"update_id":secrets.randbelow(100000),"callback_query":{
+    "message":{"chat":{"id":uid,"type":"private"}},"from":{"id":uid},"data":data}}
+  with s.conn() as c:
+   s.put(c,"require_contact",True)
+   for q in (msg(102,text="/start"),callback(102,"plans"),
+             callback(102,"med:play:11"),callback(102,"trialpick:1"),
+             msg(102,text="+989121234567"),
+             msg(102,audio={"file_id":"XX","file_unique_id":"xx"}),
+             msg(102,contact={"user_id":101,"phone_number":"+989121234567"}),
+             msg(102,contact={"user_id":102,"phone_number":"not-a-phone"}),
+             msg(102,contact={"user_id":102,"phone_number":"    "}),):
+    w.handle(c,q)
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"")
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM orders").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM media_items").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM quotes").fetchone()[0],0)
+   prompts=[json.loads(x[0]) for x in c.execute(
+     "SELECT payload FROM outbox WHERE chat=102 AND dedupe LIKE 'phone-gate:%'")]
+   self.assertTrue(prompts)
+   self.assertTrue(all(x["reply_markup"]["keyboard"][0][0]["request_contact"] for x in prompts))
+   w.handle(c,msg(102,contact={"user_id":102,"phone_number":"+98 912-1234567"}))
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=102").fetchone()[0],"+989121234567")
+   self.assertTrue(any(json.loads(x[0]).get("reply_markup",{}).get("remove_keyboard")
+       for x in c.execute("SELECT payload FROM outbox WHERE chat=102")))
+
+ def test_phone_gate_also_applies_to_admin_and_existing_members(self):
+  with s.conn() as c:
+   s.put(c,"require_contact",True);s.put(c,"admins",[101])
+   w.handle(c,{"update_id":6001,"callback_query":{
+    "from":{"id":101},"message":{"chat":{"id":101,"type":"private"}},
+    "data":"admin"}})
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=101").fetchone()[0],"")
+   self.assertTrue(c.execute("SELECT 1 FROM outbox WHERE chat=101 AND dedupe LIKE 'phone-gate:%'").fetchone())
+   self.assertFalse(c.execute("SELECT 1 FROM outbox WHERE chat=101 AND payload LIKE '%پنل مدیریت%'").fetchone())
+
+ def test_activating_phone_gate_prompts_existing_members_once(self):
+  with s.conn() as c:
+   c.execute("UPDATE users SET phone=? WHERE id=101",("+989130001111",))
+  s.admin({"action":"settings","values":{"require_contact":True}})
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'phone-gate:rollout:%'").fetchone()[0],1)
+   target=c.execute("SELECT chat,payload FROM outbox WHERE dedupe LIKE 'phone-gate:rollout:%'").fetchone()
+   self.assertEqual(target["chat"],102)
+   self.assertIn("request_contact",target["payload"])
+  s.admin({"action":"settings","values":{"require_contact":True}})
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'phone-gate:rollout:%'").fetchone()[0],1)
+  s.admin({"action":"settings","values":{"require_contact":False}})
+  s.admin({"action":"settings","values":{"require_contact":True}})
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'phone-gate:rollout:%'").fetchone()[0],2)
+
+ def test_outbox_only_delivers_contact_challenge_before_verification(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True);s.put(c,"require_contact",True)
+   s.put(c,"contact_onboarding_rollout_v2",True)
+   s.put(c,"bot_username","testbot")
+   s.put(c,"notifications",False)
+   s.put(c,"admins",[101])
+   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+     ("media-broadcast:music:100:102",102,"sendAudio",
+      json.dumps({"chat_id":102,"audio":"FILE_ID"})))
+   s.prompt_for_own_contact(c,102,"phone-gate:rollout:one:102")
+  calls=[]
+  def mock_tg(settings,method,payload):
+   calls.append((method,payload))
+   if method=="getUpdates":return []
+   return {"ok":True}
+  with patch.object(w,"tg",side_effect=mock_tg):
+   w.tick()
+  self.assertFalse(any(method=="sendAudio" for method,payload in calls))
+  self.assertTrue(any(method=="sendMessage" and payload.get("reply_markup",{}).get("keyboard") for method,payload in calls))
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT done FROM outbox WHERE dedupe='media-broadcast:music:100:102'").fetchone()[0],0)
+   c.execute("UPDATE users SET phone=? WHERE id=102",("+989121234567",))
+  calls.clear()
+  with patch.object(w,"tg",side_effect=mock_tg):
+   w.tick()
+  self.assertTrue(any(method=="sendAudio" for method,payload in calls))
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT done FROM outbox WHERE dedupe='media-broadcast:music:100:102'").fetchone()[0],1)
+
  def test_admin_broadcast_requires_explicit_confirmation_and_can_cancel(self):
   from sales_bot_admin import callback,input_text
   with s.conn() as c:

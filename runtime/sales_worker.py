@@ -170,20 +170,29 @@ def handle(c,up):
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
      (secrets.token_hex(12),uid,"sendMessage",json.dumps(payload,ensure_ascii=False)))
    return
- if s["require_contact"] and not u["phone"] and uid not in s["admins"]:
-  contact=m.get("contact",{})
-  if contact.get("user_id")==uid and isinstance(contact.get("phone_number"),str) and len(contact["phone_number"])<=32:
-   c.execute("UPDATE users SET phone=? WHERE id=?",(contact["phone_number"],uid))
-   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+ # Strict gate also covers existing members and inline callback queries.
+ # Only a contact object referring to the *sending Telegram account* passes.
+ if s["require_contact"] and needs_own_phone(u):
+  contact=m.get("contact") if not q else None
+  phone=contact.get("phone_number") if isinstance(contact,dict) else None
+  normalized=re.sub(r"[ ()-]","",phone.strip()) if isinstance(phone,str) else ""
+  valid_phone=(bool(re.fullmatch(r"\+?[0-9]{7,15}",normalized))
+               and 7<=len(normalized.lstrip("+"))<=15)
+  if (isinstance(contact,dict) and type(contact.get("user_id")) is int
+      and contact["user_id"]==uid and valid_phone):
+   c.execute("UPDATE users SET phone=?,state='' WHERE id=?",(normalized,uid))
    loyalty.referral(c,uid,s,now())
    enqueue(c,uid,bot_message(c,"contact_saved"))
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
-     (secrets.token_hex(12),uid,"sendMessage",json.dumps({"chat_id":uid,"text":"✅","reply_markup":{"remove_keyboard":True}})))
+     (secrets.token_hex(12),uid,"sendMessage",json.dumps(
+      {"chat_id":uid,"text":"✅ شماره حساب تلگرام تأیید شد.",
+       "reply_markup":{"remove_keyboard":True}},ensure_ascii=False)))
    home(c,uid)
    return
-  else:
-   payload={"chat_id":uid,"text":bot_message(c,"contact_prompt"),"reply_markup":{"keyboard":[[{"text":"ارسال شماره من","request_contact":True}]],"resize_keyboard":True,"one_time_keyboard":True}}
-   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"sendMessage",json.dumps(payload)));return
+  # A forged/shared contact, normal message, deep link, and every callback
+  # receive the SAME mandatory self-share keyboard, never normal actions.
+  prompt_for_own_contact(c,uid)
+  return
  # Reward the inviter only when this account passed channel/phone gating.
  # An idempotent ledger reference prevents duplicate points on /start retries.
  loyalty.referral(c,uid,s,now())
@@ -492,6 +501,10 @@ def tick():
   s=settings(c);put(c,"heartbeat",now());c.commit()
   if not s["enabled"]:
    put(c,"last_error","");c.commit();return
+  if s["require_contact"] and not s.get("contact_onboarding_rollout_v2"):
+   request_missing_phones(c)
+   put(c,"contact_onboarding_rollout_v2",True)
+   c.commit()
   if not s.get("bot_username"):
    me=tg(s,"getMe",{});put(c,"bot_username",me["username"]);c.commit()
   updates=tg(s,"getUpdates",{"offset":s.get("offset",0),"timeout":1,"limit":20,"allowed_updates":["message","callback_query"]})
@@ -534,7 +547,12 @@ def tick():
      except Exception:pass
     put(c,"usage_checked",now())
    c.commit()
-  for row in c.execute("SELECT * FROM outbox WHERE done=0 AND next_try<=? ORDER BY id LIMIT 15",(now(),)).fetchall():
+  for row in c.execute("""SELECT o.* FROM outbox AS o
+    LEFT JOIN users AS u ON u.id=o.chat
+    WHERE o.done=0 AND o.next_try<=? AND
+       (?=0 OR (u.id>0 AND TRIM(COALESCE(u.phone,''))<>'')
+        OR o.dedupe LIKE 'phone-gate:%')
+    ORDER BY o.id LIMIT 15""",(now(),int(bool(s["require_contact"])))).fetchall():
    try:
     p=json.loads(row["payload"])
     if row["method"]=="file":upload(s,row["chat"],p["filename"],p["content"].encode())

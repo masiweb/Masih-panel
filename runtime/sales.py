@@ -105,6 +105,31 @@ def enqueue(c,chat,body,keys=None,key=None,quick_nav=True):
    if quick:buttons.append(quick)
  if buttons:p["reply_markup"]={"inline_keyboard":[[{"text":a,"callback_data":b} for a,b in row] for row in buttons]}
  c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(key or secrets.token_hex(12),chat,"sendMessage",json.dumps(p,ensure_ascii=False)))
+def needs_own_phone(user):
+ """A Telegram user must have a saved own-contact phone when the gate is on."""
+ return not user or not str(user["phone"] or "").strip()
+
+def prompt_for_own_contact(c,uid,dedupe=None):
+ """Persistent native Telegram share-contact keyboard, not a text phone field."""
+ payload={"chat_id":uid,"text":bot_message(c,"contact_prompt"),
+          "reply_markup":{"keyboard":[[{"text":"📱 ارسال شماره حساب تلگرام من",
+                                        "request_contact":True}]],
+                          "resize_keyboard":True,"one_time_keyboard":False,
+                          "is_persistent":True}}
+ key=dedupe or ("phone-gate:prompt:"+str(uid)+":"+str(now()//60))
+ c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+           (key,uid,"sendMessage",json.dumps(payload,ensure_ascii=False)))
+
+def request_missing_phones(c,campaign=None):
+ """One-time message to pre-existing members, without changing their account data."""
+ marker=campaign or secrets.token_hex(10)
+ users=c.execute("""SELECT id FROM users WHERE id>0 AND blocked=0
+                   AND TRIM(COALESCE(phone,''))='' ORDER BY id""").fetchall()
+ for row in users:
+  uid=row["id"]
+  prompt_for_own_contact(c,uid,"phone-gate:rollout:"+marker+":"+str(uid))
+ return len(users)
+
 def money(c,uid,amount,reason,ref):
  if c.execute("SELECT 1 FROM ledger WHERE reference=?",(ref,)).fetchone():return
  if not c.execute("UPDATE users SET balance=balance+? WHERE id=? AND balance+?>=0",(amount,uid,amount)).rowcount:raise ValueError("موجودی کافی نیست یا کاربر وجود ندارد")
@@ -250,6 +275,7 @@ def telegram_channel_member(s,channel,uid):
 
 def save_settings(c,r):
  s=settings(c)
+ settings_before=s.copy()
  for k,v in r.items():
   if k not in DEFAULT:continue
   if k=="token":
@@ -301,6 +327,11 @@ def save_settings(c,r):
  if s["enabled"]:
   me=tg(s,"getMe",{});tg(s,"deleteWebhook",{"drop_pending_updates":False});put(c,"bot_username",me["username"])
  for k in DEFAULT:put(c,k,s[k])
+ if s["require_contact"] and not settings_before["require_contact"]:
+  request_missing_phones(c)
+  put(c,"contact_onboarding_rollout_v2",True)
+ elif not s["require_contact"]:
+  put(c,"contact_onboarding_rollout_v2",False)
  audit(c,"settings","updated")
  return True
 # Keep the account's immutable internal ID separate from its user-facing label.

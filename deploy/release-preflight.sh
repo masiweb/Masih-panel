@@ -46,6 +46,10 @@ if [[ -n "${MASIHA_CHECK_SOURCE:-}" ]]; then
   echo "Pinned upstream source and full applied patch match"
 fi
 (cd runtime && python3 -m unittest -q test_sales.py test_unified.py test_media_library.py)
+grep -Fq "contact_onboarding_rollout_v2" runtime/sales_worker.py
+grep -Fq "request_missing_phones" runtime/sales.py
+grep -Fq "دریافت اجباری شماره حساب تلگرام" deploy/install-sidecar.sh
+
 (cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py)
 for f in runtime/roz_telegram_upload.py runtime/rozmusic_importer.py runtime/test_rozmusic_upload.py runtime/test_rozmusic_importer.py deploy/masiha-rozmusic-import.service; do
   [[ -s "$f" ]] || { echo "Missing Telegram audio import file: $f" >&2; exit 2; }
