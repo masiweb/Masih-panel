@@ -37,7 +37,10 @@ class MediaQA(unittest.TestCase):
   return {"video":{"file_id":file_id,"file_unique_id":unique,"file_name":"movie.mp4"}}
  def upload(self,c,uid=101,kind="music",message=None):
   lib.accept(c,uid,message or (self.audio() if kind=="music" else self.film()),kind)
-  return c.execute("SELECT * FROM media_items ORDER BY id DESC LIMIT 1").fetchone()["id"]
+  mid=c.execute("SELECT * FROM media_items ORDER BY id DESC LIMIT 1").fetchone()["id"]
+  if kind=="film":
+   lib.callback(c,uid,"med:type:"+str(mid)+":movie")
+  return mid
  def publish(self,c,uid,mid):
   lib.callback(c,uid,"med:finish:"+str(mid))
   lib.callback(c,uid,"med:publish:"+str(mid))
@@ -171,7 +174,9 @@ class MediaQA(unittest.TestCase):
                   "file_name":filename,"mime_type":"application/octet-stream"}}})
     row=c.execute("SELECT id,kind,status FROM media_items WHERE owner_id=?",(uid,)).fetchone()
     self.assertEqual((row["kind"],row["status"]),(kind,"draft"))
-    self.assertTrue(c.execute("SELECT state FROM users WHERE id=?",(uid,)).fetchone()[0].startswith("med:meta:"))
+    current_state=c.execute("SELECT state FROM users WHERE id=?",(uid,)).fetchone()[0]
+    self.assertTrue(current_state.startswith("med:meta:") if kind=="music" else current_state=="med:type:"+str(row["id"]))
+    if kind=="film":lib.callback(c,uid,"med:type:"+str(row["id"])+":movie")
     lib.callback(c,uid,"med:finish:"+str(row["id"]))
     lib.callback(c,uid,"med:publish:"+str(row["id"]))
     self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(row["id"],)).fetchone()[0],"published")
@@ -397,6 +402,24 @@ class MediaQA(unittest.TestCase):
   report_id=data["media"]["reports"][0]["id"]
   s.admin({"action":"media_report","id":report_id,"decision":"dismiss"})
   self.assertEqual(s.admin({"action":"get"})["media"]["reports"],[])
+
+ def test_video_type_required_even_if_publish_pressed(self):
+  with s.conn() as c:
+   lib.accept(c,101,self.film("new_vid","new_vid_unique"),"film")
+   mid=c.execute("SELECT id FROM media_items WHERE unique_id='new_vid_unique'").fetchone()[0]
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"med:type:"+str(mid))
+   lib.callback(c,101,"med:publish:"+str(mid))
+   self.assertEqual(c.execute("SELECT status FROM media_items WHERE id=?",(mid,)).fetchone()[0],"draft")
+   with self.assertRaises(ValueError):lib.callback(c,102,"med:type:"+str(mid)+":series")
+   lib.callback(c,101,"med:type:"+str(mid)+":series")
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"med:season:"+str(mid))
+   with self.assertRaises(ValueError):lib.text_input(c,101,"med:season:"+str(mid),{"text":"0"},8)
+   lib.text_input(c,101,"med:season:"+str(mid),{"text":"2"},9)
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"med:episode:"+str(mid))
+   lib.text_input(c,101,"med:episode:"+str(mid),{"text":"10"},10)
+   lib.callback(c,101,"med:finish:"+str(mid))
+   lib.callback(c,101,"med:publish:"+str(mid))
+   self.assertEqual(tuple(c.execute("SELECT media_type,season,episode,status FROM media_items WHERE id=?",(mid,)).fetchone()),("series",2,10,"published"))
 
 if __name__=="__main__":
  unittest.main()

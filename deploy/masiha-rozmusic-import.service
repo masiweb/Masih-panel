@@ -1,0 +1,26 @@
+[Unit]
+Description=Masiha licensed RozMusic music catalog import into public playlist all
+Wants=network-online.target
+After=network-online.target masiha-vpn-extension.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/masiha-vpn-extension
+ExecStart=/usr/bin/python3 -u /opt/masiha-vpn-extension/rozmusic_importer.py run --delay 1.8
+Restart=on-failure
+RestartSec=120
+UMask=0077
+Nice=15
+CPUWeight=10
+MemoryMax=230M
+TasksMax=32
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/masiha-vpn-extension/sales
+
+[Install]
+WantedBy=multi-user.target

@@ -46,6 +46,13 @@ install -m 0644 "$SIDE/nav.css" /var/www/masiha-ui/nav.css
 chmod -R a+rX /var/www/masiha-ui
 python3 -m py_compile /opt/masiha-vpn-extension/sidecar_server.py
 install -m 0644 "$SIDE/masiha-vpn-sidecar.service" /etc/systemd/system/masiha-vpn-sidecar.service
+# Licensed RozMusic importer. Do not auto-start without explicit opt-in.
+if [[ -s "$ROOT/runtime/rozmusic_importer.py" &&
+      -s "$ROOT/deploy/masiha-rozmusic-import.service" ]]; then
+  install -m 0644 "$ROOT/runtime/rozmusic_importer.py" /opt/masiha-vpn-extension/rozmusic_importer.py
+  install -m 0644 "$ROOT/deploy/masiha-rozmusic-import.service" /etc/systemd/system/masiha-rozmusic-import.service
+fi
+
 NGINX=/etc/nginx/sites-available/masiha-vpn
 if ! grep -q 'MASIHA-SIDECAR BEGIN' "$NGINX"; then
   cp -a "$NGINX" "$NGINX.before-masiha-sidecar.$(date -u +%Y%m%dT%H%M%SZ).bak"
@@ -82,6 +89,9 @@ nginx -t
 systemctl daemon-reload
 systemctl enable --now masiha-vpn-sidecar.service
 systemctl restart masiha-vpn-sidecar.service
+if [[ -v MASIHA_ENABLE_ROZMUSIC && "$MASIHA_ENABLE_ROZMUSIC" == "1" ]]; then
+  systemctl enable --now masiha-rozmusic-import.service
+fi
 systemctl reload nginx
 ready=0
 for count in 1 2 3 4 5 6 7 8 9 10; do

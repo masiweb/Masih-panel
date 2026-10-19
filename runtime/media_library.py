@@ -268,6 +268,21 @@ def is_media_message(m):
    m.get("document") and _guess(m)) or _link_kind(m.get("text","")))
 
 def _prompt(c,uid,row,step=0):
+ if row["kind"]=="film" and row["media_type"] not in ("movie","series"):
+  _state(c,uid,"med:type:"+str(row["id"]))
+  send(c,uid,"🎬 سینمایی است یا سریال؟",
+       [[("🎞 سینمایی","med:type:"+str(row["id"])+":movie"),
+         ("📺 سریال","med:type:"+str(row["id"])+":series")]])
+  return
+ if row["kind"]=="film" and row["media_type"]=="series" and not row["season"]:
+  _state(c,uid,"med:season:"+str(row["id"]))
+  send(c,uid,"📺 شماره فصل را ارسال کنید.")
+  return
+ if row["kind"]=="film" and row["media_type"]=="series" and not row["episode"]:
+  _state(c,uid,"med:episode:"+str(row["id"]))
+  send(c,uid,"🎬 شماره قسمت را ارسال کنید.")
+  return
+ if row["kind"]=="film" and step in (1,2,3):step=4
  fields=FIELDS[row["kind"]]
  if step>=len(fields):
   _state(c,uid,"med:cover:"+str(row["id"]))
@@ -370,6 +385,9 @@ def _cover(c,uid,mid,message):
 def _publish(c,uid,mid):
  row=_owner(c,uid,mid,True)
  if row["status"]!="draft":raise ValueError("رسانه قبلاً ثبت شده است")
+ if row["kind"]=="film" and (row["media_type"] not in ("movie","series") or
+      row["media_type"]=="series" and (row["season"]<1 or row["episode"]<1)):
+  return _prompt(c,uid,row)
  # No separate publishing-permission prompt. rights_ok remains false:
  # publication must not be mistaken for an explicit rights certification.
  c.execute("UPDATE media_items SET status='published' WHERE id=?",(row["id"],))
@@ -398,7 +416,10 @@ def play(c,uid,mid):
   [("❤️ لایک","med:like:"+str(mid)),("💬 نظرات","med:comments:"+str(mid))],
   [("✍️ نظر جدید","med:comment:"+str(mid)),("➕ به پلی‌لیست من","med:addmenu:"+str(mid))],
   [("🚩 گزارش","med:report:"+str(mid))]]
- if uid==row["owner_id"]:buttons.append([("🗑 حذف فایل من","med:remove:"+str(mid))])
+ if row["kind"]=="music" and row["lyrics"]:
+  buttons.append([("🎼 متن کامل آهنگ","med:lyrics:"+str(mid))])
+ if uid==row["owner_id"] and uid>0:
+  buttons.append([("🗑 حذف فایل من","med:remove:"+str(mid))])
  buttons.append([("↩️ "+GENRE_LABEL[row["kind"]],"med:"+row["kind"])])
  # Telegram renders a photo's caption BELOW the photo. Enqueue the cover
  # and full information as the first message, without action buttons.
@@ -430,12 +451,21 @@ def playlists(c,uid,kind,scope):
   [[("📋 "+r["name"][:42]+(" 🔒" if r["private"] else ""),"med:pl:"+str(r["id"]))] for r in rows]+
   [[("↩️ پلی‌لیست‌ها","med:lists:"+kind)]])
 
-def playlist_view(c,uid,pid):
+def playlist_view(c,uid,pid,page=0):
  p=_playlist(c,uid,pid)
+ if type(page)!=int or not 0<=page<=100000:raise ValueError("صفحه نامعتبر است")
  likes=_count(c,"playlist_likes","playlist_id",pid)
+ total=c.execute("""SELECT COUNT(*) FROM playlist_entries e JOIN media_items m ON m.id=e.media_id
+   WHERE e.playlist_id=? AND m.status='published'""",(pid,)).fetchone()[0]
+ if page*40>=total and page>0:raise ValueError("صفحه وجود ندارد")
  entries=c.execute("""SELECT m.* FROM playlist_entries e JOIN media_items m ON m.id=e.media_id
-   WHERE e.playlist_id=? AND m.status='published' ORDER BY e.created DESC,m.id DESC LIMIT 40""",(pid,)).fetchall()
+   WHERE e.playlist_id=? AND m.status='published' ORDER BY e.created DESC,m.id DESC
+   LIMIT 40 OFFSET ?""",(pid,page*40)).fetchall()
  actions=[[( _media_summary(x)[:52],"med:play:"+str(x["id"]))] for x in entries]
+ navigation=[]
+ if page>0:navigation.append(("⬅️ قبلی","med:plpage:"+str(pid)+":"+str(page-1)))
+ if (page+1)*40<total:navigation.append(("بعدی ➡️","med:plpage:"+str(pid)+":"+str(page+1)))
+ if navigation:actions.append(navigation)
  actions += [[("❤️ لایک پلی‌لیست","med:pllike:"+str(pid)),("💬 نظرات","med:plcomments:"+str(pid))],
             [("✍️ نظر جدید","med:plcomment:"+str(pid))]]
  if uid==p["owner_id"]:
@@ -443,7 +473,7 @@ def playlist_view(c,uid,pid):
                   ("🗑 حذف پلی‌لیست","med:plremove:"+str(pid))])
  actions.append([("↩️ پلی‌لیست‌ها","med:lists:"+p["kind"])])
  send(c,uid,("🔒 " if p["private"] else "🌎 ")+"پلی‌لیست: "+p["name"]+
-   "\n❤️ "+str(likes)+" | 🎞 "+str(len(entries))+" رسانه"+
+   "\n❤️ "+str(likes)+" | 🎞 "+str(total)+" رسانه | صفحه "+str(page+1)+"/"+str(max(1,(total+39)//40))+
    ("\n"+p["description"] if p["description"] else ""),actions)
 
 def _like(c,uid,kind,id):
@@ -460,7 +490,7 @@ def _like(c,uid,kind,id):
  c.execute("INSERT INTO "+table+"("+target+",user_id,created) VALUES(?,?,?)",(id,uid,_sales().now()))
  # Reward content creators only, capped daily and uniquely by (liker, item).
  from gamification import award
- if setting(c,"like_points") and _daily_points(c,owner["owner_id"],"media_like")<DAILY_LIKE_LIMIT:
+ if owner["owner_id"]>0 and setting(c,"like_points") and _daily_points(c,owner["owner_id"],"media_like")<DAILY_LIKE_LIMIT:
   award(c,owner["owner_id"],min(setting(c,"like_points"),DAILY_LIKE_LIMIT-_daily_points(c,owner["owner_id"],"media_like")),
         "media_like","liked:"+kind+":"+str(id)+":"+str(uid),_sales().now())
  return True
@@ -519,9 +549,19 @@ def callback(c,uid,cmd):
  if len(parts)<2 or parts[0]!="med":raise ValueError("فرمان رسانه نامعتبر است")
  op=parts[1];x=parts[2] if len(parts)>2 else ""
  if op in ("music","film","latest","mine","top","lists","plfeed","plmine","pltop",
-           "leaders","play","comments","plcomments","pl","addmenu"):
+           "leaders","play","comments","plcomments","pl","plpage","addmenu"):
   _state(c,uid,"")
  if op in ("music","film"):return kind_menu(c,uid,op)
+ if op=="type":
+  if len(parts)!=4 or parts[3] not in ("movie","series"):
+   raise ValueError("نوع ویدیو نامعتبر است")
+  row=_owner(c,uid,int(x),True)
+  if row["kind"]!="film" or row["status"]!="draft":
+   raise ValueError("این ویدیو قابل ویرایش نیست")
+  c.execute("UPDATE media_items SET media_type=?,season=0,episode=0 WHERE id=?",
+            (parts[3],row["id"]))
+  return _prompt(c,uid,c.execute("SELECT * FROM media_items WHERE id=?",
+                                 (row["id"],)).fetchone())
  if op=="upload" and x in FIELDS:
   _state(c,uid,"med:upload:"+x)
   return send(c,uid,"📤 موزیک، فیلم یا لینک مستقیم HTTPS بفرستید.",
@@ -540,6 +580,14 @@ def callback(c,uid,cmd):
   liked=_like(c,uid,"media",int(x))
   send(c,uid,"❤️ لایک شد." if liked else "لایک شما برداشته شد.",[[("↩️ بازگشت به رسانه","med:play:"+x)]])
   return
+ if op=="lyrics":
+  row=_media(c,int(x))
+  if row["kind"]!="music" or not row["lyrics"]:raise ValueError("متن ترانه ثبت نشده است")
+  body=row["lyrics"][:30000]
+  for i in range(0,len(body),3000):
+   send(c,uid,"🎼 متن آهنگ "+row["title"]+"\n\n"+body[i:i+3000],
+        [[("↩️ بازگشت به موزیک","med:play:"+x)]])
+  return
  if op=="comments":return comments(c,uid,"media",int(x))
  if op=="comment":
   _media(c,int(x));_state(c,uid,"med:comment:"+x)
@@ -550,6 +598,9 @@ def callback(c,uid,cmd):
   return send(c,uid,"✍️ نظر خود را درباره پلی‌لیست ارسال کنید.",[[("↩️ بازگشت","med:pl:"+x)]])
  if op=="listsel" and x in FIELDS:return playlists(c,uid,x,"mine")
  if op=="pl":return playlist_view(c,uid,int(x))
+ if op=="plpage":
+  if len(parts)!=4:raise ValueError("صفحه نامعتبر است")
+  return playlist_view(c,uid,int(x),int(parts[3]))
  if op=="pllike":
   liked=_like(c,uid,"playlist",int(x))
   send(c,uid,"❤️ لایک شد." if liked else "لایک برداشته شد.",[[("↩️ بازگشت به پلی‌لیست","med:pl:"+x)]])
@@ -631,6 +682,15 @@ def text_input(c,uid,state,message,update_id):
  op=parts[1] if len(parts)>1 else ""
  if op=="upload":
   return accept(c,uid,message,parts[2])
+ if op in ("season","episode"):
+  row=_owner(c,uid,int(parts[2]),True)
+  if row["status"]!="draft" or row["kind"]!="film" or row["media_type"]!="series":
+   raise ValueError("این مرحله فقط برای سریال است")
+  if op=="episode" and not row["season"]:
+   return _prompt(c,uid,row)
+  number=_positive_int(message.get("text",""),1000)
+  c.execute("UPDATE media_items SET "+op+"=? WHERE id=?",(number,row["id"]))
+  return _prompt(c,uid,c.execute("SELECT * FROM media_items WHERE id=?",(row["id"],)).fetchone())
  if op=="meta":
   if not message.get("text"):raise ValueError("متن فیلد را ارسال کنید یا رد کنید")
   return set_field(c,uid,int(parts[2]),int(parts[3]),message["text"])

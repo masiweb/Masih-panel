@@ -42,6 +42,7 @@ if [[ -n "${MASIHA_CHECK_SOURCE:-}" ]]; then
   echo "Pinned upstream source and full applied patch match"
 fi
 (cd runtime && python3 -m unittest -q test_sales.py test_unified.py test_media_library.py)
+(cd runtime && python3 -m unittest -q test_rozmusic_importer.py)
 echo "PASS: sales, named checkout, trials, Telegram and quota tests"
 # Check exact key shell scripts and source files required at deployment time.
 for f in runtime/manager.py runtime/unified.py runtime/worker.py runtime/sales.py \
