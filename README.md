@@ -1,3 +1,21 @@
+## نصب یکپارچه از Git روی سرور تازه — ۱۹ اکتبر ۲۰۲۶
+
+برای نصب تمام امکانات پیاده‌سازی‌شده (x-ui اختصاصی، Xray، OpenVPN، OpenConnect، فروش و ربات تلگرام، مدیریت مستقل مسیحا و بکاپ/بازیابی) روی Ubuntu Server 24.04 amd64 خالی:
+
+    sudo apt-get update && sudo apt-get install -y git ca-certificates curl
+    git clone https://github.com/masiweb/Masih-panel.git
+    cd Masih-panel
+    sudo bash deploy/install-ubuntu-24.04.sh
+
+نصب‌کننده دامنه و ایمیل SSL را می‌پرسد و در انتهای نصب موفق **آدرس‌ها، نام کاربری و رمز تصادفی مدیر را در ترمینال نمایش می‌دهد**. برای ادامه امن مرحله نهایی، دستور زیر وجود دارد:
+
+    sudo bash deploy/finish-install.sh --resume
+
+راهنمای کامل: [نصب از گیت](docs/INSTALL_FROM_GIT_2026_10_19_FA.md).
+این نصب در ابتدا از باینری سفارشی پین‌شده سنایی 3.8.5 استفاده می‌کند؛ پنل رسمی 3.10.2 نیست. منو و بخش مستقل مدیریت مسیحا در آپدیت رسمی حذف نمی‌شوند، ولی route اختصاصی پروفایل‌های صفحه اشتراک هنوز محدودیت سازگاری دارد.
+
+---
+
 # Masiha VPN Manager
 
 Masiha VPN Manager is deployed as a **patched SANAei 3x-ui** with native Xray inbounds, OpenVPN, OpenConnect and a Telegram commerce manager. New deployments are generated from a pinned upstream commit plus our auditable patch and Python runtime sources.

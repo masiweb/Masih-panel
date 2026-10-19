@@ -259,19 +259,11 @@ MASIHA_EXPECT_DEFAULT_INBOUNDS=1 MASIHA_EXPECT_EXTRA_INBOUNDS=1 MASIHA_EXPECT_BE
 # This is the ONLY point where the marker can be removed; verification proves
 # service health. Subsequent --resume calls must refuse normal installations.
 rm -f "$FINALIZE_MARKER"
-# Print credentials immediately on the terminal, ONLY after the LIVE login
-# succeeds and all service health checks pass. Keep a root-only recovery copy.
-# This is deliberately NOT printed during partial/failed installs.
-printf '\n===============================================\n'
-printf ' MASIHA VPN INSTALLED SUCCESSFULLY\n'
-printf '===============================================\n'
-printf ' Panel URL : https://%s%s\n' "$DOMAIN" "$PANEL_PATH"
-printf ' Username  : %s\n' "$ADMIN_USER"
-printf ' Password  : %s\n' "$ADMIN_PASS"
-printf ' HTTPS SSL : Let\047s Encrypt (%s)\n' "$DOMAIN"
-printf ' Recovery  : /root/masiha-vpn-initial-login.env (root only)\n'
-printf '===============================================\n'
-printf ' Subscription : https://%s/sub/ (configured automatically)\n' "$DOMAIN"
-printf ' Xray Presets : 14 safe inbounds (8443-8448, 8450-8457; four new Shadowsocks TCP/UDP), firewall rules created\n'
-printf ' Next         : Configure Telegram BotFather token/admins/plans in the sales UI.\n'
-
+# Print credentials only after independent UI and all native services pass.
+echo "=== Final stage: install and verify update-safe Masiha modules ==="
+if ! bash "$REPO_ROOT/deploy/finish-install.sh" --from-finalizer; then
+  echo "Core services verified but the Masiha web finalization is incomplete." >&2
+  echo "Resume without reinstalling the native panel or regenerating any keys:" >&2
+  echo "  sudo bash $REPO_ROOT/deploy/finish-install.sh --resume" >&2
+  exit 1
+fi

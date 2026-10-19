@@ -8,7 +8,7 @@ umask 077
 if [[ "${1:-}" == "--help" ]]; then
   echo 'Usage (interactive): sudo bash deploy/install-ubuntu-24.04.sh'
   echo 'Usage (automated): sudo env DOMAIN=vpn.example.com EMAIL=admin@example.com bash deploy/install-ubuntu-24.04.sh'
-  echo 'Optional: PANEL_PATH=/xui/ PANEL_ADMIN_USER=admin MASIHA_BUILD_ROOT=/opt/masiha-vpn-build-20261011'
+  echo 'Optional: PANEL_ADMIN_USER=admin MASIHA_BUILD_ROOT=/opt/masiha-vpn-build-20261011'
   exit 0
 fi
 [[ "$EUID" -eq 0 ]] || { echo "Run as root with sudo -E" >&2; exit 1; }
@@ -46,8 +46,8 @@ ADMIN_USER="${PANEL_ADMIN_USER:-admin}"
   { echo "Invalid DOMAIN" >&2; exit 1; }
 [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] ||
   { echo "Invalid EMAIL" >&2; exit 1; }
-[[ "$PANEL_PATH" =~ ^/[A-Za-z0-9_/-]+/$ ]] ||
-  { echo "Invalid PANEL_PATH" >&2; exit 1; }
+[[ "$PANEL_PATH" == "/xui/" ]] ||
+  { echo "This release requires PANEL_PATH=/xui/; other paths need coordinated API changes." >&2; exit 1; }
 [[ "$ADMIN_USER" =~ ^[a-zA-Z0-9_-]{3,30}$ ]] ||
   { echo "Invalid PANEL_ADMIN_USER" >&2; exit 1; }
 # DNS validation belongs BEFORE source downloads and before installing x-ui.
@@ -171,7 +171,8 @@ BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-20261011}"
 echo "=== Stage 2/5: Install pinned upstream 3x-ui runtime and Xray ==="
 XUI_NONINTERACTIVE=1 XUI_SSL_MODE=none XUI_DB_TYPE=sqlite \
   XUI_PANEL_PORT=62053 XUI_WEB_BASE_PATH="$PANEL_PATH" \
-  bash "$BUILD_ROOT/src/install.sh"
+  bash "$BUILD_ROOT/src/install.sh" > /root/masiha-upstream-install.log 2>&1
+chmod 0600 /root/masiha-upstream-install.log
 [[ -d /usr/local/x-ui/bin && -f /etc/systemd/system/x-ui.service ]] ||
   { echo "3x-ui dependencies not installed; stop without starting Masiha extension" >&2; exit 1; }
 systemctl stop x-ui.service 2>/dev/null || true
@@ -237,7 +238,8 @@ server {
   # Restrict large uploads to the authenticated backup-import endpoint.
   location = ${PANEL_PATH}panel/api/masiha-backup/import {
     client_max_body_size 512m;
-    proxy_pass http://127.0.0.1:62053;
+    # Exact backup import must be owned by the independent Masiha API.
+    proxy_pass http://127.0.0.1:61794;
     proxy_http_version 1.1;
     proxy_request_buffering on;
     proxy_read_timeout 360s;
@@ -281,6 +283,5 @@ chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/masiha-reload.sh
 # ACME certs, credentials and an already-generated CA on interrupted installs.
 echo "=== Stage 5/5: Configure VPN services, Xray presets and Telegram extension ==="
 bash "$REPO_ROOT/deploy/finalize-ubuntu-24.04.sh" --from-installer
-# The separately hosted Masiha web modules survive future native SANAei updates.
-echo "=== Stage 6/6: Install upgrade-safe Masiha independent web controls ==="
-bash "$REPO_ROOT/deploy/install-sidecar.sh"
+# Native finalization installs and verifies the independent UI before
+# showing the final credentials. No misleading early success output.

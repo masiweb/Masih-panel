@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 PIN='7ef22f94c950ff09f0870e2295fa65ad5968742c'
 echo "=== Masiha release preflight ==="
-for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/build-3x-ui.sh deploy/verify-install.sh deploy/repair-panel-login.sh; do
+for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/finish-install.sh deploy/install-sidecar.sh deploy/verify-sidecar-menu.sh deploy/build-3x-ui.sh deploy/verify-install.sh deploy/repair-panel-login.sh; do
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
@@ -20,6 +20,8 @@ sh -n runtime/test-oc-route.sh
 echo "Python syntax and portable tunnel route shell syntax OK"
 echo "=== Isolated Xray presets test (no server changes) ==="
 python3 -m unittest -q deploy/test_bootstrap_inbounds.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/test_full_backup.py deploy/test_check_panel_login.py
+echo "=== Complete fresh-install pipeline regression tests ==="
+python3 -m unittest -q deploy/test_install_pipeline.py
 git apply --stat deploy/3x-ui.patch >/dev/null
 test -s deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/SalesBotPage.css' deploy/3x-ui.patch

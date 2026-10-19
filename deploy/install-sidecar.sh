@@ -3,7 +3,9 @@
 set -Eeuo pipefail
 [[ $(id -u) -eq 0 ]] || { echo "Run as root" >&2; exit 1; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC=/opt/masiha-vpn-build-20261011/src/frontend
+BUILD_ROOT=/opt/masiha-vpn-build-20261011
+if [[ -v MASIHA_BUILD_ROOT && -n "$MASIHA_BUILD_ROOT" ]]; then BUILD_ROOT="$MASIHA_BUILD_ROOT"; fi
+SRC="$BUILD_ROOT/src/frontend"
 SIDE="$ROOT/sidecar"
 NODE=/opt/masiha-vpn-toolchains/node-v24.21.0-linux-x64/bin
 [[ -d "$SRC/node_modules" && -x "$SRC/node_modules/.bin/vite" ]] || {
@@ -12,6 +14,13 @@ NODE=/opt/masiha-vpn-toolchains/node-v24.21.0-linux-x64/bin
 [[ -x "$NODE/node" ]] || { echo "Missing pinned Node.js" >&2;exit 1; }
 [[ -f /etc/masiha-vpn-extension/config.json ]] || { echo "Missing Masiha config" >&2;exit 1; }
 [[ -f /etc/nginx/sites-available/masiha-vpn ]] || { echo "Missing Masiha nginx site" >&2;exit 1; }
+python3 - <<'PYCFG'
+import json
+from pathlib import Path
+c=json.loads(Path('/etc/masiha-vpn-extension/config.json').read_text())
+if c.get('panel_path')!='/xui/':
+    raise SystemExit('This release currently requires panel_path=/xui/')
+PYCFG
 install -d -m 0755 /var/www/masiha-ui /opt/masiha-vpn-extension
 install -m 0644 "$SIDE/server.py" /opt/masiha-vpn-extension/sidecar_server.py
 install -m 0644 "$SIDE/masiha-standalone.html" "$SRC/masiha-standalone.html"
@@ -56,6 +65,19 @@ if 'sub_filter "</body>"' not in s:
 p.write_text(s)
 PY
 fi
+# Older fresh installers left an exact backup import that shadowed the
+# sidecar's authenticated prefix location. Correct that legacy proxy safely.
+python3 - "$NGINX" <<'PYN'
+from pathlib import Path
+import sys,re
+p=Path(sys.argv[1]);s=p.read_text()
+pattern=r'(location\s*=\s*/xui/panel/api/masiha-backup/import\s*\{[^{}]*?proxy_pass\s+http://127\.0\.0\.1:)62053(;[^{}]*\})'
+new,n=re.subn(pattern,lambda m:m.group(1)+'61794'+m.group(2),s)
+if n>1: raise SystemExit('Duplicate native backup import location; review Nginx')
+if n: p.write_text(new)
+if 'MASIHA-SIDECAR BEGIN' not in new or 'sub_filter "</body>"' not in new:
+    raise SystemExit('Missing independent Masiha route or navigation injection')
+PYN
 nginx -t
 systemctl daemon-reload
 systemctl enable --now masiha-vpn-sidecar.service
