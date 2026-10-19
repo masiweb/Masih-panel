@@ -572,6 +572,22 @@ def admin(req):
   if a=="social_admin":
    import social
    return social.admin_view(c,req)
+  if a=="social_gallery_to_admin":
+   target=integer(req.get("id"),1,2**63-1)
+   destination=integer(req.get("admin_id"),1,2**63-1)
+   if destination not in s["admins"]:raise ValueError("گیرنده باید از مدیران تعریف‌شده ربات باشد")
+   row=c.execute("SELECT code,display_name,photos FROM social_profiles WHERE user_id=?",(target,)).fetchone()
+   if not row:raise ValueError("پروفایل وجود ندارد")
+   files=json.loads(row["photos"])
+   if not files:raise ValueError("این کاربر تصویر پروفایل ندارد")
+   enqueue(c,destination,"🔐 گالری پروفایل کاربر "+(row["display_name"] or "کاربر")+" | "+row["code"],
+           key="social:admin-gallery:intro:"+str(target)+":"+str(destination)+":"+secrets.token_hex(6))
+   for file_id in files[:5]:
+    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+       ("social:admin-gallery:"+secrets.token_hex(12),destination,"sendPhoto",
+        json.dumps({"chat_id":destination,"photo":file_id})))
+   audit(c,"social_admin_gallery",row["code"]+" | admin:"+str(destination))
+   return {"count":len(files[:5])}
   if a=="social_adjust":
    import social
    return social.adjust_account(c,req.get("code"),req.get("operation"),

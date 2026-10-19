@@ -213,8 +213,9 @@ def _sales():
 
 def _now():return int(time.time())
 
-def chat_cost(c,route):
+def chat_cost(c,route,uid=None):
  if route not in CHAT_COST_LABELS:raise ValueError("نوع چت نامعتبر است")
+ if uid is not None and uid in _sales().settings(c)["admins"]:return 0
  keys=("social_chat_cost_"+route,)
  # A direct profile/old Telegram callback must not bypass a priced
  # discovery entry point; it costs at least the highest discovery price.
@@ -228,12 +229,13 @@ def _balance(c,uid):
  return balance(c,uid)
 
 def _affordable(c,uid,amount):
+ if uid in _sales().settings(c)["admins"]:return
  if _balance(c,uid)<amount:
   raise ValueError("⭐ امتیاز کافی برای شروع چت ندارید؛ موجودی شما "+
    str(_balance(c,uid))+" و هزینه "+str(amount)+" ستاره است. از بخش امتیاز و تخفیف امتیاز کسب کنید.")
 
 def _charge_once(c,uid,amount,chat_id):
- if amount<=0:return
+ if uid in _sales().settings(c)["admins"] or amount<=0:return
  ref="social:chat:"+str(chat_id)+":"+str(uid)
  if c.execute("SELECT 1 FROM loyalty_points WHERE reference=?",(ref,)).fetchone():return
  _affordable(c,uid,amount)
@@ -253,7 +255,7 @@ def _route_for(c,uid,target):
  return "direct"
 
 def _chat_offer(c,uid,route,action):
- points=chat_cost(c,route)
+ points=chat_cost(c,route,uid)
  balance=_balance(c,uid)
  label=CHAT_COST_LABELS[route]
  line=("⭐ هزینه فقط یک‌بار هنگام برقراری موفق گفتگو: "+str(points)+
@@ -538,8 +540,8 @@ def menu(c,uid):
  p=profile(c,uid)
  ready=complete(p)
  buttons=[[("👤 پروفایل من","soc:profile"),("🏆 برترین‌ها","soc:leaders")],
-  [("🎲 چت رندوم · ⭐"+str(chat_cost(c,"random")),"soc:random"),
-   ("🎯 چت فیلترشده · ⭐"+str(chat_cost(c,"filtered")),"soc:filtered")],
+  [("🎲 چت رندوم · ⭐"+str(chat_cost(c,"random",uid)),"soc:random"),
+   ("🎯 چت فیلترشده · ⭐"+str(chat_cost(c,"filtered",uid)),"soc:filtered")],
   [("📍 کاربران نزدیک من","soc:near"),("🔎 جستجوی کاربر","soc:search")],
   [("👥 دنبال‌کنندگان","soc:followers"),("👀 دنبال می‌کنم","soc:following")],
   [("👁 بازدید پروفایل","soc:visitors")],
@@ -573,6 +575,7 @@ def provinces(c,uid,page):
  _send(c,uid,"📍 استان محل زندگی خود را انتخاب کنید.",buttons)
 
 def _require_complete(c,uid):
+ if uid in _sales().settings(c)["admins"]:return True
  if not complete(profile(c,uid)):
   my_profile(c,uid)
   return False
@@ -632,7 +635,7 @@ def _leave(c,uid,announce=True):
 def start_matching(c,uid,mode):
  if mode not in ("random","filtered"):raise ValueError("نوع اتصال ناشناس نامعتبر است")
  if not _require_complete(c,uid):return
- own_price=chat_cost(c,mode)
+ own_price=chat_cost(c,mode,uid)
  _affordable(c,uid,own_price)
  _leave(c,uid)
  profile(c,uid)
@@ -644,11 +647,11 @@ def start_matching(c,uid,mode):
  interests=set(json.loads(mine["interests"]))
  for row in candidates:
   peer=row["user_id"]
-  if _blocked(c,uid,peer) or not complete(profile(c,peer)):continue
+  if _blocked(c,uid,peer) or (peer not in _sales().settings(c)["admins"] and not complete(profile(c,peer))):continue
   if _active_chat(c,peer):continue
   peer_record=c.execute("SELECT blocked FROM users WHERE id=?",(peer,)).fetchone()
   if not peer_record or peer_record["blocked"]:continue
-  if _balance(c,peer)<row["points"]:
+  if peer not in _sales().settings(c)["admins"] and _balance(c,peer)<row["points"]:
    c.execute("DELETE FROM social_chat_queue WHERE user_id=?",(peer,))
    _state(c,peer,"")
    _send(c,peer,"⭐ موجودی ستاره برای چت کافی نیست؛ امتیازی از شما کم نشده است.",
@@ -671,7 +674,7 @@ def start_matching(c,uid,mode):
    "در سامانه شرکت ثبت می‌شود و مدیران مجاز می‌توانند آن را بررسی کنند. "
    "برای پایان، «پایان چت» را بزنید. شماره تماس و اطلاعات حساس نفرستید.")
   for person in (uid,peer):
-   price=own_price if person==uid else row["points"]
+   price=0 if person in _sales().settings(c)["admins"] else (own_price if person==uid else row["points"])
    _send(c,person,"⭐ "+str(price)+" ستاره فقط برای شروع این گفتگو کسر شد. "+
          "همه پیام‌های این گفتگو رایگان هستند.")
    _send(c,person,safety,[[("⛔ پایان چت","soc:leave"),("🚩 گزارش گفتگو","soc:chatreport")]])
@@ -920,7 +923,7 @@ def callback(c,uid,cmd):
   if _blocked(c,uid,target):raise ValueError("این کاربر مسدود است")
   if _active_chat(c,uid):raise ValueError("ابتدا گفتگوی فعلی را پایان دهید")
   route=_route_for(c,uid,target)
-  points=chat_cost(c,route)
+  points=chat_cost(c,route,uid)
   token=secrets.token_hex(8)
   c.execute("""INSERT INTO social_chat_quotes(token,requester,target,route,cost,expires)
                VALUES(?,?,?,?,?,?)""",(token,uid,target,route,points,_now()+900))
@@ -1178,6 +1181,70 @@ def admin_view(c,req):
   metrics["rewards"]={k:c.execute("SELECT v FROM media_settings WHERE k=?",(k,)).fetchone()[0]
       for k in (*DEFAULT_POINTS,*CHAT_COST_DEFAULTS,"social_chat_retention_days")}
   return metrics
+ if mode=="user_detail":
+  uid=req.get("id")
+  if type(uid) is not int or uid<=0 or uid>2**63-1:
+   raise ValueError("شناسه کاربر نامعتبر است")
+  u=c.execute("SELECT id,name,balance,blocked,reseller,referrer,phone,state,created,telegram_username FROM users WHERE id=?",(uid,)).fetchone()
+  if not u:raise ValueError("کاربر موردنظر پیدا نشد")
+  pr=profile(c,uid)
+  obj=dict(u)
+  obj["code"]=pr["code"]
+  obj["display_name"]=pr["display_name"]
+  obj["profile"]={
+   "completed":complete(pr),
+   "missing":[label for yes,label in (
+       (bool(pr["display_name"]),"نام"),
+       (bool(pr["gender"]),"جنسیت"),
+       (pr["age"]>=18,"سن"),
+       (pr["province"] in PROVINCES,"استان"),
+       (bool(json.loads(pr["interests"])),"علاقه‌مندی‌ها"))
+     if not yes],
+   "gender":pr["gender"],"age":pr["age"],"province":pr["province"],
+   "interests":json.loads(pr["interests"]),
+   "photos":json.loads(pr["photos"]), "visibility":pr["visibility"],
+   "show_visitors":bool(pr["show_visitors"]),"discoverable":bool(pr["discoverable"]),
+   "created":pr["created"],"updated":pr["updated"]
+  }
+  obj["points_balance"]=_adjust_info(c,uid)["points"]
+  obj["wallet_balance"]=int(u["balance"])
+  obj["stats"]={
+    "followers":c.execute("SELECT COUNT(*) FROM social_follows WHERE followed=?",(uid,)).fetchone()[0],
+    "following":c.execute("SELECT COUNT(*) FROM social_follows WHERE follower=?",(uid,)).fetchone()[0],
+    "profile_views":c.execute("SELECT COALESCE(SUM(views),0) FROM social_profile_views WHERE owner=?",(uid,)).fetchone()[0],
+    "profile_likes":_score(c,"profile",uid)[1],
+    "profile_dislikes":_score(c,"profile",uid)[2],
+    "profile_comments":c.execute("SELECT COUNT(*) FROM social_profile_comments WHERE owner=? AND removed=0",(uid,)).fetchone()[0],
+    "music":c.execute("SELECT COUNT(*) FROM media_items WHERE owner_id=? AND kind='music' AND status='published'",(uid,)).fetchone()[0],
+    "films":c.execute("SELECT COUNT(*) FROM media_items WHERE owner_id=? AND kind='film' AND status='published'",(uid,)).fetchone()[0],
+    "playlists":c.execute("SELECT COUNT(*) FROM playlists WHERE owner_id=? AND removed=0",(uid,)).fetchone()[0],
+    "chats":c.execute("SELECT COUNT(*) FROM social_chat_pairs WHERE first_user=? OR second_user=?",(uid,uid)).fetchone()[0],
+    "orders":c.execute("SELECT COUNT(*) FROM orders WHERE user_id=?",(uid,)).fetchone()[0],
+    "services":c.execute("SELECT COUNT(*) FROM services WHERE user_id=? AND deleted=0",(uid,)).fetchone()[0],
+    "reports":c.execute("SELECT COUNT(*) FROM social_reports WHERE target=?",(uid,)).fetchone()[0]
+  }
+  geo=c.execute("SELECT lat,lon,enabled,updated FROM social_geo WHERE user_id=?",(uid,)).fetchone()
+  obj["location"]=dict(geo) if geo else None
+  obj["medals"]=medal_badges(c,uid)
+  obj["recent_media"]=[dict(r) for r in c.execute(
+    "SELECT id,kind,media_type,title,status,created FROM media_items WHERE owner_id=? ORDER BY created DESC,id DESC LIMIT 12",(uid,))]
+  obj["recent_playlists"]=[dict(r) for r in c.execute(
+    "SELECT id,name,kind,private,removed,created FROM playlists WHERE owner_id=? ORDER BY id DESC LIMIT 12",(uid,))]
+  obj["recent_comments"]=[dict(r) for r in c.execute("""SELECT cm.id,cm.body,cm.created,
+   COALESCE(sp.code,'') AS public_code,COALESCE(sp.display_name,'') AS name
+   FROM social_profile_comments cm LEFT JOIN social_profiles sp ON sp.user_id=cm.author
+   WHERE cm.owner=? AND cm.removed=0 ORDER BY cm.id DESC LIMIT 8""",(uid,))]
+  obj["recent_chats"]=[dict(r) for r in c.execute(
+    "SELECT id,type,created,closed FROM social_chat_pairs WHERE first_user=? OR second_user=? ORDER BY id DESC LIMIT 10",(uid,uid))]
+  obj["recent_orders"]=[dict(r) for r in c.execute(
+    "SELECT id,plan,price,status,created FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 10",(uid,))]
+  obj["recent_services"]=[dict(r) for r in c.execute(
+    "SELECT id,protocol,username,plan,expires,deleted FROM services WHERE user_id=? ORDER BY expires DESC LIMIT 10",(uid,))]
+  obj["recent_points"]=[dict(r) for r in c.execute(
+    "SELECT points,kind,created FROM loyalty_points WHERE user_id=? ORDER BY id DESC LIMIT 10",(uid,))]
+  obj["recent_wallet"]=[dict(r) for r in c.execute(
+    "SELECT amount,reason,created FROM ledger WHERE user_id=? ORDER BY id DESC LIMIT 10",(uid,))]
+  return obj
  if mode=="users":
   rows=c.execute("""SELECT p.user_id,p.code,p.display_name,p.gender,p.age,p.province,p.interests,
        p.visibility,p.discoverable,u.name,u.phone,u.telegram_username,u.blocked,

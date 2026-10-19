@@ -168,6 +168,110 @@ class SocialQA(unittest.TestCase):
   self.assertEqual(len(rows),1)
   self.assertEqual(rows[0]["manager"],"web-admin")
 
+ def test_integrated_user_dossier_includes_incomplete_club_and_account_history(self):
+  with s.conn() as c:
+   p=social.profile(c,970012341)
+   c.execute("UPDATE users SET phone=?,reseller=1 WHERE id=?",("+989001112233",970012341))
+   report=social.admin_view(c,{"view":"user_detail","id":970012341})
+   self.assertFalse(report["profile"]["completed"])
+   self.assertIn("نام",report["profile"]["missing"])
+   self.assertEqual(report["code"],p["code"])
+   self.assertEqual(report["phone"],"+989001112233")
+   self.assertEqual(report["reseller"],1)
+   self.assertEqual(report["points_balance"],0)
+   self.assertIn("stats",report)
+   self.assertIn("recent_chats",report)
+   self.assertIn("recent_orders",report)
+   self.assertIn("recent_wallet",report)
+   self.assertEqual(report["recent_media"],[])
+   self.ready(c,970012341)
+   done=social.admin_view(c,{"view":"user_detail","id":970012341})
+   self.assertTrue(done["profile"]["completed"])
+   self.assertEqual(done["profile"]["missing"],[])
+   self.assertEqual(done["profile"]["interests"],["🎵 موسیقی"])
+   for bad in ("970012341",True,None,0,-5):
+    with self.assertRaises(ValueError):
+     social.admin_view(c,{"view":"user_detail","id":bad})
+
+ def test_manager_bypasses_paid_anonymous_chat_but_regular_user_pays(self):
+  with s.conn() as c:
+   self.ready(c,970012341)
+   self.ready(c,970012342)
+   s.put(c,"admins",[970012341])
+   c.execute("UPDATE media_settings SET v=70 WHERE k='social_chat_cost_random'")
+   from gamification import award
+   award(c,970012342,80,"test","fund:normal",s.now())
+   social.callback(c,970012341,"soc:random")
+   self.assertIn("soc:match:random",json.dumps(self.payloads(c,970012341)[-1]))
+   social.callback(c,970012341,"soc:match:random")
+   c.execute("SELECT points FROM social_chat_queue WHERE user_id=970012341")
+   self.assertEqual(c.execute("SELECT points FROM social_chat_queue WHERE user_id=970012341").fetchone()[0],0)
+   social.callback(c,970012342,"soc:match:random")
+   self.assertEqual(social._balance(c,970012341),0)
+   self.assertEqual(social._balance(c,970012342),10)
+   charged=c.execute("SELECT user_id,points FROM loyalty_points WHERE kind='social_chat'").fetchall()
+   self.assertEqual([tuple(r) for r in charged],[(970012342,-70)])
+   social.end_chat(c,970012341)
+   c.execute("UPDATE media_settings SET v=1000 WHERE k='social_chat_cost_direct'")
+   p=social.profile(c,970012342)
+   social.callback(c,970012341,"soc:friendchat:"+p["code"])
+   quote=c.execute("SELECT cost FROM social_chat_quotes ORDER BY rowid DESC LIMIT 1").fetchone()
+   self.assertEqual(quote["cost"],0)
+
+ def test_manager_ai_is_free_without_points_and_usage_is_idempotent(self):
+  from unittest.mock import patch
+  import entertainment
+  with s.conn() as c:
+   c.execute("INSERT INTO users(id,name,created) VALUES(888881,'manager',0)")
+   s.put(c,"admins",[888881]);s.put(c,"ai_cost",99)
+   s.put(c,"ai_enabled",True)
+   s.put(c,"ai_model","test-model")
+   entertainment.ai_start(c,888881)
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=888881").fetchone()[0],"ai:chat")
+   with patch.object(entertainment.loyalty,"query_ai",return_value="تست پاسخ"):
+    entertainment.ai_answer(c,888881,"سلام",121212)
+    entertainment.ai_answer(c,888881,"سلام",121212)
+   self.assertEqual(entertainment.loyalty.balance(c,888881),0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM loyalty_points WHERE user_id=888881").fetchone()[0],0)
+   item=c.execute("SELECT points FROM ai_usage WHERE user_id=888881").fetchone()
+   self.assertEqual(item["points"],0)
+   self.assertIn("بدون کسر امتیاز",json.dumps(self.payloads(c,888881),ensure_ascii=False))
+
+ def test_manager_can_match_chat_without_completed_profile_and_zero_points(self):
+  with s.conn() as c:
+   s.put(c,"admins",[970012341])
+   social.profile(c,970012341)
+   self.ready(c,970012342)
+   from gamification import award
+   award(c,970012342,20,"test","regular:fund",s.now())
+   c.execute("UPDATE media_settings SET v=20 WHERE k='social_chat_cost_random'")
+   self.assertFalse(social.complete(social.profile(c,970012341)))
+   social.start_matching(c,970012341,"random")
+   self.assertEqual(c.execute("SELECT points FROM social_chat_queue WHERE user_id=970012341").fetchone()[0],0)
+   social.start_matching(c,970012342,"random")
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM social_chat_pairs WHERE closed=0").fetchone()[0],1)
+   self.assertEqual(social._balance(c,970012341),0)
+   self.assertEqual(social._balance(c,970012342),0)
+   paid=c.execute("SELECT COUNT(*) FROM loyalty_points WHERE user_id=? AND kind='social_chat'",(970012341,)).fetchone()[0]
+   self.assertEqual(paid,0)
+
+ def test_gallery_delivery_restricted_to_defined_telegram_admin(self):
+  import json
+  with s.conn() as c:
+   p=self.ready(c,970012341)
+   s.put(c,"admins",[970012343])
+   c.execute("UPDATE social_profiles SET photos=? WHERE user_id=?",
+      (json.dumps(["valid_telegram_file_id_aaaa"]),970012341))
+  with self.assertRaises(ValueError):
+   s.admin({"action":"social_gallery_to_admin","id":970012341,"admin_id":970012342})
+  outcome=s.admin({"action":"social_gallery_to_admin","id":970012341,"admin_id":970012343})
+  self.assertEqual(outcome["count"],1)
+  with s.conn() as c:
+   result=c.execute("SELECT method,payload FROM outbox WHERE chat=970012343 ORDER BY id DESC LIMIT 1").fetchone()
+   self.assertEqual(result["method"],"sendPhoto")
+   self.assertIn("valid_telegram_file_id_aaaa",result["payload"])
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE chat=970012342").fetchone()[0],0)
+
  def test_public_code_random_and_immutable_after_profile_edit(self):
   with s.conn() as c:
    p=social.profile(c,970012341)

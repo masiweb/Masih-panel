@@ -29,6 +29,7 @@ install -m 0644 "$SIDE/standalone.css" "$SRC/src/masiha-standalone.css"
 install -m 0644 "$SIDE/masiha-vite.config.mjs" "$SRC/masiha-vite.config.mjs"
 install -m 0644 "$SIDE/MediaBroadcastSettings.tsx" "$SRC/src/pages/vpn/MediaBroadcastSettings.tsx"
 install -m 0644 "$SIDE/SocialAdminPage.tsx" "$SRC/src/pages/vpn/SocialAdminPage.tsx"
+install -m 0644 "$SIDE/ClubUserProfileModal.tsx" "$SRC/src/pages/vpn/ClubUserProfileModal.tsx"
 # The official 3x-ui frontend is rebuilt from a pinned source revision.
 # Inject media settings as an independent addon, never a native binary patch.
 python3 - "$SRC/src/pages/vpn/SalesBotPage.tsx" <<'PYMEDIA'
@@ -63,6 +64,7 @@ if "<SocialAdminPage/>" not in s:
 s=s.replace("مدیریت مسیحا سوشال","مدیریت کلاب ناشناس")
 p.write_text(s)
 PYSOC
+python3 "$SIDE/patch_users_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys
 from pathlib import Path

@@ -31,22 +31,24 @@ def points(c,uid):
 
 def ai_start(c,uid):
  cfg=settings(c)
- if not cfg["ai_enabled"]:
+ if not cfg["ai_enabled"] and uid not in cfg["admins"]:
   return enqueue(c,uid,"🤖 هوش مصنوعی در حال آماده‌سازی است. پس از ثبت تنظیمات API توسط مدیر فعال می‌شود.",
        [[("⭐ امتیازات من","fun:points"),("↩️ سرگرمی","fun")]])
  cost=cfg["ai_cost"]
- if loyalty.balance(c,uid)<cost:
+ if uid not in cfg["admins"] and loyalty.balance(c,uid)<cost:
   return enqueue(c,uid,"برای استفاده از هوش مصنوعی "+str(cost)+" امتیاز لازم دارید. از خرید یا دعوت دوستان امتیاز بگیرید.",
        [[("⭐ امتیازات من","fun:points"),("دعوت دوستان","referral"),("↩️ سرگرمی","fun")]])
  c.execute("UPDATE users SET state='ai:chat' WHERE id=?",(uid,))
- enqueue(c,uid,"🤖 پرسش خود را در پیام بعدی ارسال کنید.\nهزینه هر پاسخ موفق: "+str(cost)+
-     " امتیاز. برای خروج «/start» را بفرستید.",[[("↩️ انصراف و بازگشت","fun")]])
+ enqueue(c,uid,"🤖 پرسش خود را در پیام بعدی ارسال کنید.\n"+
+     ("✅ مدیر: بدون کسر امتیاز." if uid in cfg["admins"] else
+      "هزینه هر پاسخ موفق: "+str(cost)+" امتیاز.")+
+     " برای خروج «/start» را بفرستید.",[[("↩️ انصراف و بازگشت","fun")]])
 
 def ai_answer(c,uid,question,update_id):
  cfg=settings(c)
- if not cfg["ai_enabled"]:raise ValueError("هوش مصنوعی موقتاً غیرفعال است")
+ if not cfg["ai_enabled"] and uid not in cfg["admins"]:raise ValueError("هوش مصنوعی موقتاً غیرفعال است")
  cost=integer(cfg["ai_cost"],1,10000)
- if loyalty.balance(c,uid)<cost:
+ if uid not in cfg["admins"] and loyalty.balance(c,uid)<cost:
   raise ValueError("امتیاز کافی برای استفاده از هوش مصنوعی ندارید")
  # Requests use an update-specific idempotency reference. The AI answer is
  # queued in the same SQLite transaction as the point debit.
@@ -54,9 +56,10 @@ def ai_answer(c,uid,question,update_id):
  if c.execute("SELECT 1 FROM ai_usage WHERE reference=?",(ref,)).fetchone():
   return enqueue(c,uid,"پاسخ این پیام قبلاً ثبت شده است.",[[("↩️ سرگرمی","fun")]])
  answer=loyalty.query_ai(cfg,question)
- loyalty.redeem(c,uid,cost,ref,now())
+ charge=0 if uid in cfg["admins"] else cost
+ if charge:loyalty.redeem(c,uid,charge,ref,now())
  c.execute("INSERT INTO ai_usage(user_id,reference,model,points,created) VALUES(?,?,?,?,?)",
-          (uid,ref,cfg["ai_model"],cost,now()))
+          (uid,ref,cfg["ai_model"],charge,now()))
  audit(c,"ai_usage",str(uid)+":points:"+str(cost))
  enqueue(c,uid,"🤖 "+answer+"\n\n⭐ امتیاز باقی‌مانده: "+str(loyalty.balance(c,uid)),
          [[("سؤال بعدی","fun:ai"),("↩️ سرگرمی","fun")]],key="ai-response:"+str(update_id))

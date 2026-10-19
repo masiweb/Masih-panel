@@ -29,6 +29,9 @@ grep -Fq 'frontend/src/pages/vpn/SalesBotPage.tsx' deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/BackupRestorePanel.tsx' deploy/3x-ui.patch
 grep -Fq 'internal/web/controller/masiha_backup.go' deploy/3x-ui.patch
 test -s deploy/web-backup-worker.py
+[[ -s sidecar/ClubUserProfileModal.tsx && -s sidecar/patch_users_tab.py ]] || { echo "Missing unified user management UI" >&2; exit 1; }
+grep -Fq "patch_users_tab.py" deploy/install-sidecar.sh
+grep -Fq "user_detail" runtime/social.py
 [[ -s sidecar/SocialAdminPage.tsx ]] ||
  { echo "Missing social management UI" >&2; exit 1; }
 grep -Fq "social.py" deploy/install-ubuntu-24.04.sh
