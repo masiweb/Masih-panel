@@ -208,7 +208,8 @@ def reaction(c,uid,kind,item,vote):
   target=c.execute("SELECT owner_id,kind,media_type,status FROM media_items WHERE id=?",(item,)).fetchone()
   if not target or target["status"]!="published" or (
    kind=="music" and target["kind"]!="music") or (
-   kind!="music" and (target["kind"]!="film" or target["media_type"]!=kind)):
+   kind!="music" and (target["kind"]!="film" or
+          (target["media_type"]!=kind and not (kind=="movie" and not target["media_type"])))):
    raise ValueError("رسانه یافت نشد")
   owner=target["owner_id"]
  if owner==uid:raise ValueError("نمی‌توانید به پروفایل یا اثر خودتان رأی بدهید")

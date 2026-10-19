@@ -165,6 +165,15 @@ class SocialQA(unittest.TestCase):
   with self.assertRaises(ValueError):
    s.admin({"action":"media_settings","values":{"social_like_music":50000}})
 
+ def test_legacy_film_without_type_supports_dislike(self):
+  with s.conn() as c:
+   c.execute("INSERT INTO media_items(owner_id,kind,telegram_method,file_id,unique_id,title,status,created) VALUES(?,?,?,?,?,?,?,?)",
+    (970012341,"film","sendVideo","TG_FILE","LEGACY-FILM","Classic Movie","published",s.now()))
+   mid=c.execute("SELECT last_insert_rowid()").fetchone()[0]
+   result=social.reaction(c,970012342,"movie",mid,-1)
+   self.assertEqual(result[0],-1)
+   self.assertEqual(result[1][2],1)
+
  def test_public_media_comment_uses_displayname_not_internal_telegram_number(self):
   import media_library as media
   with s.conn() as c:

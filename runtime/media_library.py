@@ -448,7 +448,7 @@ def _preview(c,uid,row):
  likes=_count(c,"media_likes","media_id",row["id"])
  comments=c.execute("SELECT COUNT(*) FROM media_comments WHERE media_id=? AND removed=0",(row["id"],)).fetchone()[0]
  dislikes=c.execute("SELECT COUNT(*) FROM social_reactions WHERE item_id=? AND kind=? AND vote=-1",
-   (row["id"],"music" if row["kind"]=="music" else row["media_type"])).fetchone()[0]
+   (row["id"],"music" if row["kind"]=="music" else (row["media_type"] or "movie"))).fetchone()[0]
  caption=_media_summary(row)+"\n❤️ "+str(likes)+" | 👎 "+str(dislikes)+" | 💬 "+str(comments)
  if row["genre"]:caption+="\nسبک: "+row["genre"]
  if row["kind"]=="music" and row["lyrics"]:caption+="\nمتن: "+row["lyrics"][:100]
@@ -550,7 +550,7 @@ def _like(c,uid,kind,id):
  from gamification import award
  if owner["owner_id"]>0:
   row=c.execute("SELECT kind,media_type FROM media_items WHERE id=?",(id,)).fetchone() if kind=="media" else None
-  label=("music" if row and row["kind"]=="music" else row["media_type"] if row else "playlist")
+  label=("music" if row and row["kind"]=="music" else (row["media_type"] or "movie") if row else "playlist")
   points=setting(c,"social_like_"+label)
   if points and _daily_points(c,owner["owner_id"],"media_like")<DAILY_LIKE_LIMIT:
    award(c,owner["owner_id"],min(points,DAILY_LIKE_LIMIT-_daily_points(c,owner["owner_id"],"media_like")),
@@ -643,7 +643,7 @@ def callback(c,uid,cmd):
   liked=_like(c,uid,"media",int(x))
   import social
   row=_media(c,int(x))
-  genre="music" if row["kind"]=="music" else row["media_type"]
+  genre="music" if row["kind"]=="music" else (row["media_type"] or "movie")
   c.execute("DELETE FROM social_reactions WHERE kind=? AND item_id=? AND user_id=?",(genre,int(x),uid))
   if liked:c.execute("INSERT INTO social_reactions VALUES(?,?,?,?,?)",(genre,int(x),uid,1,_sales().now()))
   send(c,uid,"❤️ لایک شد." if liked else "لایک شما برداشته شد.",[[("↩️ بازگشت به رسانه","med:play:"+x)]])
@@ -651,7 +651,7 @@ def callback(c,uid,cmd):
  if op=="dislike":
   row=_media(c,int(x))
   import social
-  genre="music" if row["kind"]=="music" else row["media_type"]
+  genre="music" if row["kind"]=="music" else (row["media_type"] or "movie")
   return social.vote(c,uid,genre,int(x),-1,"med:play:"+x)
  if op=="lyrics":
   row=_media(c,int(x))
