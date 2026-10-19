@@ -42,7 +42,12 @@ if [[ -n "${MASIHA_CHECK_SOURCE:-}" ]]; then
   echo "Pinned upstream source and full applied patch match"
 fi
 (cd runtime && python3 -m unittest -q test_sales.py test_unified.py test_media_library.py)
-(cd runtime && python3 -m unittest -q test_rozmusic_importer.py)
+(cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py)
+for f in runtime/roz_telegram_upload.py runtime/rozmusic_importer.py runtime/test_rozmusic_upload.py runtime/test_rozmusic_importer.py deploy/masiha-rozmusic-import.service; do
+  [[ -s "$f" ]] || { echo "Missing Telegram audio import file: $f" >&2; exit 2; }
+done
+! grep -q "VALUES(0,'music','link'" runtime/rozmusic_importer.py ||
+  { echo "Unsafe URL-only public import detected" >&2; exit 2; }
 echo "PASS: sales, named checkout, trials, Telegram and quota tests"
 # Check exact key shell scripts and source files required at deployment time.
 for f in runtime/manager.py runtime/unified.py runtime/worker.py runtime/sales.py \

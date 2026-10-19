@@ -49,6 +49,10 @@ install -m 0644 "$SIDE/masiha-vpn-sidecar.service" /etc/systemd/system/masiha-vp
 # Licensed RozMusic importer. Do not auto-start without explicit opt-in.
 if [[ -s "$ROOT/runtime/rozmusic_importer.py" &&
       -s "$ROOT/deploy/masiha-rozmusic-import.service" ]]; then
+  # Both pieces are required: catalog crawler + bounded multipart uploader.
+  [[ -s "$ROOT/runtime/roz_telegram_upload.py" ]] ||
+    { echo "Missing Telegram MP3 uploader" >&2; exit 1; }
+  install -m 0644 "$ROOT/runtime/roz_telegram_upload.py" /opt/masiha-vpn-extension/roz_telegram_upload.py
   install -m 0644 "$ROOT/runtime/rozmusic_importer.py" /opt/masiha-vpn-extension/rozmusic_importer.py
   install -m 0644 "$ROOT/deploy/masiha-rozmusic-import.service" /etc/systemd/system/masiha-rozmusic-import.service
 fi

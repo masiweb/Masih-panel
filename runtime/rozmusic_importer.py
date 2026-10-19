@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""Authorized RozMusic catalog importer: incremental, polite, crash-resumable.
-
-Only catalog metadata, lyrics and publisher-hosted MP3 URLs are stored.
-No music files are downloaded to or served from the VPN server.
+"""Authorized RozMusic catalog importer. Stream audio to Telegram, then discard
+temporary MP3. Only Telegram file IDs and catalog metadata are publicly used.
 """
 import argparse
 import hashlib
@@ -17,6 +15,7 @@ import time
 from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+import roz_telegram_upload as telegram_upload
 import xml.etree.ElementTree as ET
 
 ROOT="https://rozmusic.com/sitemap.xml"
@@ -91,16 +90,19 @@ def parse_article(body):
  candidates=re.findall(r'<a\b[^>]*href=["\x27]([^"\x27]+\.mp3(?:\?[^"\x27]*)?)["\x27][^>]*>',body,re.I)
  if not candidates:
   candidates=re.findall(r'<source\b[^>]*src=["\x27]([^"\x27]+\.mp3(?:\?[^"\x27]*)?)["\x27]',body,re.I)
- media=""
+ valid_mp3=[]
  for candidate in candidates:
-  try:media=trusted(html.unescape(candidate),"mp3");break
+  try:
+   path=trusted(html.unescape(candidate),"mp3")
+   if path not in valid_mp3:valid_mp3.append(path)
   except ValueError:continue
- if not media:return None
+ if not valid_mp3:return None
  ly=LyricsParser()
  ly.feed(body)
  lyrics="\n".join(re.sub(r"[ \t]+"," ",line).strip() for line in
                   "".join(ly.output).splitlines() if line.strip())
- return {"artist":artist,"title":title,"lyrics":lyrics[:MAX_LYRICS],"mp3":media}
+ return {"artist":artist,"title":title,"lyrics":lyrics[:MAX_LYRICS],
+         "mp3":valid_mp3[0],"mp3_fallbacks":valid_mp3[1:3]}
 
 def database():
  import sales
@@ -121,13 +123,31 @@ def database():
  """)
  c.execute("""INSERT OR IGNORE INTO users(id,name,balance,created)
               VALUES(0,'RozMusic Licensed Catalog',0,?)""",(int(time.time()),))
- playlist=c.execute("""SELECT id FROM playlists WHERE owner_id=0 AND kind='music'
-                       AND private=0 AND name='all' AND removed=0""").fetchone()
- if not playlist:
+ # Reuse an existing PUBLIC all playlist created by the bot administrator.
+ # Do not create an unwanted second playlist named all on their behalf.
+ cfg=sales.settings(c)
+ admins=[a for a in cfg.get("admins",[]) if type(a) is int and a>0]
+ preferred=None
+ if admins:
+  binds=",".join("?" for _ in admins)
+  preferred=c.execute("""SELECT id FROM playlists WHERE kind='music' AND
+        name='all' AND private=0 AND removed=0 AND owner_id IN ("""+binds+
+        """) ORDER BY id ASC LIMIT 1""",admins).fetchone()
+ legacy=c.execute("""SELECT id FROM playlists WHERE owner_id=0 AND kind='music'
+                     AND private=0 AND name='all' AND removed=0""").fetchone()
+ if preferred:
+  playlist_id=preferred[0]
+  if legacy and legacy[0]!=playlist_id:
+   c.execute("""INSERT OR IGNORE INTO playlist_entries(playlist_id,media_id,created)
+          SELECT ?,media_id,created FROM playlist_entries WHERE playlist_id=?""",
+          (playlist_id,legacy[0]))
+   c.execute("UPDATE playlists SET removed=1 WHERE id=? AND owner_id=0",(legacy[0],))
+ elif legacy:
+  playlist_id=legacy[0]
+ else:
   playlist_id=c.execute("""INSERT INTO playlists(owner_id,kind,name,description,
     private,invite_token,created) VALUES(0,'music','all',?,0,?,?)""",
     ("مجموعه مجاز موسیقی RozMusic",__import__("secrets").token_urlsafe(16),int(time.time()))).lastrowid
- else:playlist_id=playlist[0]
  c.commit()
  return c,playlist_id
 
@@ -152,65 +172,132 @@ def index(c,delay=1.0,max_sitemaps=0):
   if delay and j<len(files):time.sleep(delay)
  return len(files),added
 
-def save(c,playlist_id,article_url,row):
- import hashlib
+def save(c,playlist_id,article_url,row,telegram_file_id):
+ """Publish only AFTER verified Telegram upload. No external URL in public rows."""
+ if not isinstance(telegram_file_id,str) or not 10<=len(telegram_file_id)<=1024:
+  raise ValueError("Missing verified Telegram audio file_id")
  stamp=int(time.time())
  stable_id=hashlib.sha256(("rozmusic:"+article_url).encode()).hexdigest()
  existing=c.execute("SELECT id FROM media_items WHERE kind='music' AND unique_id=?",
                     (stable_id,)).fetchone()
  if existing:
   mid=existing[0]
-  c.execute("""UPDATE media_items SET title=?,artist=?,lyrics=?,source_url=?,
-    status='published',rights_ok=1 WHERE id=? AND owner_id=0""",
-    (row["title"],row["artist"],row["lyrics"],row["mp3"],mid))
+  cur=c.execute("""UPDATE media_items SET title=?,artist=?,lyrics=?,source_url='',
+    telegram_method='sendAudio',file_id=?,status='published',rights_ok=1
+    WHERE id=? AND owner_id=0""",
+    (row["title"],row["artist"],row["lyrics"],telegram_file_id,mid))
+  if cur.rowcount!=1:raise RuntimeError("Imported media does not belong to system owner")
  else:
   mid=c.execute("""INSERT INTO media_items(owner_id,kind,telegram_method,file_id,unique_id,
    source_url,title,artist,lyrics,status,rights_ok,created)
-   VALUES(0,'music','link','',?,?,?,?,?,'published',1,?)""",
-   (stable_id,row["mp3"],row["title"],row["artist"],row["lyrics"],stamp)).lastrowid
+   VALUES(0,'music','sendAudio',?,?,'',?,?,?,'published',1,?)""",
+   (telegram_file_id,stable_id,row["title"],row["artist"],row["lyrics"],stamp)).lastrowid
  c.execute("""INSERT OR IGNORE INTO playlist_entries(playlist_id,media_id,created)
               VALUES(?,?,?)""",(playlist_id,mid,stamp))
  c.execute("""INSERT INTO roz_catalog_sources(article_url,media_id,imported,updated)
    VALUES(?,?,?,?) ON CONFLICT(article_url) DO UPDATE SET media_id=excluded.media_id,
    updated=excluded.updated""",(article_url,mid,stamp,stamp))
 
+def rollback_legacy_links(c):
+ """Old link-only imports must be requeued, never shown to listeners."""
+ n=c.execute("""UPDATE roz_catalog_queue SET state='pending',attempts=0,last_error=''
+    WHERE url IN (
+      SELECT s.article_url FROM roz_catalog_sources s JOIN media_items m
+      ON m.id=s.media_id WHERE m.owner_id=0 AND
+        (m.telegram_method!='sendAudio' OR m.file_id=''))""").rowcount
+ c.execute("""UPDATE media_items SET status='draft',source_url=''
+              WHERE owner_id=0 AND (telegram_method!='sendAudio' OR file_id='')""")
+ c.commit()
+ return n
+
+def confirmed(c,article_url):
+ row=c.execute("""SELECT m.id FROM roz_catalog_sources s JOIN media_items m
+  ON m.id=s.media_id WHERE s.article_url=? AND m.owner_id=0
+  AND m.telegram_method='sendAudio' AND m.status='published'
+  AND LENGTH(m.file_id)>=10""",(article_url,)).fetchone()
+ return bool(row)
+
 def stats(c,playlist_id):
  state={r[0]:r[1] for r in c.execute("SELECT state,COUNT(*) FROM roz_catalog_queue GROUP BY state")}
- n=c.execute("SELECT COUNT(*) FROM playlist_entries WHERE playlist_id=?",(playlist_id,)).fetchone()[0]
+ n=c.execute("""SELECT COUNT(*) FROM playlist_entries e JOIN media_items m ON m.id=e.media_id
+                   WHERE e.playlist_id=? AND m.status='published'
+                   AND m.telegram_method='sendAudio' AND LENGTH(m.file_id)>9""",
+               (playlist_id,)).fetchone()[0]
  return {"queued":sum(state.values()),"pending":state.get("pending",0),
          "done":state.get("done",0),"skipped":state.get("skipped",0),
          "error":state.get("error",0),"playlist_all":n}
 
-def run(c,pid,delay=1.2,max_posts=0):
+def run(c,pid,delay=3.0,max_posts=0):
+ """The only public publishing path is confirmed sendAudio + Telegram file_id."""
+ import http.client
+ import sales
+ cfg=sales.settings(c)
+ if not cfg.get("enabled") or not cfg.get("token"):
+  raise RuntimeError("Bot must be configured and enabled before music uploads")
+ telegram_upload.verified_storage_chat(cfg)
+ rollback_legacy_links(c)
  processed=0
  while True:
-  item=c.execute("""SELECT url,attempts FROM roz_catalog_queue
-   WHERE state='pending' OR state='error' AND attempts<3
-   ORDER BY CASE WHEN state='pending' THEN 0 ELSE 1 END,url LIMIT 1""").fetchone()
+  item=c.execute("""SELECT q.url,q.attempts FROM roz_catalog_queue q
+   WHERE q.state='pending' OR q.state='error' AND q.attempts<3
+   ORDER BY CASE WHEN EXISTS(SELECT 1 FROM roz_catalog_sources s WHERE s.article_url=q.url)
+                 THEN 0 ELSE 1 END,
+            CASE WHEN q.state='pending' THEN 0 ELSE 1 END,q.url LIMIT 1""").fetchone()
   if not item:break
   url=item["url"]
   try:
-   data=parse_article(get(url))
-   if not data:
-    c.execute("""UPDATE roz_catalog_queue SET state='skipped',last_error='Not a standalone MP3 page',updated=?
+   if confirmed(c,url):
+    c.execute("""UPDATE roz_catalog_queue SET state='done',updated=?
                  WHERE url=?""",(int(time.time()),url))
    else:
-    save(c,pid,url,data)
-    c.execute("""UPDATE roz_catalog_queue SET state='done',last_error='',updated=?
-                 WHERE url=?""",(int(time.time()),url))
-  except HTTPError as e:
-   if e.code in (429,503):
-    print("RATE_LIMIT_PAUSE",e.code,url[-80:],flush=True)
+    data=parse_article(get(url))
+    if not data:
+     c.execute("""UPDATE roz_catalog_queue SET state='skipped',last_error='Not an MP3 music page',updated=?
+                  WHERE url=?""",(int(time.time()),url))
+    else:
+     sources=[data["mp3"]]+data.get("mp3_fallbacks",[])
+     last_error=None
+     for source in sources:
+      try:
+       file_id,unique_id,size,deleted=telegram_upload.stream_once(
+           source,data["artist"],data["title"],cfg)
+       break
+      except (ValueError,HTTPError) as exc:
+       # e.g. old 320kbps version is over 47MiB or no longer available.
+       # Try authorized 128kbps alternative without losing the article.
+       if isinstance(exc,ValueError) and "50 MB" not in str(exc) and "MP3" not in str(exc):
+        raise
+       if isinstance(exc,HTTPError) and exc.code not in (404,410):
+        raise
+       last_error=exc
+     else:
+      raise last_error or ValueError("No downloadable MP3 candidate")
+     save(c,pid,url,data,file_id)
+     c.execute("""UPDATE roz_catalog_queue SET state='done',last_error='',updated=?
+                  WHERE url=?""",(int(time.time()),url))
+     print("TELEGRAM_FILE_SAVED bytes",size,"TEMP_FILE_REMOVED yes",
+           "STORAGE_MESSAGE_REMOVED",deleted,flush=True)
+  except HTTPError as exc:
+   if exc.code in (429,503):
+    print("SOURCE_RATE_LIMIT_PAUSE",exc.code,flush=True)
     c.commit()
     time.sleep(180)
     continue
    c.execute("""UPDATE roz_catalog_queue SET state='error',attempts=attempts+1,
                 last_error=?,updated=? WHERE url=?""",
-             ("HTTP "+str(e.code),int(time.time()),url))
-  except (URLError,TimeoutError,ValueError,ET.ParseError) as e:
+             ("Source HTTP "+str(exc.code),int(time.time()),url))
+  except (URLError,TimeoutError,ValueError,OSError,RuntimeError,
+          http.client.HTTPException,ET.ParseError) as exc:
+   # Never log Telegram token, MP3 URL, secrets, or a binary request body.
+   detail=type(exc).__name__
+   if isinstance(exc,ValueError) and "50 MB" in str(exc):detail="MP3 exceeds Telegram upload limit"
+   if isinstance(exc,RuntimeError) and "HTTP " in str(exc):
+    detail="Telegram HTTP "+str(exc).rsplit("HTTP ",1)[1][:3]
    c.execute("""UPDATE roz_catalog_queue SET state='error',attempts=attempts+1,
                 last_error=?,updated=? WHERE url=?""",
-             (str(e)[:140],int(time.time()),url))
+             (detail,int(time.time()),url))
+   print("IMPORT_RETRY",detail,flush=True)
+   if "Telegram HTTP 429" in detail:time.sleep(180)
   c.commit()
   processed+=1
   if processed==1 or processed%25==0:
@@ -221,10 +308,10 @@ def run(c,pid,delay=1.2,max_posts=0):
 
 def main():
  p=argparse.ArgumentParser(description="Authorized RozMusic -> public playlist all sync")
- p.add_argument("action",choices=("index","run","status"))
+ p.add_argument("action",choices=("index","run","upload","status"))
  p.add_argument("--max-sitemaps",type=int,default=0)
  p.add_argument("--max-posts",type=int,default=0)
- p.add_argument("--delay",type=float,default=1.2)
+ p.add_argument("--delay",type=float,default=3.0)
  a=p.parse_args()
  if a.max_sitemaps<0 or a.max_posts<0 or not 0.5<=a.delay<=30:
   p.error("Invalid import bounds: use delay 0.5 to 30 seconds")
@@ -233,7 +320,7 @@ def main():
   if a.action in ("index","run"):
    count,added=index(c,a.delay,a.max_sitemaps)
    print("SITEMAPS_INDEXED",count,"NEW_URLS",added,flush=True)
-  if a.action=="run":
+  if a.action in ("run","upload"):
    n=run(c,pid,a.delay,a.max_posts)
    print("POSTS_PROCESSED_THIS_RUN",n,flush=True)
   print("CATALOG_STATUS",json.dumps(stats(c,pid)),flush=True)
