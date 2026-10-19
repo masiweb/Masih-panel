@@ -106,6 +106,25 @@ class UploadQA(unittest.TestCase):
   self.assertEqual(r["method"],"sendAudio")
   self.assertEqual(json.loads(r["payload"])["audio"],"FILE_ID_VALID_12345")
 
+ def test_importer_broadcasts_uploaded_audio_once_and_never_a_source_link(self):
+  with sales.conn() as c:
+   c.execute("UPDATE media_settings SET v=1 WHERE k='broadcast_music'")
+   c.execute("INSERT OR IGNORE INTO users(id,name,created) VALUES(?, ?, ?)",
+             (456789123,"Public Listener",sales.now()))
+  imp.save(self.db,self.pid,ARTICLE_URL,METADATA,"TELEGRAMFILE_123456")
+  rows=self.db.execute("SELECT method,payload FROM outbox WHERE dedupe LIKE 'media-broadcast:music:%'").fetchall()
+  recipients={r["id"] for r in self.db.execute("SELECT id FROM users WHERE id>0 AND blocked=0")}
+  self.assertEqual(len(rows),len(recipients))
+  self.assertTrue(rows)
+  for sent in rows:
+   self.assertEqual(sent["method"],"sendAudio")
+   payload=json.loads(sent["payload"])
+   self.assertIn(payload["chat_id"],recipients)
+   self.assertEqual(payload["audio"],"TELEGRAMFILE_123456")
+   self.assertNotIn("http",json.dumps(payload))
+  imp.save(self.db,self.pid,ARTICLE_URL,METADATA,"TELEGRAMFILE_123456")
+  self.assertEqual(self.db.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'media-broadcast:%'").fetchone()[0],len(recipients))
+
  def test_audio_url_rejects_other_servers_and_internal_ips(self):
   for url in ("http://dl.rozmusic.com/audio.mp3",
               "https://attacker.example.com/file.mp3",

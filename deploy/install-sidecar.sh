@@ -27,6 +27,22 @@ install -m 0644 "$SIDE/masiha-standalone.html" "$SRC/masiha-standalone.html"
 install -m 0644 "$SIDE/masiha-standalone.tsx" "$SRC/src/masiha-standalone.tsx"
 install -m 0644 "$SIDE/standalone.css" "$SRC/src/masiha-standalone.css"
 install -m 0644 "$SIDE/masiha-vite.config.mjs" "$SRC/masiha-vite.config.mjs"
+install -m 0644 "$SIDE/MediaBroadcastSettings.tsx" "$SRC/src/pages/vpn/MediaBroadcastSettings.tsx"
+# The official 3x-ui frontend is rebuilt from a pinned source revision.
+# Inject media settings as an independent addon, never a native binary patch.
+python3 - "$SRC/src/pages/vpn/SalesBotPage.tsx" <<'PYMEDIA'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]);s=p.read_text()
+anchor='  <Card title="میزان امتیاز برای اطلاعات رسانه و محبوبیت">'
+import_anchor="import BackupRestorePanel from './BackupRestorePanel';"
+if '<MediaBroadcastSettings/>' not in s:
+ if s.count(anchor)!=1 or s.count(import_anchor)!=1:
+  raise SystemExit('Unsupported SalesBotPage version for media broadcast controls')
+ s=s.replace(anchor,'  <MediaBroadcastSettings/>\n'+anchor,1)
+ s=s.replace(import_anchor,import_anchor+"\nimport MediaBroadcastSettings from './MediaBroadcastSettings';",1)
+ p.write_text(s)
+PYMEDIA
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys
 from pathlib import Path

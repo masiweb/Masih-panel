@@ -178,8 +178,9 @@ def save(c,playlist_id,article_url,row,telegram_file_id):
   raise ValueError("Missing verified Telegram audio file_id")
  stamp=int(time.time())
  stable_id=hashlib.sha256(("rozmusic:"+article_url).encode()).hexdigest()
- existing=c.execute("SELECT id FROM media_items WHERE kind='music' AND unique_id=?",
+ existing=c.execute("SELECT id,status FROM media_items WHERE kind='music' AND unique_id=?",
                     (stable_id,)).fetchone()
+ newly_published=not existing or existing["status"]!="published"
  if existing:
   mid=existing[0]
   cur=c.execute("""UPDATE media_items SET title=?,artist=?,lyrics=?,source_url='',
@@ -194,6 +195,11 @@ def save(c,playlist_id,article_url,row,telegram_file_id):
    (telegram_file_id,stable_id,row["title"],row["artist"],row["lyrics"],stamp)).lastrowid
  c.execute("""INSERT OR IGNORE INTO playlist_entries(playlist_id,media_id,created)
               VALUES(?,?,?)""",(playlist_id,mid,stamp))
+ # Announce to subscribed bot users only when a Telegram file first
+ # becomes published; old URL-only draft records are migrated safely.
+ if newly_published:
+  import media_library
+  media_library.broadcast_new_media(c,mid)
  c.execute("""INSERT INTO roz_catalog_sources(article_url,media_id,imported,updated)
    VALUES(?,?,?,?) ON CONFLICT(article_url) DO UPDATE SET media_id=excluded.media_id,
    updated=excluded.updated""",(article_url,mid,stamp,stamp))

@@ -28,7 +28,8 @@ class MediaQA(unittest.TestCase):
     c.execute("INSERT INTO users(id,name,created) VALUES(?,?,?)",(uid,"Tester"+str(uid),s.now()))
    c.execute("DELETE FROM media_settings")
    c.executemany("INSERT INTO media_settings(k,v) VALUES(?,?)",
-                 [("field_points",2),("like_points",1),("max_media_mb",0)])
+                 [("field_points",2),("like_points",1),("max_media_mb",0),
+                  ("broadcast_music",0),("broadcast_movie",0),("broadcast_series",0)])
  def payloads(self,c,uid):
   return [json.loads(r[0]) for r in c.execute("SELECT payload FROM outbox WHERE chat=? ORDER BY id",(uid,))]
  def audio(self,file_id="audioId",unique="uniqueId"):
@@ -420,6 +421,78 @@ class MediaQA(unittest.TestCase):
    lib.callback(c,101,"med:finish:"+str(mid))
    lib.callback(c,101,"med:publish:"+str(mid))
    self.assertEqual(tuple(c.execute("SELECT media_type,season,episode,status FROM media_items WHERE id=?",(mid,)).fetchone()),("series",2,10,"published"))
+
+ def test_broadcast_music_requires_explicit_switch_and_uses_telegram_file_id(self):
+  with s.conn() as c:
+   first=self.upload(c)
+   self.publish(c,101,first)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'media-broadcast:%'").fetchone()[0],0)
+   c.execute("UPDATE media_settings SET v=1 WHERE k='broadcast_music'")
+   c.execute("UPDATE users SET blocked=1 WHERE id=103")
+   second=self.upload(c,message=self.audio("realid","differentunique"))
+   self.publish(c,101,second)
+   rows=c.execute("SELECT dedupe,method,payload FROM outbox WHERE dedupe LIKE 'media-broadcast:%' ORDER BY chat").fetchall()
+   self.assertEqual(len(rows),2)
+   self.assertTrue(all(r["method"]=="sendAudio" for r in rows))
+   for r in rows:
+    payload=json.loads(r["payload"])
+    self.assertEqual(payload["audio"],"realid")
+    self.assertIn("med:play:"+str(second),str(payload["reply_markup"]))
+   self.assertEqual(lib.broadcast_new_media(c,second),0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'media-broadcast:%'").fetchone()[0],2)
+
+ def test_film_and_series_broadcast_switches_are_independent(self):
+  with s.conn() as c:
+   c.execute("UPDATE media_settings SET v=1 WHERE k IN ('broadcast_series')")
+   movie=self.upload(c,kind="film",message=self.film("filmId","movie1"))
+   self.publish(c,101,movie)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'media-broadcast:%'").fetchone()[0],0)
+   lib.accept(c,101,self.film("seriesFile","series1"),"film")
+   series=c.execute("SELECT id FROM media_items WHERE unique_id='series1'").fetchone()[0]
+   lib.callback(c,101,"med:type:"+str(series)+":series")
+   lib.text_input(c,101,"med:season:"+str(series),{"text":"4"},35)
+   lib.text_input(c,101,"med:episode:"+str(series),{"text":"3"},36)
+   self.publish(c,101,series)
+   rows=c.execute("SELECT method,payload FROM outbox WHERE dedupe LIKE 'media-broadcast:%'").fetchall()
+   self.assertEqual(len(rows),3)
+   self.assertTrue(all(r["method"]=="sendVideo" for r in rows))
+   self.assertIn("فصل 4 قسمت 3",json.loads(rows[0]["payload"])["caption"])
+   c.execute("UPDATE media_settings SET v=1 WHERE k='broadcast_movie'")
+   movie2=self.upload(c,kind="film",message=self.film("filmId2","movie2"))
+   self.publish(c,101,movie2)
+   kinds=[r[0] for r in c.execute("SELECT dedupe FROM outbox WHERE dedupe LIKE 'media-broadcast:%'")]
+   self.assertEqual(sum(x.startswith('media-broadcast:movie:') for x in kinds),3)
+   self.assertEqual(sum(x.startswith('media-broadcast:series:') for x in kinds),3)
+
+ def test_broadcast_does_not_publish_links_and_skips_drafts(self):
+  with s.conn() as c:
+   c.execute("UPDATE media_settings SET v=1 WHERE k='broadcast_music'")
+   mid=self.upload(c,message={"text":"https://example.com/track.mp3"})
+   self.assertEqual(lib.broadcast_new_media(c,mid),0)
+   self.publish(c,101,mid)
+   self.assertEqual(lib.broadcast_new_media(c,mid),0)
+   self.assertFalse(c.execute("SELECT 1 FROM outbox WHERE dedupe LIKE 'media-broadcast:%'").fetchone())
+
+ def test_admin_broadcast_switches_persist_and_cancel_only_unsent_matching_queue(self):
+  s.admin({"action":"media_settings","values":{
+   "broadcast_music":True,"broadcast_movie":False,"broadcast_series":True}})
+  view=s.admin({"action":"get"})["media"]
+  self.assertTrue(view["broadcast_music"])
+  self.assertFalse(view["broadcast_movie"])
+  self.assertTrue(view["broadcast_series"])
+  with s.conn() as c:
+   mid=self.upload(c)
+   self.publish(c,101,mid)
+  with self.assertRaises(ValueError):
+   s.admin({"action":"media_settings","values":{"broadcast_music":1}})
+  s.admin({"action":"media_settings","values":{"broadcast_music":False}})
+  with s.conn() as c:
+   cancelled=c.execute("SELECT done,payload FROM outbox WHERE dedupe LIKE 'media-broadcast:music:%'").fetchall()
+   self.assertEqual(len(cancelled),3)
+   self.assertTrue(all(r["done"]==2 and r["payload"]=='{}' for r in cancelled))
+   other=c.execute("SELECT COUNT(*) FROM outbox WHERE done=0 AND dedupe NOT LIKE 'media-broadcast:%'").fetchone()[0]
+   self.assertGreaterEqual(other,1)
+  self.assertFalse(s.admin({"action":"get"})["media"]["broadcast_music"])
 
 if __name__=="__main__":
  unittest.main()

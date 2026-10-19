@@ -29,6 +29,10 @@ grep -Fq 'frontend/src/pages/vpn/SalesBotPage.tsx' deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/BackupRestorePanel.tsx' deploy/3x-ui.patch
 grep -Fq 'internal/web/controller/masiha_backup.go' deploy/3x-ui.patch
 test -s deploy/web-backup-worker.py
+[[ -s sidecar/MediaBroadcastSettings.tsx ]] ||
+ { echo "Missing media announcement web controls" >&2;exit 1; }
+grep -Fq "MediaBroadcastSettings.tsx" deploy/install-sidecar.sh
+grep -Fq "broadcast_series" sidecar/MediaBroadcastSettings.tsx
 echo "Native 3x-ui release patch parses (includes styled Telegram sales UI)"
 if [[ -n "${MASIHA_CHECK_SOURCE:-}" ]]; then
   [[ -d "$MASIHA_CHECK_SOURCE/.git" ]] || {

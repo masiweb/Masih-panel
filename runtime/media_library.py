@@ -111,7 +111,8 @@ def setup(c):
  );
  CREATE TABLE IF NOT EXISTS media_settings(k TEXT PRIMARY KEY,v INTEGER NOT NULL);
  INSERT OR IGNORE INTO media_settings(k,v) VALUES
-  ('field_points',2),('like_points',1),('max_media_mb',0);
+  ('field_points',2),('like_points',1),('max_media_mb',0),
+  ('broadcast_music',0),('broadcast_movie',0),('broadcast_series',0);
  """)
 
 def _sales():
@@ -126,6 +127,46 @@ def clean(value,maximum=160):
 
 def setting(c,key):
  return c.execute("SELECT v FROM media_settings WHERE k=?",(key,)).fetchone()[0]
+
+BROADCAST_KEYS = {
+ "music":"broadcast_music",
+ "movie":"broadcast_movie",
+ "series":"broadcast_series",
+}
+
+def broadcast_new_media(c,mid):
+ """Broadcast a NEWLY PUBLISHED Telegram file, once per user via durable outbox.
+
+ No URL-based media, no unpaid/draft items, no system or blocked users.
+ This is triggered only at the first publication, not on old catalog entries
+ or after changing the switch. All messages go through Telegram's retry queue.
+ """
+ row=c.execute("SELECT * FROM media_items WHERE id=? AND status='published'",(mid,)).fetchone()
+ if not row:return 0
+ media_kind="music" if row["kind"]=="music" else row["media_type"]
+ setting_key=BROADCAST_KEYS.get(media_kind)
+ if not setting_key or not setting(c,setting_key):return 0
+ methods={"sendAudio":"audio","sendVideo":"video","sendDocument":"document",
+          "sendVoice":"voice","sendVideoNote":"video_note"}
+ field=methods.get(row["telegram_method"])
+ if not field or not row["file_id"]:return 0
+ # Never upload/send arbitrary source URLs in auto-notifications.
+ caption=("🎵 موزیک جدید" if media_kind=="music" else
+          "📺 قسمت جدید سریال" if media_kind=="series" else "🎬 فیلم سینمایی جدید")
+ caption+="\n"+_media_summary(row)[:600]
+ button={"inline_keyboard":[[{"text":"▶️ جزئیات و پخش","callback_data":"med:play:"+str(mid)}]]}
+ sent=0
+ recipients=c.execute("SELECT id FROM users WHERE id>0 AND blocked=0 ORDER BY id").fetchall()
+ for (recipient,) in recipients:
+  payload={"chat_id":recipient,field:row["file_id"],"reply_markup":button}
+  if row["telegram_method"]!="sendVideoNote":payload["caption"]=caption[:950]
+  # Prefixed stable idempotency key survives retries, restarts, and duplicate
+  # publication callbacks. Never modifies messages already delivered.
+  key="media-broadcast:"+media_kind+":"+str(mid)+":"+str(recipient)
+  c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+            (key,recipient,row["telegram_method"],json.dumps(payload,ensure_ascii=False)))
+  sent+=c.execute("SELECT changes()").fetchone()[0]
+ return sent
 
 def _buttons(c,uid,items):
  # Retain same Telegram inline-button format as existing bot.
@@ -391,6 +432,7 @@ def _publish(c,uid,mid):
  # No separate publishing-permission prompt. rights_ok remains false:
  # publication must not be mistaken for an explicit rights certification.
  c.execute("UPDATE media_items SET status='published' WHERE id=?",(row["id"],))
+ broadcast_new_media(c,row["id"])
  _reward_published_metadata(c,uid,row["id"])
  _state(c,uid,"")
  send(c,uid,"✅ "+GENRE_LABEL[row["kind"]]+" ثبت شد.",
