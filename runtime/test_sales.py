@@ -8,11 +8,79 @@ import sales as s
 import sales_worker as w
 class Commerce(unittest.TestCase):
  def setUp(self):
+  # Unit tests are independent of the production x-ui inbound catalogue.
+  active=patch.object(s,"active_inbound_ids",return_value=set(range(1,1000)))
+  active.start();self.addCleanup(active.stop)
   with s.conn() as c:
    for t in ("social_reports","social_geo","social_blocks","social_chat_messages","social_chat_pairs","social_chat_queue","social_chat_invites","social_chat_quotes","social_discovery","social_profile_comments","social_reactions","social_profile_views","social_follows","social_profiles","media_items","playlists","playlist_likes","media_likes","settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
    c.execute("INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
+ def test_deleted_inbound_ids_are_filtered_and_never_passed_to_panel(self):
+  from unittest.mock import patch
+  with s.conn() as c,patch.object(s,"active_inbound_ids",return_value={2,4,16,17,22,23}):
+   c.execute("""INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active)
+      VALUES(7,'Old Full','subscription','xray',18000,30,20,'[1,2,3,4,16,17,22,21]',0,1)""")
+   s.order(c,101,7,"legacy-old-inbound-order",card=True)
+   row=c.execute("SELECT * FROM orders WHERE id='legacy-old-inbound-order'").fetchone()
+   self.assertEqual(json.loads(json.loads(row["plan"])["inbounds"]),[2,4,16,17,22])
+   class FakePanel:
+    def __init__(self):self.ids=None;self.client=None
+    def call(self,path,data=None):
+     if '/get/' in path:
+      if self.client is None:raise ValueError('پنل عملیات را نپذیرفت')
+      return {"client":self.client,"inboundIds":self.ids}
+     if path.endswith('/add'):
+      self.ids=data["inboundIds"];self.client=data["client"];return {}
+     if '/links/' in path:return []
+     raise AssertionError("unrecognized test endpoint")
+   fake=FakePanel()
+   c.execute("UPDATE orders SET status='paid' WHERE id='legacy-old-inbound-order'")
+   with patch.object(s,'Panel',return_value=fake),patch.object(s,'subscription_url',return_value='https://domain/sub/abc'):
+    s.provision(c,c.execute("SELECT * FROM orders WHERE id='legacy-old-inbound-order'").fetchone())
+   self.assertEqual(fake.ids,[2,4,16,17,22])
+   self.assertEqual(c.execute("SELECT status FROM orders WHERE id='legacy-old-inbound-order'").fetchone()[0],"fulfilled")
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM ledger WHERE reason='purchase'").fetchone()[0],0)
+
+ def test_all_removed_inbounds_abort_before_debit_or_receipt(self):
+  with s.conn() as c,patch.object(s,"active_inbound_ids",return_value={4}):
+   c.execute("""INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active)
+      VALUES(7,'Deleted','subscription','xray',5000,30,3,'[1,2,3]',0,1)""")
+   before=c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0]
+   with self.assertRaisesRegex(ValueError,"اینباند"):
+    s.order(c,101,7,"fail-deleted-input",card=False)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM orders WHERE id='fail-deleted-input'").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT balance FROM users WHERE id=101").fetchone()[0],before)
+
+ def test_plan_repair_removes_only_deleted_ids_and_is_idempotent(self):
+  with s.conn() as c:
+   c.execute("""INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active)
+      VALUES(7,'Needs Repair','subscription','xray',5000,30,3,'[1,2,3,4]',0,1)""")
+   repaired=s.repair_stale_inbound_plans(c,{2,4,23})
+   self.assertEqual(repaired,[(7,4,2)])
+   self.assertEqual(c.execute("SELECT inbounds FROM plans WHERE id=7").fetchone()[0],"[2, 4]")
+   self.assertEqual(s.repair_stale_inbound_plans(c,{2,4,23}),[])
+
+ def test_provision_failure_retries_are_safe_and_bounded(self):
+  with s.conn() as c:
+   s.put(c,'admins',[101])
+   ref=s.order(c,102,1,"provision-trial-review",card=True)
+   c.execute("UPDATE orders SET status='paid' WHERE id=?",(ref,))
+   row=c.execute("SELECT * FROM orders WHERE id=?",(ref,)).fetchone()
+   s.record_provision_failure(c,row,ValueError("اتصال به همه اینباندها کامل نشده"))
+   o=c.execute("SELECT * FROM orders WHERE id=?",(ref,)).fetchone()
+   self.assertEqual(o["status"],"review")
+   stat=c.execute("SELECT attempts,last_error FROM provision_failures WHERE order_id=?",(ref,)).fetchone()
+   self.assertEqual(stat["attempts"],1)
+   self.assertEqual(stat["last_error"],"INBOUND_SET_INVALID")
+   self.assertFalse(s.eligible_review_retry(c,o,s.now()))
+   self.assertTrue(s.eligible_review_retry(c,o,s.now()+310))
+   s.record_provision_failure(c,o,TimeoutError("network error test"))
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM ledger WHERE user_id=102 AND reason='purchase'").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe=?",("provision-hold:"+ref,)).fetchone()[0],1)
+   c.execute("UPDATE provision_failures SET attempts=7 WHERE order_id=?",(ref,))
+   self.assertFalse(s.eligible_review_retry(c,o,s.now()+999999))
+
  def test_duplicate_purchase_and_balance(self):
   with s.conn() as c:
    a=s.order(c,101,1,"same");b=s.order(c,101,1,"same")
@@ -404,7 +472,7 @@ class Commerce(unittest.TestCase):
     def __init__(self):self.client=None;self.inbound_ids=[]
     def call(self,path,data=None):
      if path.startswith("/panel/api/clients/get/"):
-      if not self.client:raise ValueError("not found")
+      if not self.client:raise ValueError("پنل عملیات را نپذیرفت")
       return {"client":self.client,"inboundIds":self.inbound_ids}
      if path=="/panel/api/clients/add":
       self.client=data["client"];self.inbound_ids=data["inboundIds"];return {}

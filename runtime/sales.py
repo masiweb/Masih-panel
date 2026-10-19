@@ -56,6 +56,11 @@ def conn():
  CREATE TABLE IF NOT EXISTS quotes(id TEXT PRIMARY KEY,user_id INTEGER,plan_id INTEGER,plan TEXT,renew_id TEXT,expires INTEGER);
  CREATE TABLE IF NOT EXISTS receipt_orders(topup_id INTEGER UNIQUE,order_id TEXT UNIQUE);
  CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,action TEXT,detail TEXT,created INTEGER);
+ CREATE TABLE IF NOT EXISTS provision_failures(
+   order_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0,
+   last_error TEXT NOT NULL DEFAULT '',last_attempt INTEGER NOT NULL DEFAULT 0,
+   resolved INTEGER NOT NULL DEFAULT 0
+ );
  CREATE TABLE IF NOT EXISTS message_templates(id TEXT PRIMARY KEY,body TEXT NOT NULL);
  """)
  loyalty.setup(c)
@@ -150,7 +155,17 @@ class Panel:
   for line in Path("/etc/x-ui/install-result.env").read_text().splitlines():
    if "=" in line and not line.startswith("#"):
     k,v=line.split("=",1);env[k]=shlex.split(v)[0] if shlex.split(v) else ""
-  self.base="http://127.0.0.1:"+env.get("XUI_PANEL_PORT","62053")+"/"+env.get("XUI_WEB_BASE_PATH","xui").strip("/")
+  # Use live SANAei DB settings: both paths and port may change after install.
+  # install-result.env retains bootstrap LOGIN credentials, never the routing.
+  with sqlite3.connect("file:/etc/x-ui/x-ui.db?mode=ro",uri=True,timeout=3) as db:
+   values=dict(db.execute("SELECT key,value FROM settings WHERE key IN ('webPort','webBasePath')"))
+  port=values.get("webPort") or env.get("XUI_PANEL_PORT","62053")
+  path=values.get("webBasePath") or "/"+env.get("XUI_WEB_BASE_PATH","xui").strip("/")+"/"
+  if not str(port).isdigit() or not 1<=int(port)<=65535:
+   raise ValueError("پورت تنظیم‌شده پنل نامعتبر است")
+  if not re.fullmatch(r"/(?:[A-Za-z0-9._~-]+/){1,6}",path) or ".." in path:
+   raise ValueError("مسیر وب پنل سنایی نامعتبر است")
+  self.base="http://127.0.0.1:"+str(port)+path.rstrip("/")
   self.client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
   self.token=self.call("/csrf-token")
   self.call("/login",{"username":env["XUI_USERNAME"],"password":env["XUI_PASSWORD"]})
@@ -172,6 +187,36 @@ def subscription_url(sub_id):
  return base.rstrip("/")+"/"+urllib.parse.quote(sub_id,safe="")
 def inbound_list():
  return [{"id":r["id"],"name":r.get("remark",""),"protocol":r["protocol"],"enable":r["enable"]} for r in Panel().call("/panel/api/inbounds/list")]
+
+def active_inbound_ids():
+ """Trusted local x-ui source, never stale plan snapshots or submitted IDs."""
+ with sqlite3.connect("file:/etc/x-ui/x-ui.db?mode=ro",uri=True,timeout=3) as db:
+  return {int(r[0]) for r in db.execute("SELECT id FROM inbounds WHERE enable=1")}
+
+def resolve_inbound_ids(snapshot,live):
+ """Keep original selected inbound order; do not silently add new protocols."""
+ ids=json.loads(snapshot) if isinstance(snapshot,str) else snapshot
+ if not isinstance(ids,list) or not ids or any(type(x) is not int or x<1 for x in ids):
+  raise ValueError("لیست اینباندهای سفارش نامعتبر است")
+ active=[i for i in dict.fromkeys(ids) if i in live]
+ if not active:
+  raise ValueError("هیچ‌کدام از اینباندهای پلن فعال نیستند؛ مدیر باید اینباندهای پلن را اصلاح کند")
+ return active
+
+def repair_stale_inbound_plans(c,live=None):
+ """Update catalogue only. Existing paid order snapshots are immutable."""
+ live=active_inbound_ids() if live is None else live
+ changes=[]
+ for plan in c.execute("SELECT id,inbounds,active,protocol FROM plans WHERE protocol='xray'").fetchall():
+  wanted=json.loads(plan["inbounds"])
+  actual=resolve_inbound_ids(wanted,live) if any(i in live for i in wanted) else []
+  if actual!=wanted:
+   c.execute("UPDATE plans SET inbounds=?,active=? WHERE id=?",
+     (json.dumps(actual),int(plan["active"] and bool(actual)),plan["id"]))
+   audit(c,"stale_inbound_plan_repaired",str(plan["id"])+": "+str(len(wanted))+" -> "+str(len(actual)))
+   changes.append((plan["id"],len(wanted),len(actual)))
+ return changes
+
 def _telegram_connect(address,timeout=socket._GLOBAL_DEFAULT_TIMEOUT,source_address=None):
  """Prefer IPv4 when resolving Telegram, falling back to working IPv6.
 
@@ -402,6 +447,10 @@ def order(c,uid,pid,reference,renew="",trial=False,card=False,label=None):
  else:
   count=c.execute("SELECT COUNT(*) FROM orders WHERE json_extract(plan,'$.id')=? AND renew_id='' AND status!='cancelled'",(pid,)).fetchone()[0]
   if p["capacity"] and count>=p["capacity"]:raise ValueError("ظرفیت پلن تکمیل است")
+ # Reject a purchase with no currently usable inbound BEFORE collecting money
+ # or reserving a coupon. A checkout snapshot holds only surviving selections.
+ if p["protocol"]=="xray":
+  p["inbounds"]=json.dumps(resolve_inbound_ids(p["inbounds"],active_inbound_ids()))
  price=0 if trial else p["price"]
  if u["reseller"] and s["reseller"]:price=price*(100-s["reseller_discount"])//100
  coupon=u["state"][7:] if u["state"].startswith("coupon:") else ""
@@ -440,12 +489,18 @@ def provision(c,o):
  if p["protocol"]=="xray":
   api=Panel()
   try:current=api.call("/panel/api/clients/get/"+name)
-  except ValueError:current=None
+  except ValueError as exc:
+   # Only an explicit 'not found' business response permits create.
+   # Network and authentication failures must never be treated as absence.
+   if str(exc)!="پنل عملیات را نپذیرفت":raise
+   current=None
   client={"email":name,"id":data["uuid"],"password":data["password"],"auth":data["password"],"security":"auto","flow":"","subId":data["subId"],"enable":True,"expiryTime":target*1000,"totalGB":data["totalGB"],"tgId":uid,"limitIp":0,"comment":"Masiha sales | "+data["label"][:55]}
+  selected_inbounds=resolve_inbound_ids(p["inbounds"],active_inbound_ids())
   if current:api.call("/panel/api/clients/update/"+name,client)
-  else:api.call("/panel/api/clients/add",{"client":client,"inboundIds":json.loads(p["inbounds"])})
+  else:api.call("/panel/api/clients/add",{"client":client,"inboundIds":selected_inbounds})
   check=api.call("/panel/api/clients/get/"+name)
-  if not set(json.loads(p["inbounds"])).issubset(set(check["inboundIds"])):raise ValueError("اتصال به همه اینباندها کامل نشده")
+  if not set(selected_inbounds).issubset(set(check["inboundIds"])):
+   raise ValueError("اتصال به اینباندهای فعال انتخاب‌شده کامل نشده")
   data["subscription"]=[subscription_url(data["subId"])]
   data["links"]=api.call("/panel/api/clients/links/"+name)
  else:
@@ -453,6 +508,7 @@ def provision(c,o):
   vpn({"protocol":p["protocol"],"action":"update" if exists else "create","username":name,"password":data["password"] if p["protocol"]=="openconnect" else "","enabled":True,"expires":target})
  c.execute("INSERT OR REPLACE INTO services VALUES(?,?,?,?,?,?,?,0)",(sid,uid,p["protocol"],name,o["plan"],target,json.dumps(data)))
  c.execute("UPDATE orders SET status='fulfilled',error='' WHERE id=?",(o["id"],))
+ c.execute("UPDATE provision_failures SET resolved=1 WHERE order_id=?",(o["id"],))
  s=settings(c)
  loyalty.purchase(c,dict(o)|{"status":"fulfilled"},s,now())
  u=c.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
@@ -460,6 +516,41 @@ def provision(c,o):
   money(c,u["referrer"],o["price"]*s["commission"]//100,"commission",o["id"]+":commission")
  enqueue(c,uid,bot_message(c,"service_ready",name=data["label"]),[[("دریافت سرویس","service:"+sid)]],o["id"]+":delivered")
  for admin in s["admins"]+([s["report_channel"]] if s["report_channel"] else []):enqueue(c,admin,"سفارش "+o["id"]+" تحویل شد؛ مبلغ "+str(o["price"])+" تومان.",key=o["id"]+":admin:"+str(admin))
+
+def provision_failure_reason(exc):
+ """No user-supplied details, passwords, or tokenized target data in logs."""
+ message=str(exc)
+ if "اینباند" in message:return "INBOUND_SET_INVALID"
+ if "پنل" in message or "csrf" in message.lower():return "PANEL_API_REJECTED"
+ if "VPN" in message:return "VPN_BACKEND_FAILURE"
+ if isinstance(exc,TimeoutError):return "UPSTREAM_TIMEOUT"
+ return "PROVISION_ERROR_"+type(exc).__name__[:32]
+
+def record_provision_failure(c,o,exc):
+ reason=provision_failure_reason(exc)
+ c.execute("""INSERT INTO provision_failures(order_id,attempts,last_error,last_attempt,resolved)
+     VALUES(?,1,?,?,0) ON CONFLICT(order_id) DO UPDATE SET
+     attempts=provision_failures.attempts+1,
+     last_error=excluded.last_error,last_attempt=excluded.last_attempt,resolved=0""",
+     (o["id"],reason,now()))
+ c.execute("UPDATE orders SET status='review' WHERE id=? AND status IN ('paid','review')",(o["id"],))
+ audit(c,"provision_failed",o["id"]+" | "+reason)
+ for aid in settings(c)["admins"]:
+  enqueue(c,aid,"⚠️ سفارش "+o["id"]+" نیاز به بررسی دارد.\nعلت: "+reason+
+    "\nپرداخت دوباره لازم نیست؛ سیستم برای رفع خطای موقت، تحویل را مجدداً بررسی می‌کند.",
+    [[("🔄 تلاش مجدد تحویل","a:retry:"+o["id"])],
+     [("📦 جزئیات سفارش","a:order:"+o["id"])]],
+    key="provision-review:"+o["id"]+":"+str(min(3,now()//3600)))
+ enqueue(c,o["user_id"],"⏳ پرداخت سفارش ثبت شده است اما ساخت سرویس هنوز کامل نشده؛ "
+   "سیستم به‌صورت ایمن دوباره تلاش می‌کند. لطفاً پرداخت مجدد انجام ندهید.",
+   key="provision-hold:"+o["id"])
+
+def eligible_review_retry(c,o,ts):
+ if o["status"]=="paid":return True
+ failure=c.execute("SELECT attempts,last_attempt FROM provision_failures WHERE order_id=?",(o["id"],)).fetchone()
+ if not failure:return True
+ if failure["attempts"]>=7:return False
+ return ts-failure["last_attempt"] >= min(3600,300*(2**min(4,max(0,failure["attempts"]-1))))
 
 def restore_reserved_coupon(c,o):
  # A rejected receipt should free a coupon reserved by the card order.

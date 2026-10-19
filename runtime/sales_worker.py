@@ -580,11 +580,15 @@ def tick():
     raise
    if up.get("callback_query"):
     with contextlib.suppress(Exception):tg(s,"answerCallbackQuery",{"callback_query_id":up["callback_query"]["id"]})
-  for o in c.execute("SELECT * FROM orders WHERE status='paid' LIMIT 5").fetchall():
+  # Receipt approval only changes status to paid; delivery is independent.
+  # Previous review orders and temporary network errors are retried safely,
+  # using the persisted target to prevent renewal/traffic double-extension.
+  for o in c.execute("SELECT * FROM orders WHERE status IN ('paid','review') ORDER BY created ASC LIMIT 30").fetchall():
+   if not eligible_review_retry(c,o,now()):continue
    try:provision(c,o);c.commit()
-   except Exception:
-    c.rollback();c.execute("UPDATE orders SET status='review' WHERE id=?",(o["id"],))
-    for aid in s["admins"]:enqueue(c,aid,"سفارش "+o["id"]+" نیاز به بررسی دارد. موجودی مجدد کسر نمی‌شود.")
+   except Exception as exc:
+    c.rollback()
+    record_provision_failure(c,o,exc)
     c.commit()
   if s["notifications"]:
    for r in c.execute("SELECT * FROM services WHERE deleted=0 AND expires BETWEEN ? AND ?",(now(),now()+s["warning_days"]*86400)).fetchall():

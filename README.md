@@ -91,3 +91,13 @@ The older `app/` FastAPI control-plane and `node_agent/` prototype are retained 
 - Automatic HTTPS subscription URI and per-protocol OpenVPN/OpenConnect profiles, with TLS termination by Nginx. Fresh installs include six original Xray presets, VLESS XHTTP stream-up/packet-up over TLS/H2, four classic AEAD Shadowsocks speed-test variants, plus VLESS gRPC/TLS and HTTPUpgrade/TLS (14 safe inbounds). SS2022 is disabled until proper per-client key validation is implemented. Prefer modern XHTTP where supported. No configuration guarantees access through every ISP filtering method.
 
 Never commit customer profiles, live databases, private keys, passwords, bot tokens or production configuration. The public repository contains only source code, templates and instructions. See installation guide for the complete list of backup-only paths. For the Telegram bot development and plan-management walkthrough see [راهنمای مدیریت ربات و پلن‌ها](docs/TELEGRAM_BOT_FA.md).
+
+
+## بازیابی امن سفارش‌های تأییدشده (اکتبر ۲۰۲۶)
+- چنانچه اینباندهای 3x-ui حذف یا تغییر کنند، پلن‌ها و سفارش‌های قبلی نباید به شناسه‌های حذف‌شده وابسته بمانند.
+- در لحظه خرید، پیش از برداشت وجه، لیست انتخابی پلن با اینباندهای فعال واقعی تطبیق می‌شود. اگر هیچ اینباندی باقی نمانده باشد، خرید رد شده و پولی کسر نمی‌شود.
+- در تحویل سفارش‌های موجود، تنها اینباندهای هنوز فعال از انتخاب اصلی استفاده می‌شوند. اینباند جدید بدون انتخاب مدیر به پلن اضافه نمی‌شود.
+- سفارش تأییدشده‌ای که ساخت آن به مشکل بخورد، به حالت نیازمند بررسی می‌رود، خطای طبقه‌بندی‌شده بدون افشای رمز در provision_failures ثبت می‌شود و با وقفه افزایشی حداکثر ۷ تلاش دارد؛ هیچ برداشت جدیدی برای تلاش مجدد انجام نمی‌شود.
+- مدت و حجم سرویس در اولین تلاش به‌صورت هدف ثابت ذخیره می‌شود تا تلاش بعدی زمان و حجم اضافه نکند. پیام تحویل با شناسه یکتا ثبت می‌شود و از اطلاع‌رسانی تکراری جلوگیری می‌کند.
+- repair_stale_inbound_plans صرفاً لیست پلن‌های فروش را هماهنگ می‌کند؛ سفارش‌های تأییدشده قبلی و تراکنش‌ها را بازنویسی نمی‌کند.
+- برای عیب‌یابی: SELECT order_id,attempts,last_error,last_attempt,resolved FROM provision_failures؛ هیچ رمز یا کلید اتصال در این جدول ثبت نمی‌شود.
