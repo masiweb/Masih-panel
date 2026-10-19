@@ -14,6 +14,15 @@ const labels:Record<string,string>={
   social_like_profile:'❤️ امتیاز هر لایک پروفایل',
   social_chat_retention_days:'🗄 مدت نگهداری متن گفتگوها (روز)'
 };
+const chatCosts:Record<string,string>={
+ social_chat_cost_random:'🎲 چت تصادفی',
+ social_chat_cost_filtered:'🎯 چت با فیلتر',
+ social_chat_cost_search:'🔎 چت از جستجوی کاربر',
+ social_chat_cost_near:'📍 چت از کاربران نزدیک',
+ social_chat_cost_following:'👀 چت از «دنبال می‌کنم»',
+ social_chat_cost_followers:'👥 چت از «دنبال‌کنندگان»',
+ social_chat_cost_direct:'💬 چت از لینک یا پروفایل مستقیم'
+};
 export default function SocialAdminPage(){
   const {message}=App.useApp();
   const [stats,setStats]=useState<Row>({});
@@ -25,6 +34,7 @@ export default function SocialAdminPage(){
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [form]=Form.useForm();
+  const [chatForm]=Form.useForm();
   const call=async(action:string, values:Row={})=>{
     const r=await HttpUtil.post('/panel/api/sales-bot',{action,...values},
       {headers:{'Content-Type':'application/json'},silent:true,timeout:65000});
@@ -39,6 +49,7 @@ export default function SocialAdminPage(){
       ]);
       setStats(a||{});setProfiles(b||[]);setChats(c||[]);setReports(d||[]);
       form.setFieldsValue(a?.rewards||{});
+      chatForm.setFieldsValue(a?.rewards||{});
       setError('');
     }catch(e){setError(String(e));}
   };
@@ -74,6 +85,21 @@ export default function SocialAdminPage(){
       <Tag>موقعیت‌های فعال: {stats.geo_optins??0}</Tag>
       <Button onClick={()=>void reload()}>بارگذاری مجدد</Button>
     </Space>
+    <Card title="⭐ تعرفه شروع گفتگو در کلاب ناشناس" size="small">
+      <Alert type="info" showIcon style={{marginBottom:16}}
+        title="فقط شروع موفق هر گفتگو هزینه دارد"
+        description="مبلغ‌ها برحسب ستاره/امتیاز داخلی ربات هستند. مشاهده فهرست کاربران و جستجو رایگان است. برای چت تصادفی پس از پیدا شدن هم‌صحبت، و برای چت درخواستی فقط بعد از پذیرش درخواست، یک‌بار کسر می‌شود. پیام‌های بعدی رایگان هستند. ورود مستقیم به پروفایل حداقل با بیشترین تعرفه مسیرهای جستجو حساب می‌شود. صفر یعنی رایگان."/>
+      <Form form={chatForm} layout="vertical" onFinish={v=>void save(v)}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:12}}>
+          {Object.entries(chatCosts).map(([key,label])=><Form.Item key={key} name={key}
+            label={label}
+            rules={[{required:true,message:'مقدار هزینه را وارد کنید'}]}>
+            <InputNumber min={0} max={10000} precision={0} style={{width:'100%'}}/>
+          </Form.Item>)}
+        </div>
+        <Button loading={busy} type="primary" htmlType="submit">ذخیره تعرفه شروع چت‌ها</Button>
+      </Form>
+    </Card>
     <Card title="⚙️ امتیاز ثبت رسانه و لایک کاربران" size="small">
       <Form form={form} layout="vertical" onFinish={v=>void save(v)}>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:12}}>

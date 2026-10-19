@@ -12,8 +12,11 @@ import sales_worker as worker
 class SocialQA(unittest.TestCase):
  def setUp(self):
   with s.conn() as c:
+   c.executemany("UPDATE media_settings SET v=? WHERE k=?",
+     [(0,"social_chat_cost_"+key) for key in social.CHAT_COST_LABELS])
    for name in ("social_reports","social_geo","social_blocks","social_chat_messages",
-                "social_chat_pairs","social_chat_queue","social_chat_invites","social_profile_comments",
+                 "social_chat_pairs","social_chat_queue","social_chat_invites",
+                "social_chat_quotes","social_discovery","social_profile_comments",
                 "social_reactions","social_profile_views","social_follows","social_profiles",
                 "playlist_likes","playlists","media_likes","media_items","loyalty_points",
                 "outbox","users","settings"):
@@ -113,20 +116,125 @@ class SocialQA(unittest.TestCase):
    self.assertEqual(c.execute("SELECT COUNT(*) FROM social_chat_messages").fetchone()[0],1)
    social.end_chat(c,970012341)
    self.assertGreater(c.execute("SELECT closed FROM social_chat_pairs").fetchone()[0],0)
- def test_friend_chat_requires_mutual_follow_and_acceptance(self):
+ def test_private_chat_request_requires_consent_and_is_free_until_accepted(self):
   with s.conn() as c:
    a=self.ready(c,970012341);b=self.ready(c,970012342)
-   with self.assertRaises(ValueError):
-    social.callback(c,970012341,"soc:friendchat:"+b["code"])
-   social.callback(c,970012341,"soc:follow:"+b["code"])
-   social.callback(c,970012342,"soc:follow:"+a["code"])
    social.callback(c,970012341,"soc:friendchat:"+b["code"])
+   quote=c.execute("SELECT * FROM social_chat_quotes").fetchone()
+   self.assertEqual(quote["cost"],0)
+   self.assertFalse(c.execute("SELECT 1 FROM social_chat_invites").fetchone())
+   social.callback(c,970012341,"soc:chatconfirm:"+quote["token"])
    self.assertEqual(c.execute("SELECT status FROM social_chat_invites").fetchone()[0],"pending")
    self.assertFalse(c.execute("SELECT 1 FROM social_chat_pairs").fetchone())
    social.callback(c,970012342,"soc:acceptfriend:"+a["code"])
    row=c.execute("SELECT type,closed FROM social_chat_pairs").fetchone()
-   self.assertEqual(tuple(row),("friend",0))
+   self.assertEqual(tuple(row),("direct",0))
    self.assertNotIn("970012341",json.dumps(self.payloads(c,970012342),ensure_ascii=False))
+ def fund(self,c,uid,amount=100):
+  from gamification import award
+  award(c,uid,amount,"test","test:fund:"+str(uid),s.now())
+
+ def test_priced_random_only_charges_after_successful_match_and_no_per_message_charge(self):
+  with s.conn() as c:
+   for uid in (970012341,970012342):self.ready(c,uid);self.fund(c,uid)
+   c.execute("UPDATE media_settings SET v=12 WHERE k='social_chat_cost_random'")
+   before=[social._balance(c,uid) for uid in (970012341,970012342)]
+   social.callback(c,970012341,"soc:random")
+   self.assertFalse(c.execute("SELECT 1 FROM social_chat_queue").fetchone())
+   self.assertEqual(social._balance(c,970012341),100)
+   social.callback(c,970012341,"soc:match:random")
+   self.assertEqual(social._balance(c,970012341),100)
+   self.assertEqual(c.execute("SELECT points FROM social_chat_queue WHERE user_id=970012341").fetchone()[0],12)
+   social.callback(c,970012342,"soc:match:random")
+   chat=c.execute("SELECT id FROM social_chat_pairs").fetchone()[0]
+   self.assertEqual((social._balance(c,970012341),social._balance(c,970012342)),(88,88))
+   social._chat_message(c,970012341,{"text":"سلام"},chat)
+   social._chat_message(c,970012342,{"text":"درود"},chat)
+   self.assertEqual((social._balance(c,970012341),social._balance(c,970012342)),(88,88))
+   social._charge_once(c,970012341,12,chat)
+   self.assertEqual(social._balance(c,970012341),88)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM loyalty_points WHERE kind='social_chat'").fetchone()[0],2)
+
+ def test_unmatched_wait_cancel_and_insufficient_balance_cost_nothing(self):
+  with s.conn() as c:
+   self.ready(c,970012341);self.ready(c,970012342)
+   self.fund(c,970012341,10)
+   c.execute("UPDATE media_settings SET v=20 WHERE k='social_chat_cost_filtered'")
+   with self.assertRaisesRegex(ValueError,"امتیاز کافی"):
+    social.start_matching(c,970012341,"filtered")
+   self.assertFalse(c.execute("SELECT 1 FROM social_chat_pairs").fetchone())
+   self.assertFalse(c.execute("SELECT 1 FROM social_chat_queue").fetchone())
+   c.execute("UPDATE media_settings SET v=4 WHERE k='social_chat_cost_filtered'")
+   social.start_matching(c,970012341,"filtered")
+   self.assertEqual(social._balance(c,970012341),10)
+   social.end_chat(c,970012341)
+   self.assertEqual(social._balance(c,970012341),10)
+   self.assertFalse(c.execute("SELECT 1 FROM social_chat_queue").fetchone())
+   self.assertFalse(c.execute("SELECT 1 FROM loyalty_points WHERE kind='social_chat'").fetchone())
+
+ def test_request_reject_not_charged_and_accept_exact_once_with_original_quote(self):
+  with s.conn() as c:
+   a=self.ready(c,970012341);b=self.ready(c,970012342)
+   self.fund(c,970012341,50)
+   c.execute("UPDATE media_settings SET v=8 WHERE k='social_chat_cost_search'")
+   social._discover(c,970012341,970012342,"search")
+   social.callback(c,970012341,"soc:friendchat:"+b["code"])
+   quote=c.execute("SELECT token,cost,route FROM social_chat_quotes").fetchone()
+   self.assertEqual((quote["cost"],quote["route"]),(8,"search"))
+   social.callback(c,970012341,"soc:chatconfirm:"+quote["token"])
+   self.assertEqual(social._balance(c,970012341),50)
+   social.callback(c,970012342,"soc:rejectfriend:"+a["code"])
+   self.assertEqual(social._balance(c,970012341),50)
+   social.callback(c,970012341,"soc:friendchat:"+b["code"])
+   quote=c.execute("SELECT token,cost FROM social_chat_quotes ORDER BY rowid DESC LIMIT 1").fetchone()
+   social.callback(c,970012341,"soc:chatconfirm:"+quote["token"])
+   c.execute("UPDATE media_settings SET v=15 WHERE k='social_chat_cost_search'")
+   social.callback(c,970012342,"soc:acceptfriend:"+a["code"])
+   self.assertEqual(social._balance(c,970012341),42)
+   self.assertEqual(social._balance(c,970012342),0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM loyalty_points WHERE kind='social_chat'").fetchone()[0],1)
+   with self.assertRaises(ValueError):
+    social.callback(c,970012342,"soc:acceptfriend:"+a["code"])
+   self.assertEqual(social._balance(c,970012341),42)
+
+ def test_priced_discovery_sources_and_direct_fallback_prevent_cheaper_forgery(self):
+  with s.conn() as c:
+   self.ready(c,970012341);b=self.ready(c,970012342)
+   self.fund(c,970012341,200)
+   config={"search":6,"near":9,"following":11,"followers":13,"direct":1}
+   for route,amount in config.items():
+    c.execute("UPDATE media_settings SET v=? WHERE k=?", (amount,"social_chat_cost_"+route))
+   for route in ("search","near","following","followers"):
+    social._discover(c,970012341,970012342,route)
+    social.callback(c,970012341,"soc:friendchat:"+b["code"])
+    got=c.execute("SELECT route,cost FROM social_chat_quotes ORDER BY rowid DESC LIMIT 1").fetchone()
+    self.assertEqual(tuple(got),(route,config[route]))
+   c.execute("UPDATE social_discovery SET created=0")
+   self.assertEqual(social._route_for(c,970012341,970012342),"direct")
+   social.callback(c,970012341,"soc:friendchat:"+b["code"])
+   got=c.execute("SELECT route,cost FROM social_chat_quotes ORDER BY rowid DESC LIMIT 1").fetchone()
+   self.assertEqual(tuple(got),("direct",13))
+   self.assertEqual(social._balance(c,970012341),200)
+
+ def test_no_credits_removes_confirm_and_admin_validates_ranges(self):
+  with s.conn() as c:
+   self.ready(c,970012341)
+   c.execute("UPDATE media_settings SET v=100 WHERE k='social_chat_cost_random'")
+   social.callback(c,970012341,"soc:random")
+   latest=self.payloads(c,970012341)[-1]
+   self.assertNotIn("soc:match:random",json.dumps(latest))
+   self.assertEqual(social._balance(c,970012341),0)
+  settings=s.admin({"action":"social_admin","view":"overview"})["rewards"]
+  self.assertEqual(settings["social_chat_cost_random"],100)
+  s.admin({"action":"media_settings","values":{"social_chat_cost_near":8,"social_chat_cost_followers":17}})
+  settings=s.admin({"action":"social_admin","view":"overview"})["rewards"]
+  self.assertEqual(settings["social_chat_cost_near"],8)
+  self.assertEqual(settings["social_chat_cost_followers"],17)
+  with self.assertRaises(ValueError):
+   s.admin({"action":"media_settings","values":{"social_chat_cost_random":-1}})
+  with self.assertRaises(ValueError):
+   s.admin({"action":"media_settings","values":{"social_chat_cost_random":50000}})
+
  def test_admin_can_read_chat_logs_and_manage_reports_with_role_api(self):
   with s.conn() as c:
    self.ready(c,970012341);self.ready(c,970012342)

@@ -58,9 +58,10 @@ imp="import MediaBroadcastSettings from './MediaBroadcastSettings';"
 if "<SocialAdminPage/>" not in s:
  if s.count(anchor)!=1 or s.count(imp)!=1:
   raise SystemExit("Cannot mount SocialAdminPage on unsupported frontend")
- s=s.replace(anchor,"{key:'social_manager',label:'🌐 مدیریت مسیحا سوشال',children:<SocialAdminPage/>},\n "+anchor,1)
+ s=s.replace(anchor,"{key:'social_manager',label:'🌐 مدیریت کلاب ناشناس',children:<SocialAdminPage/>},\n "+anchor,1)
  s=s.replace(imp,imp+"\nimport SocialAdminPage from './SocialAdminPage';",1)
- p.write_text(s)
+s=s.replace("مدیریت مسیحا سوشال","مدیریت کلاب ناشناس")
+p.write_text(s)
 PYSOC
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys

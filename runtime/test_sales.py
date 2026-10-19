@@ -9,7 +9,7 @@ import sales_worker as w
 class Commerce(unittest.TestCase):
  def setUp(self):
   with s.conn() as c:
-   for t in ("social_reports","social_geo","social_blocks","social_chat_messages","social_chat_pairs","social_chat_queue","social_chat_invites","social_profile_comments","social_reactions","social_profile_views","social_follows","social_profiles","media_items","playlists","playlist_likes","media_likes","settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
+   for t in ("social_reports","social_geo","social_blocks","social_chat_messages","social_chat_pairs","social_chat_queue","social_chat_invites","social_chat_quotes","social_discovery","social_profile_comments","social_reactions","social_profile_views","social_follows","social_profiles","media_items","playlists","playlist_likes","media_likes","settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
    c.execute("INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")

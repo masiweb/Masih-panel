@@ -591,7 +591,7 @@ def admin(req):
    val=req.get("values",{})
    toggle_keys={"broadcast_music","broadcast_movie","broadcast_series"}
    import social
-   numeric_keys={"field_points","like_points","social_chat_retention_days"}|set(social.DEFAULT_POINTS)
+   numeric_keys={"field_points","like_points","social_chat_retention_days"}|set(social.DEFAULT_POINTS)|set(social.CHAT_COST_DEFAULTS)
    if not isinstance(val,dict) or not val or set(val)-(toggle_keys|numeric_keys):
     raise ValueError("تنظیمات رسانه نامعتبر است")
    for field,value in val.items():
@@ -604,7 +604,7 @@ def admin(req):
       c.execute("""UPDATE outbox SET done=2,payload='{}'
         WHERE done=0 AND dedupe LIKE ?""",("media-broadcast:"+genre+":%",))
     else:
-     ceiling=365 if field=="social_chat_retention_days" else 10000 if field in social.DEFAULT_POINTS else 10
+     ceiling=365 if field=="social_chat_retention_days" else 10000 if field in (set(social.DEFAULT_POINTS)|set(social.CHAT_COST_DEFAULTS)) else 10
      floor=30 if field=="social_chat_retention_days" else 0
      c.execute("UPDATE media_settings SET v=? WHERE k=?",(integer(value,floor,ceiling),field))
    audit(c,"media_settings","moderator:"+",".join(sorted(val)))

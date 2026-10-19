@@ -15,6 +15,17 @@ PROVINCES=("آذربایجان شرقی","آذربایجان غربی","اردب
 "خوزستان","زنجان","سمنان","سیستان و بلوچستان","فارس","قزوین","قم","کردستان",
 "کرمان","کرمانشاه","کهگیلویه و بویراحمد","گلستان","گیلان","لرستان",
 "مازندران","مرکزی","هرمزگان","همدان","یزد")
+CHAT_COST_LABELS={
+ "random":"🎲 شروع چت تصادفی",
+ "filtered":"🎯 شروع چت با فیلتر",
+ "search":"🔎 شروع چت از جستجوی کاربر",
+ "near":"📍 شروع چت از کاربران نزدیک",
+ "following":"👀 شروع چت از دنبال می‌کنم",
+ "followers":"👥 شروع چت از دنبال‌کنندگان",
+ "direct":"💬 شروع چت از پروفایل یا لینک مستقیم"
+}
+CHAT_COST_DEFAULTS={"social_chat_cost_"+key:0 for key in CHAT_COST_LABELS}
+DISCOVERY_ROUTES=frozenset(("search","near","following","followers"))
 MEDALS=(("💎 الماس",1,1),("🥇 طلا",2,3),("🥈 نقره",4,10),("🥉 برنز",11,30))
 DEFAULT_POINTS={
  "social_post_music":10,"social_post_movie":20,"social_post_series":15,
@@ -75,6 +86,12 @@ def setup(c):
  requester INTEGER NOT NULL,recipient INTEGER NOT NULL,created INTEGER NOT NULL,
  status TEXT NOT NULL DEFAULT 'pending',
  PRIMARY KEY(requester,recipient),CHECK(requester!=recipient));
+ CREATE TABLE IF NOT EXISTS social_chat_quotes(
+  token TEXT PRIMARY KEY,requester INTEGER NOT NULL,target INTEGER NOT NULL,
+  route TEXT NOT NULL,cost INTEGER NOT NULL,expires INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS social_discovery(
+  viewer INTEGER NOT NULL,target INTEGER NOT NULL,route TEXT NOT NULL,
+  created INTEGER NOT NULL,PRIMARY KEY(viewer,target));
 
  CREATE TABLE IF NOT EXISTS social_blocks(blocker INTEGER NOT NULL,blocked INTEGER NOT NULL,
    created INTEGER NOT NULL,PRIMARY KEY(blocker,blocked),CHECK(blocker!=blocked));
@@ -86,6 +103,17 @@ def setup(c):
  """)
  c.executemany("INSERT OR IGNORE INTO media_settings(k,v) VALUES(?,?)",DEFAULT_POINTS.items())
  c.execute("INSERT OR IGNORE INTO media_settings(k,v) VALUES('social_chat_retention_days',90)")
+ c.executemany("INSERT OR IGNORE INTO media_settings(k,v) VALUES(?,?)",
+               CHAT_COST_DEFAULTS.items())
+ for table,columns in {
+  "social_chat_queue":(("points","INTEGER NOT NULL DEFAULT 0"),),
+  "social_chat_invites":(("route","TEXT NOT NULL DEFAULT 'direct'"),
+                         ("points","INTEGER NOT NULL DEFAULT 0"))
+ }.items():
+  existing={row[1] for row in c.execute("PRAGMA table_info("+table+")")}
+  for name,sql_type in columns:
+   if name not in existing:
+    c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+sql_type)
  c.commit()
 
 def _sales():
@@ -93,6 +121,56 @@ def _sales():
  return sales
 
 def _now():return int(time.time())
+
+def chat_cost(c,route):
+ if route not in CHAT_COST_LABELS:raise ValueError("نوع چت نامعتبر است")
+ keys=("social_chat_cost_"+route,)
+ # A direct profile/old Telegram callback must not bypass a priced
+ # discovery entry point; it costs at least the highest discovery price.
+ if route=="direct":
+  keys+=tuple("social_chat_cost_"+name for name in DISCOVERY_ROUTES)
+ return max(c.execute("SELECT v FROM media_settings WHERE k=?",(key,)).fetchone()[0]
+            for key in keys)
+
+def _balance(c,uid):
+ from gamification import balance
+ return balance(c,uid)
+
+def _affordable(c,uid,amount):
+ if _balance(c,uid)<amount:
+  raise ValueError("⭐ امتیاز کافی برای شروع چت ندارید؛ موجودی شما "+
+   str(_balance(c,uid))+" و هزینه "+str(amount)+" ستاره است. از بخش امتیاز و تخفیف امتیاز کسب کنید.")
+
+def _charge_once(c,uid,amount,chat_id):
+ if amount<=0:return
+ ref="social:chat:"+str(chat_id)+":"+str(uid)
+ if c.execute("SELECT 1 FROM loyalty_points WHERE reference=?",(ref,)).fetchone():return
+ _affordable(c,uid,amount)
+ c.execute("""INSERT INTO loyalty_points(user_id,points,kind,reference,created)
+    VALUES(?,?,'social_chat',?,?)""",(uid,-amount,ref,_now()))
+
+def _discover(c,uid,target,route):
+ if route not in DISCOVERY_ROUTES:raise ValueError("منبع جستجوی نامعتبر است")
+ c.execute("""INSERT INTO social_discovery(viewer,target,route,created)
+ VALUES(?,?,?,?) ON CONFLICT(viewer,target) DO UPDATE SET
+ route=excluded.route,created=excluded.created""",(uid,target,route,_now()))
+
+def _route_for(c,uid,target):
+ record=c.execute("SELECT route,created FROM social_discovery WHERE viewer=? AND target=?",
+                 (uid,target)).fetchone()
+ if record and _now()-record["created"]<=1800:return record["route"]
+ return "direct"
+
+def _chat_offer(c,uid,route,action):
+ points=chat_cost(c,route)
+ balance=_balance(c,uid)
+ label=CHAT_COST_LABELS[route]
+ line=("⭐ هزینه فقط یک‌بار هنگام برقراری موفق گفتگو: "+str(points)+
+  " ستاره\n⭐ موجودی شما: "+str(balance)+
+  "\nهر پیام پس از شروع گفتگو رایگان است. در صورت نیافتن مخاطب یا رد دعوت، امتیازی کم نمی‌شود.")
+ actions=[[("✅ تأیید و ادامه",action)]] if balance>=points else []
+ actions.append([("⭐ مشاهده راه‌های کسب امتیاز","points_discount"),("↩️ بازگشت","soc:home")])
+ _send(c,uid,label+"\n"+line,actions)
 
 def _send(c,uid,text,buttons=None):
  _sales().enqueue(c,uid,text,buttons or [[("🏠 منوی اصلی","home")]])
@@ -312,7 +390,7 @@ def my_profile(c,uid):
   [("🖼 مشاهده گالری خودم","soc:mygallery")],
   [("🌐 تنظیمات حریم خصوصی","soc:privacy"),("🔗 لینک دعوت","soc:invite")],
   [("👁 بازدیدکنندگان","soc:visitors"),("👥 دنبال‌کنندگان","soc:followers")],
-  [("🏠 بازگشت به مسیحا سوشال","soc:home")]])
+  [("🏠 بازگشت به کلاب ناشناس","soc:home")]])
 
 def _public_card(c,viewer,p):
  if not _can_view(c,viewer,p) or _blocked(c,viewer,p["user_id"]):
@@ -345,9 +423,9 @@ def public_card(c,uid,target):
   [("💬 نظرات","soc:comments:"+p["code"]),("➕ نظر","soc:comment:"+p["code"])],
   [("🖼 تصاویر پروفایل","soc:gallery:"+p["code"])],
   [(("➖ لغو دنبال‌کردن" if following else "➕ دنبال‌کردن"),"soc:follow:"+p["code"])],
-  [("💬 درخواست چت دوستانه","soc:friendchat:"+p["code"])],
+  [("💬 درخواست شروع گفتگو","soc:friendchat:"+p["code"])],
   [("🚩 گزارش","soc:report:"+p["code"]),("⛔ مسدودکردن","soc:block:"+p["code"])],
-  [("↩️ مسیحا سوشال","soc:home")]]
+  [("↩️ کلاب ناشناس","soc:home")]]
  _send(c,uid,msg,buttons)
 
 def by_code(c,code):
@@ -361,7 +439,8 @@ def menu(c,uid):
  p=profile(c,uid)
  ready=complete(p)
  buttons=[[("👤 پروفایل من","soc:profile"),("🏆 برترین‌ها","soc:leaders")],
-  [("🎲 چت ناشناس تصادفی","soc:random"),("🎯 چت با فیلتر","soc:filtered")],
+  [("🎲 چت رندوم · ⭐"+str(chat_cost(c,"random")),"soc:random"),
+   ("🎯 چت فیلترشده · ⭐"+str(chat_cost(c,"filtered")),"soc:filtered")],
   [("📍 کاربران نزدیک من","soc:near"),("🔎 جستجوی کاربر","soc:search")],
   [("👥 دنبال‌کنندگان","soc:followers"),("👀 دنبال می‌کنم","soc:following")],
   [("👁 بازدید پروفایل","soc:visitors")],
@@ -369,7 +448,8 @@ def menu(c,uid):
   [("🏠 منوی اصلی","home")]]
  if not ready:
   buttons.insert(0,[("✅ تکمیل مرحله‌ای پروفایل اجتماعی","soc:setup")])
- _send(c,uid,"🌐 مسیحا سوشال\nشناسه عمومی شما: "+p["code"]+
+ _send(c,uid,"🌐 کلاب ناشناس\nشناسه عمومی شما: "+p["code"]+
+  "\n⭐ موجودی ستاره: "+str(_balance(c,uid))+
   ("\n✅ پروفایل آماده است." if ready else "\n⚠️ ابتدا پروفایل خود را تکمیل کنید."),
   buttons)
 
@@ -411,7 +491,7 @@ def _leaders(c,uid):
                     "soc:view:"+top[0][1]["code"])])
  _send(c,uid,"🏆 برترین‌ها و مدال‌ها\n💎 نفر اول، 🥇 دوم و سوم، 🥈 چهارم تا دهم، 🥉 یازدهم تا سی‌ام\n"+
   "رتبه‌بندی بر پایه امتیاز و محبوبیت آثار عمومی کاربران است.",buttons+
-  [[("↩️ مسیحا سوشال","soc:home")]])
+  [[("↩️ کلاب ناشناس","soc:home")]])
 
 def _visitors(c,uid):
  p=profile(c,uid)
@@ -446,17 +526,19 @@ def _leave(c,uid,announce=True):
   c.execute("UPDATE social_chat_pairs SET closed=? WHERE id=? AND closed=0",(_now(),chat["id"]))
   peer=chat["second_user"] if chat["first_user"]==uid else chat["first_user"]
   if announce:_send(c,peer,"گفتگو توسط طرف مقابل پایان یافت.",
-                    [[("🌐 بازگشت به مسیحا سوشال","soc:home")]])
+                    [[("🌐 بازگشت به کلاب ناشناس","soc:home")]])
  _state(c,uid,"")
  return chat
 
 def start_matching(c,uid,mode):
  if mode not in ("random","filtered"):raise ValueError("نوع اتصال ناشناس نامعتبر است")
  if not _require_complete(c,uid):return
+ own_price=chat_cost(c,mode)
+ _affordable(c,uid,own_price)
  _leave(c,uid)
  profile(c,uid)
  mine=profile(c,uid)
- candidates=c.execute("""SELECT q.user_id,p.interests,p.province FROM social_chat_queue q
+ candidates=c.execute("""SELECT q.user_id,q.points,p.interests,p.province FROM social_chat_queue q
  JOIN social_profiles p ON p.user_id=q.user_id
  WHERE q.mode=? AND q.user_id!=? AND p.discoverable=1
  ORDER BY q.joined LIMIT 100""",(mode,uid)).fetchall()
@@ -465,35 +547,53 @@ def start_matching(c,uid,mode):
   peer=row["user_id"]
   if _blocked(c,uid,peer) or not complete(profile(c,peer)):continue
   if _active_chat(c,peer):continue
+  peer_record=c.execute("SELECT blocked FROM users WHERE id=?",(peer,)).fetchone()
+  if not peer_record or peer_record["blocked"]:continue
+  if _balance(c,peer)<row["points"]:
+   c.execute("DELETE FROM social_chat_queue WHERE user_id=?",(peer,))
+   _state(c,peer,"")
+   _send(c,peer,"⭐ موجودی ستاره برای چت کافی نیست؛ امتیازی از شما کم نشده است.",
+         [[("⭐ راه‌های کسب امتیاز","points_discount"),("💬 کلاب ناشناس","soc:home")]])
+   continue
   if mode=="filtered" and not (
     interests.intersection(json.loads(row["interests"]))):continue
   cursor=c.execute("DELETE FROM social_chat_queue WHERE user_id=? AND mode=?",(peer,mode))
   if cursor.rowcount!=1:continue
+  # Two users are matched: debit both, exactly once, in the same
+  # transaction as conversation creation. Unmatched and cancelled queues are free.
+  _affordable(c,uid,own_price)
   new=c.execute("""INSERT INTO social_chat_pairs(first_user,second_user,created,type)
       VALUES(?,?,?,?)""",(uid,peer,_now(),mode)).lastrowid
+  _charge_once(c,uid,own_price,new)
+  _charge_once(c,peer,row["points"],new)
   _state(c,uid,"soc:chat:"+str(new));_state(c,peer,"soc:chat:"+str(new))
   safety=("🔒 چت ناشناس برقرار شد. هویت تلگرام و شماره تلفن شما به طرف مقابل نمایش "
    "داده نمی‌شود. گفتگو از طریق ربات منتقل و برای امنیت و رسیدگی به گزارش‌ها "
    "در سامانه شرکت ثبت می‌شود و مدیران مجاز می‌توانند آن را بررسی کنند. "
    "برای پایان، «پایان چت» را بزنید. شماره تماس و اطلاعات حساس نفرستید.")
   for person in (uid,peer):
+   price=own_price if person==uid else row["points"]
+   _send(c,person,"⭐ "+str(price)+" ستاره فقط برای شروع این گفتگو کسر شد. "+
+         "همه پیام‌های این گفتگو رایگان هستند.")
    _send(c,person,safety,[[("⛔ پایان چت","soc:leave"),("🚩 گزارش گفتگو","soc:chatreport")]])
   return new
- c.execute("""INSERT INTO social_chat_queue(user_id,mode,joined) VALUES(?,?,?)
-      ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,joined=excluded.joined""",
-      (uid,mode,_now()))
+ c.execute("""INSERT INTO social_chat_queue(user_id,mode,joined,points) VALUES(?,?,?,?)
+      ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,
+      joined=excluded.joined,points=excluded.points""",
+      (uid,mode,_now(),own_price))
  _state(c,uid,"soc:waiting")
  _send(c,uid,("🎯 در انتظار فرد هم‌علاقه…" if mode=="filtered" else
                "🎲 در انتظار اتصال به کاربر دیگری…")+
        "\nچت تنها زمانی شروع می‌شود که هر دو نفر برای گفتگو درخواست داده باشند. "
-       "گفتگوها برای رسیدگی به گزارش‌ها نزد شرکت ثبت می‌شوند.",
+       "گفتگوها برای رسیدگی به گزارش‌ها نزد شرکت ثبت می‌شوند.\n⭐ هزینه "+
+       str(own_price)+" ستاره فقط پس از اتصال موفق کم می‌شود؛ در صف هزینه‌ای ندارد.",
        [[("❌ خروج از صف","soc:leave")]])
  return None
 
 def end_chat(c,uid):
  had=_leave(c,uid)
  _send(c,uid,"گفتگو پایان یافت." if had else "از صف گفتگو خارج شدید.",
-       [[("🌐 مسیحا سوشال","soc:home"),("🎲 گفتگوی جدید","soc:random")]])
+       [[("🌐 کلاب ناشناس","soc:home"),("🎲 گفتگوی جدید","soc:random")]])
 
 def _chat_message(c,uid,m,chat_id):
  chat=_active_chat(c,uid)
@@ -540,13 +640,14 @@ def near(c,uid):
  for distance,target in found[:15]:
   # Coarsen to protect precise residential locations.
   approx=int(math.ceil(distance/5)*5)
+  _discover(c,uid,target,"near")
   buttons.append([(_public_name(c,target)+" • تا حدود "+str(max(5,approx))+" کیلومتر",
                   "soc:view:"+code(c,target))])
  _send(c,uid,"📍 کاربران نزدیک من\nفاصله‌ها تقریبی و بدون نمایش مختصات دقیق هستند. "+
     ("کاربر نزدیک دارای موقعیت فعال یافت نشد." if not buttons else ""),
     buttons+[[("🔄 به‌روزرسانی موقعیت","soc:geoshare"),
               ("🗑 حذف موقعیت من","soc:geodelete")],
-             [("↩️ مسیحا سوشال","soc:home")]])
+             [("↩️ کلاب ناشناس","soc:home")]])
 
 def geo_input(c,uid,m):
  point=m.get("location")
@@ -683,23 +784,46 @@ def callback(c,uid,cmd):
  if op=="friendchat":
   target=by_code(c,parts[2])
   if not _require_complete(c,uid):return
-  if target==uid or not _is_friend(c,uid,target):
-   raise ValueError("برای گفتگوی دوستانه باید یکدیگر را دنبال کرده باشید")
-  if _blocked(c,uid,target):raise ValueError("کاربر مسدود است")
+  target_profile=profile(c,target)
+  if target==uid or not _can_view(c,uid,target_profile):
+   raise ValueError("این پروفایل در دسترس نیست")
+  if _blocked(c,uid,target):raise ValueError("این کاربر مسدود است")
   if _active_chat(c,uid):raise ValueError("ابتدا گفتگوی فعلی را پایان دهید")
-  c.execute("""INSERT INTO social_chat_invites(requester,recipient,created,status)
-      VALUES(?,?,?,'pending') ON CONFLICT(requester,recipient) DO UPDATE SET
-      created=excluded.created,status='pending'""",(uid,target,_now()))
-  _send(c,target,"💬 "+_public_name(c,uid)+" درخواست گفتگوی دوستانه فرستاده است. "
-       "پیام‌ها از طریق ربات منتقل و برای رسیدگی به گزارش‌ها در سامانه شرکت ثبت و "
-       "توسط مدیران مجاز قابل بررسی هستند.",
-       [[("✅ پذیرش گفتگو","soc:acceptfriend:"+p["code"]),
-         ("❌ رد درخواست","soc:rejectfriend:"+p["code"])]])
-  return _send(c,uid,"✅ درخواست گفتگو ارسال شد.",
-    [[("↩️ پروفایل دوست","soc:view:"+parts[2])]])
+  route=_route_for(c,uid,target)
+  points=chat_cost(c,route)
+  token=secrets.token_hex(8)
+  c.execute("""INSERT INTO social_chat_quotes(token,requester,target,route,cost,expires)
+               VALUES(?,?,?,?,?,?)""",(token,uid,target,route,points,_now()+900))
+  return _chat_offer(c,uid,route,"soc:chatconfirm:"+token)
+ if op=="chatconfirm":
+  if len(parts)!=3 or not re.fullmatch(r"[0-9a-f]{16}",parts[2]):
+   raise ValueError("درخواست گفتگو نامعتبر است")
+  quote=c.execute("""SELECT * FROM social_chat_quotes WHERE token=? AND requester=?""",
+                  (parts[2],uid)).fetchone()
+  if not quote or quote["expires"]<_now():raise ValueError("درخواست منقضی شده؛ دوباره اقدام کنید")
+  target=quote["target"]
+  if not _require_complete(c,uid):return
+  if not _can_view(c,uid,profile(c,target)) or _blocked(c,uid,target):
+   raise ValueError("کاربر در دسترس نیست")
+  if _active_chat(c,uid):raise ValueError("ابتدا گفتگوی فعلی را پایان دهید")
+  _affordable(c,uid,quote["cost"])
+  c.execute("DELETE FROM social_chat_quotes WHERE token=?",(parts[2],))
+  c.execute("""INSERT INTO social_chat_invites(requester,recipient,created,status,route,points)
+      VALUES(?,?,?,'pending',?,?) ON CONFLICT(requester,recipient) DO UPDATE SET
+      created=excluded.created,status='pending',route=excluded.route,points=excluded.points""",
+      (uid,target,_now(),quote["route"],quote["cost"]))
+  own_code=profile(c,uid)["code"]
+  _send(c,target,"💬 "+_public_name(c,uid)+" درخواست گفتگو فرستاده است. "+
+       "ارسال پیام‌های این گفتگو رایگان است. گفتگو در سامانه شرکت ذخیره و برای "+
+       "مدیران مجاز قابل بررسی خواهد بود.",
+       [[("✅ پذیرش گفتگو","soc:acceptfriend:"+own_code),
+         ("❌ رد درخواست","soc:rejectfriend:"+own_code)]])
+  return _send(c,uid,"✅ درخواست ارسال شد؛ ⭐ "+str(quote["cost"])+
+       " ستاره فقط در صورت پذیرش و شروع موفق گفتگو کم می‌شود.",
+       [[("↩️ پروفایل","soc:view:"+profile(c,target)["code"])]])
  if op in ("acceptfriend","rejectfriend"):
   origin=by_code(c,parts[2])
-  row=c.execute("""SELECT created FROM social_chat_invites WHERE requester=? AND
+  row=c.execute("""SELECT created,route,points FROM social_chat_invites WHERE requester=? AND
       recipient=? AND status='pending'""",(origin,uid)).fetchone()
   if not row or _now()-row["created"]>86400:raise ValueError("دعوت گفتگو منقضی یا نامعتبر است")
   if op=="rejectfriend":
@@ -707,15 +831,17 @@ def callback(c,uid,cmd):
              (origin,uid))
    return _send(c,uid,"درخواست گفتگو رد شد.")
   if not _require_complete(c,uid):return
-  if not _is_friend(c,origin,uid) or _blocked(c,origin,uid):
-   raise ValueError("دوستی فعال نیست")
+  if not _can_view(c,origin,profile(c,uid)) or _blocked(c,origin,uid):
+   raise ValueError("دسترسی به گفتگو مجاز نیست")
   if _active_chat(c,uid) or _active_chat(c,origin):
    raise ValueError("یکی از کاربران در گفتگوی دیگری است")
+  _affordable(c,origin,row["points"])
   c.execute("UPDATE social_chat_invites SET status='accepted' WHERE requester=? AND recipient=?",
             (origin,uid))
   _leave(c,uid);_leave(c,origin)
   cid=c.execute("""INSERT INTO social_chat_pairs(first_user,second_user,created,type)
-                   VALUES(?,?,?,'friend')""",(origin,uid,_now())).lastrowid
+                   VALUES(?,?,?,?)""",(origin,uid,_now(),row["route"])).lastrowid
+  _charge_once(c,origin,row["points"],cid)
   for receiver in (uid,origin):
    _state(c,receiver,"soc:chat:"+str(cid))
    _send(c,receiver,"✅ گفتگو با "+_public_name(c,origin if receiver==uid else uid)+
@@ -729,14 +855,16 @@ def callback(c,uid,cmd):
   for row in rows:
    pp=profile(c,row["followed"])
    if _can_view(c,uid,pp) and not _blocked(c,uid,row["followed"]):
+    _discover(c,uid,row["followed"],"following")
     buttons.append([(_public_name(c,row["followed"]),"soc:view:"+pp["code"])])
-  return _send(c,uid,"👀 کاربرانی که دنبال می‌کنید:",buttons+[[("↩️ مسیحا سوشال","soc:home")]])
+  return _send(c,uid,"👀 کاربرانی که دنبال می‌کنید:",buttons+[[("↩️ کلاب ناشناس","soc:home")]])
  if op=="followers":
   rows=c.execute("SELECT follower FROM social_follows WHERE followed=? ORDER BY created DESC LIMIT 30",(uid,)).fetchall()
   buttons=[]
   for row in rows:
    pp=profile(c,row["follower"])
    if _can_view(c,uid,pp):
+    _discover(c,uid,row["follower"],"followers")
     buttons.append([(_public_name(c,row["follower"]),"soc:view:"+pp["code"])])
   return _send(c,uid,"👥 دنبال‌کنندگان شما:",buttons+[[("↩️ پروفایل","soc:profile")]])
  if op=="visitors":return _visitors(c,uid)
@@ -758,14 +886,19 @@ def callback(c,uid,cmd):
   c.execute("INSERT OR IGNORE INTO social_blocks VALUES(?,?,?)",(uid,target,_now()))
   c.execute("DELETE FROM social_follows WHERE (follower=? AND followed=?) OR (follower=? AND followed=?)",
             (uid,target,target,uid))
-  return _send(c,uid,"⛔ کاربر مسدود شد.",[[("↩️ مسیحا سوشال","soc:home")]])
+  return _send(c,uid,"⛔ کاربر مسدود شد.",[[("↩️ کلاب ناشناس","soc:home")]])
  if op=="report":
   target=by_code(c,parts[2])
   _state(c,uid,"soc:report:"+parts[2])
   return _send(c,uid,"دلیل گزارش را بنویسید.",
    [[("↩️ بازگشت","soc:view:"+parts[2])]])
  if op in ("random","filtered"):
-  return start_matching(c,uid,op)
+  if not _require_complete(c,uid):return
+  return _chat_offer(c,uid,op,"soc:match:"+op)
+ if op=="match":
+  if len(parts)!=3 or parts[2] not in ("random","filtered"):
+   raise ValueError("نوع چت نامعتبر است")
+  return start_matching(c,uid,parts[2])
  if op=="near":return near(c,uid)
  if op=="leave":return end_chat(c,uid)
  if op=="chatreport":
@@ -786,7 +919,7 @@ def callback(c,uid,cmd):
  if op=="geodelete":
   c.execute("DELETE FROM social_geo WHERE user_id=?",(uid,))
   return _send(c,uid,"موقعیت شما حذف شد.",
-                [[("↩️ مسیحا سوشال","soc:home")]])
+                [[("↩️ کلاب ناشناس","soc:home")]])
  raise ValueError("دستور اجتماعی نامعتبر است")
 
 def input_text(c,uid,state,m,update_id):
@@ -849,18 +982,19 @@ def input_text(c,uid,state,m,update_id):
     AND display_name LIKE ? ESCAPE '\\' AND visibility='public'
     AND display_name<>'' ORDER BY updated DESC LIMIT 15""",("%"+escape+"%",)).fetchall()
   rows=[r for r in rows if _can_view(c,uid,r) and not _blocked(c,uid,r["user_id"])]
+  for r in rows:_discover(c,uid,r["user_id"],"search")
   _state(c,uid,"")
   return _send(c,uid,"🔎 نتیجه جستجو: "+query+
        ("\nکاربری پیدا نشد." if not rows else ""),
        [[((r["display_name"] or "کاربر")+" • "+r["code"],"soc:view:"+r["code"])] for r in rows]+
-       [[("↩️ مسیحا سوشال","soc:home")]])
+       [[("↩️ کلاب ناشناس","soc:home")]])
  if op=="report":
   target=by_code(c,parts[2]);reason=(m.get("text") or "").strip()
   if not 5<=len(reason)<=500:raise ValueError("دلیل گزارش باید ۵ تا ۵۰۰ کاراکتر باشد")
   c.execute("INSERT INTO social_reports(reporter,target,reason,created) VALUES(?,?,?,?)",
             (uid,target,reason,_now()))
   _state(c,uid,"")
-  return _send(c,uid,"✅ گزارش ثبت و برای مدیریت ارسال شد.",[[("🏠 مسیحا سوشال","soc:home")]])
+  return _send(c,uid,"✅ گزارش ثبت و برای مدیریت ارسال شد.",[[("🏠 کلاب ناشناس","soc:home")]])
  raise ValueError("ورودی نامعتبر است")
 
 def admin_view(c,req):
@@ -878,7 +1012,7 @@ def admin_view(c,req):
    "geo_optins":c.execute("SELECT COUNT(*) FROM social_geo WHERE enabled=1").fetchone()[0]
   }
   metrics["rewards"]={k:c.execute("SELECT v FROM media_settings WHERE k=?",(k,)).fetchone()[0]
-      for k in (*DEFAULT_POINTS,"social_chat_retention_days")}
+      for k in (*DEFAULT_POINTS,*CHAT_COST_DEFAULTS,"social_chat_retention_days")}
   return metrics
  if mode=="users":
   rows=c.execute("""SELECT p.user_id,p.code,p.display_name,p.gender,p.age,p.province,p.interests,
