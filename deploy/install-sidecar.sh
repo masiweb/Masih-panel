@@ -24,6 +24,7 @@ install -m 0644 "$SIDE/MediaBroadcastSettings.tsx" "$SRC/src/pages/vpn/MediaBroa
 install -m 0644 "$SIDE/SocialAdminPage.tsx" "$SRC/src/pages/vpn/SocialAdminPage.tsx"
 install -m 0644 "$SIDE/ClubUserProfileModal.tsx" "$SRC/src/pages/vpn/ClubUserProfileModal.tsx"
 install -m 0644 "$SIDE/AiSalesAdminPage.tsx" "$SRC/src/pages/vpn/AiSalesAdminPage.tsx"
+install -m 0644 "$SIDE/BotTextsAdminPage.tsx" "$SRC/src/pages/vpn/BotTextsAdminPage.tsx"
 # The official 3x-ui frontend is rebuilt from a pinned source revision.
 # Inject media settings as an independent addon, never a native binary patch.
 python3 - "$SRC/src/pages/vpn/SalesBotPage.tsx" <<'PYMEDIA'
@@ -60,6 +61,7 @@ p.write_text(s)
 PYSOC
 python3 "$SIDE/patch_users_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
 python3 "$SIDE/patch_ai_sales_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
+python3 "$SIDE/patch_bot_texts_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys
 from pathlib import Path

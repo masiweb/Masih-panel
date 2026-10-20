@@ -709,6 +709,20 @@ def admin(req):
   if a=="get":
    safe={k:v for k,v in s.items() if k in DEFAULT and k not in ("token","merchant_id","ai_api_key")};safe["token_set"]=bool(s["token"]);safe["merchant_set"]=bool(s["merchant_id"]);safe["ai_api_key_set"]=bool(s.get("ai_api_key"))
    return {"settings":safe,"plans":plan_overview(c),"users":[dict(r) for r in c.execute("SELECT id,name,balance,blocked,reseller,phone,created FROM users ORDER BY created DESC LIMIT 500")],"orders":[dict(r) for r in c.execute("SELECT id,user_id,price,status,created FROM orders ORDER BY created DESC LIMIT 200")],"topups":[dict(r) for r in c.execute("SELECT * FROM topups ORDER BY id DESC LIMIT 200")],"coupons":[dict(r) for r in c.execute("SELECT * FROM coupons")],"tickets":[dict(r) for r in c.execute("SELECT * FROM tickets ORDER BY id DESC LIMIT 100")],"ledger":[dict(r) for r in c.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 200")],"runtime":{"heartbeat":s.get("heartbeat",0),"error":s.get("last_error",""),"username":s.get("bot_username","")},"payments":[dict(r) for r in c.execute("SELECT id,user_id,amount,status,ref,created FROM payments ORDER BY created DESC LIMIT 200")],"revenue":c.execute("SELECT COALESCE(SUM(price),0) FROM orders WHERE status='fulfilled'").fetchone()[0],"outbox_failed":[dict(r) for r in c.execute("SELECT id,chat,method,attempts FROM outbox WHERE done=-1 ORDER BY id DESC LIMIT 50")],"outbox_pending":c.execute("SELECT COUNT(*) FROM outbox WHERE done=0").fetchone()[0],"message_templates":{key:(c.execute("SELECT body FROM message_templates WHERE id=?",(key,)).fetchone() or {"body":default})["body"] for key,default in MESSAGE_DEFAULTS.items()},"message_defaults":MESSAGE_DEFAULTS,"loyalty":{"total_users_with_points":c.execute("SELECT COUNT(DISTINCT user_id) FROM loyalty_points").fetchone()[0],"total_awarded":c.execute("SELECT COALESCE(SUM(points),0) FROM loyalty_points WHERE points>0").fetchone()[0],"recent":[dict(r) for r in c.execute("SELECT user_id,points,kind,created FROM loyalty_points ORDER BY id DESC LIMIT 30")]},"media":{"total_music":c.execute("SELECT COUNT(*) FROM media_items WHERE kind='music' AND status='published'").fetchone()[0],"total_films":c.execute("SELECT COUNT(*) FROM media_items WHERE kind='film' AND status='published'").fetchone()[0],"playlists":c.execute("SELECT COUNT(*) FROM playlists WHERE removed=0").fetchone()[0],"field_points":c.execute("SELECT v FROM media_settings WHERE k='field_points'").fetchone()[0],"like_points":c.execute("SELECT v FROM media_settings WHERE k='like_points'").fetchone()[0], "social_rewards":{k:c.execute("SELECT v FROM media_settings WHERE k=?",(k,)).fetchone()[0] for k in __import__("social").DEFAULT_POINTS}, "broadcast_music":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_music'").fetchone()[0]),"broadcast_movie":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_movie'").fetchone()[0]),"broadcast_series":bool(c.execute("SELECT v FROM media_settings WHERE k='broadcast_series'").fetchone()[0]),"reports":[dict(r) for r in c.execute("SELECT r.id,r.media_id,r.reporter_id,r.reason,r.created,m.title FROM media_reports r JOIN media_items m ON m.id=r.media_id WHERE r.status='pending' ORDER BY r.id DESC LIMIT 40")]}}
+  if a=="text_catalog_get":
+   import bot_texts_admin as catalog
+   return catalog.listing(req)
+  if a=="text_catalog_update":
+   import bot_texts_admin as catalog
+   result=catalog.edit(req)
+   audit(c,"text_catalog_"+str(req.get("operation","save")),
+         str(req.get("kind",""))+":"+str(req.get("key",""))[:120])
+   return result
+  if a=="text_catalog_sync":
+   import bot_texts_admin as catalog
+   result=catalog.refresh_catalog()
+   audit(c,"text_catalog_sync","web")
+   return result
   if a=="social_admin":
    import social
    return social.admin_view(c,req)

@@ -85,8 +85,8 @@ echo "PASS: sales, named checkout, trials, Telegram and quota tests"
 # Check exact key shell scripts and source files required at deployment time.
 for f in runtime/manager.py runtime/unified.py runtime/worker.py runtime/sales.py \
          runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/runtime_config.py \
-         runtime/bot_texts.py runtime/bot_texts_export.py runtime/bot_texts.fa.json \
-         runtime/test_bot_texts_navigation.py \
+         runtime/bot_texts.py runtime/bot_texts_export.py runtime/bot_texts_admin.py runtime/bot_texts.fa.json \
+         runtime/test_bot_texts_navigation.py runtime/test_bot_texts_admin.py \
          runtime/vpn-account-hook.sh runtime/smoke_panel.py \
          runtime/test_sales.py runtime/test_media_library.py runtime/test_unified.py \
          deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/check-panel-login.py \
