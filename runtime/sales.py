@@ -2,6 +2,23 @@
 """Masiha sales: private local administration and durable Telegram commerce."""
 import contextlib, fcntl, hashlib, http.client, http.cookiejar, io, json, os, re, secrets, shlex, socket, sqlite3, subprocess, sys, time, urllib.request, urllib.error, urllib.parse, uuid, unicodedata
 from pathlib import Path
+from contextvars import ContextVar
+from bot_texts import rewrite_payload
+_NAV_CONTEXT=ContextVar('masiha_nav_context',default=None)
+def set_navigation_context(update):
+ q=update.get('callback_query') or {}
+ m=q.get('message') or {}
+ who=q.get('from') or {}
+ chat=m.get('chat') or {}
+ mid=m.get('message_id')
+ context=None
+ if (q and chat.get('type')=='private' and chat.get('id')==who.get('id')
+     and type(mid) is int and mid>0 and m.get('reply_markup')):
+  context={'chat':chat['id'],'id':mid,'editable':isinstance(m.get('text'),str),
+           'used':False}
+ return _NAV_CONTEXT.set(context)
+def reset_navigation_context(token):
+ _NAV_CONTEXT.reset(token)
 from runtime_config import DOMAIN, PUBLIC_PANEL_URL
 import gamification as loyalty
 BASE=Path(os.environ.get("MASIHA_SALES_DIR","/etc/masiha-vpn-extension/sales"))
@@ -128,7 +145,20 @@ def enqueue(c,chat,body,keys=None,key=None,quick_nav=True):
    ] if callback not in callbacks]
    if quick:buttons.append(quick)
  if buttons:p["reply_markup"]={"inline_keyboard":[[{"text":a,"callback_data":b} for a,b in row] for row in buttons]}
- c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(key or secrets.token_hex(12),chat,"sendMessage",json.dumps(p,ensure_ascii=False)))
+ nav=_NAV_CONTEXT.get()
+ method="sendMessage"
+ if nav and chat==nav["chat"] and not nav["used"] and key is None:
+  nav["used"]=True
+  if nav["editable"]:
+   method="editMessageText"
+   p["message_id"]=nav["id"]
+  else:
+   # Keep an existing media item, but hide stale action buttons.
+   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+     (secrets.token_hex(12),chat,"editMessageReplyMarkup",json.dumps(
+       {"chat_id":chat,"message_id":nav["id"],"reply_markup":{"inline_keyboard":[]}},
+       ensure_ascii=False)))
+ c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(key or secrets.token_hex(12),chat,method,json.dumps(p,ensure_ascii=False)))
 def needs_own_phone(user):
  """A Telegram user must have a saved own-contact phone when the gate is on."""
  return not user or not str(user["phone"] or "").strip()

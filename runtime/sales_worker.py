@@ -5,6 +5,7 @@ from sales_bot_admin import main as admin_menu, callback as admin_callback, inpu
 import entertainment
 import media_library
 import social
+from bot_texts import rewrite_payload
 def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
  if not p:raise ValueError("پلن موجود نیست")
@@ -141,7 +142,7 @@ def deliver(c,uid,sid):
   else:
    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",(secrets.token_hex(12),uid,"file",json.dumps({"filename":cfg["filename"],"content":cfg["content"]})))
    enqueue(c,uid,d.get("label",p["name"])+"\nفایل اختصاصی اتصال شما",rows)
-def handle(c,up):
+def _handle(c,up):
  s=settings(c);q=up.get("callback_query");m=q.get("message",{}) if q else up.get("message",{})
  who=q.get("from",{}) if q else m.get("from",{});uid=who.get("id")
  if not uid or m.get("chat",{}).get("type")!="private":return
@@ -578,6 +579,33 @@ def handle(c,up):
   else:vpn({"action":"delete","protocol":r["protocol"],"username":r["username"]})
   c.execute("UPDATE services SET deleted=1 WHERE id=?",(sid,));enqueue(c,uid,"حذف شد.")
  else:home(c,uid)
+def handle(c,up):
+ token=set_navigation_context(up)
+ try:
+  return _handle(c,up)
+ finally:
+  reset_navigation_context(token)
+
+def deliver_outbox_message(s,row,p):
+ """Deliver one Telegram method, falling back only for non-editable messages."""
+ method=row["method"]
+ if method=="editMessageText":
+  try:
+   return tg(s,method,rewrite_payload(p))
+  except urllib.error.HTTPError as exc:
+   if exc.code!=400:
+    raise
+   body=exc.read().decode("utf-8",errors="replace").lower()
+   if "message is not modified" in body:
+    return True
+   # Old media, old uneditable messages, etc. Never abandon navigation.
+   with contextlib.suppress(Exception):
+    tg(s,"editMessageReplyMarkup",{"chat_id":p["chat_id"],
+      "message_id":p["message_id"],"reply_markup":{"inline_keyboard":[]}})
+   fallback={k:v for k,v in p.items() if k!="message_id"}
+   return tg(s,"sendMessage",rewrite_payload(fallback))
+ return tg(s,method,rewrite_payload(p))
+
 def upload(s,chat,filename,content,photo=False):
  boundary="Masiha"+secrets.token_hex(12);field="photo" if photo else "document"
  body=("--"+boundary+'\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n'+str(chat)+"\r\n--"+boundary+'\r\nContent-Disposition: form-data; name="'+field+'"; filename="'+filename+'"\r\nContent-Type: application/octet-stream\r\n\r\n').encode()+content+("\r\n--"+boundary+"--\r\n").encode()
@@ -722,7 +750,7 @@ def tick():
     elif row["method"]=="qr":
      import qrcode
      buf=io.BytesIO();qrcode.make(p["text"]).save(buf,format="PNG");upload(s,row["chat"],"subscription.png",buf.getvalue(),True)
-    else:tg(s,row["method"],p)
+    else:deliver_outbox_message(s,row,p)
     c.execute("UPDATE outbox SET done=1,payload='{}' WHERE id=?",(row["id"],))
    except Exception:
     new_attempts=row["attempts"]+1
