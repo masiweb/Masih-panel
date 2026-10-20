@@ -82,7 +82,7 @@ def ai_answer(c,uid,question,update_id):
  if c.execute("SELECT 1 FROM ai_usage WHERE reference=?",(ref,)).fetchone():
   return enqueue(c,uid,"پاسخ این پیام قبلاً ثبت شده است.",[[("↩️ سرگرمی","fun")]])
  import ai_models
- if sub:
+ if sub or cfg.get("ai_default_text_model"):
   chosen=ai_models.resolved(c,uid,"text")
   answer=ai_models.text_response(c,chosen,question)
   label=chosen["model_id"]

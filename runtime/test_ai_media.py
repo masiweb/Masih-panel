@@ -22,6 +22,8 @@ class MediaTests(unittest.TestCase):
    sales.put(c,"ai_cost_video",25)
    sales.put(c,"ai_image_model","gpt-image-1-mini")
    sales.put(c,"ai_video_model","sora-2")
+   sales.put(c,"ai_provider_fal_key","EXAMPLE_FAL_KEY_123456")
+   sales.put(c,"ai_default_video_model","fal-wan")
    c.execute("INSERT INTO loyalty_points(user_id,points,kind,reference,created) VALUES(123,60,'test','fund',0)")
  def test_queue_image_and_debit_only_after_successful_send(self):
   with sales.conn() as c:
@@ -51,12 +53,12 @@ class MediaTests(unittest.TestCase):
     media.input_message(c,123,'ai:video:input',{'video':{'file_id':'f123','duration':11,'file_size':4000},'caption':'Edit color'},7003)
    media.input_message(c,123,'ai:video:input',{'text':'Create a cinematic ocean view'},7004)
    row=c.execute('SELECT * FROM ai_media_jobs WHERE update_id=7004').fetchone()
-   with patch.object(media,"_api",return_value=json.dumps({"id":"video_example_12345678"}).encode()) as call:
+   import ai_fal_video
+   with patch.object(ai_fal_video,"submit",return_value="1dd54e2a-1234-4aa4-b3fd-5ad511c00e4e") as call:
     kind,remote=media._provider_create(c,row,"test-key",sales.settings(c))
-    self.assertEqual(kind,'video')
-    self.assertEqual(remote,'video_example_12345678')
-    kw=call.call_args.kwargs
-    self.assertEqual(kw['multipart']['seconds'],"8")
+    self.assertEqual(kind,"video")
+    self.assertEqual(json.loads(remote)["model_key"],"fal-wan")
+    self.assertEqual(call.call_args.args[0],"fal-ai/wan/v2.2-a14b/text-to-video")
  def test_job_not_queued_without_media_admin_enable(self):
   with sales.conn() as c:
    sales.put(c,'ai_media_enabled',False)

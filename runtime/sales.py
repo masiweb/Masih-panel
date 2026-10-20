@@ -715,6 +715,7 @@ def admin(req):
   if a=="ai_model_catalog":
    import ai_models
    return {"models":ai_models.catalog(c),"providers":ai_models.credentials(c),
+           "defaults":{op:s.get("ai_default_"+op+"_model","") for op in ("text","image","video")},
            "cloudflare_account_set":bool(s.get("ai_provider_cloudflare_account"))}
   if a=="ai_provider_config":
    import ai_models

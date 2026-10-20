@@ -93,12 +93,12 @@ def resolved(c,uid,kind):
  cfg=settings(c)
  defaults={"text":"oa-mini","image":"oa-imgmini","video":""}
  key=cfg.get("ai_default_"+kind+"_model") or defaults[kind]
- if kind=="text":
+ if kind=="text" and not cfg.get("ai_default_text_model"):
   custom=cfg.get("ai_model","")
   found=c.execute("SELECT model_key FROM ai_provider_models WHERE model_id=? AND modality='text' AND provider='openai'",
     (custom,)).fetchone()
   if found:key=found[0]
- if kind=="image":
+ if kind=="image" and not cfg.get("ai_default_image_model"):
   found=c.execute("SELECT model_key FROM ai_provider_models WHERE model_id=? AND modality='image' AND provider='openai'",
     (cfg.get("ai_image_model",""),)).fetchone()
   if found:key=found[0]

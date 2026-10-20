@@ -35,6 +35,7 @@ export default function AiSalesAdminPage(){
    priceForm.setFieldsValue(costs||{});
    setProviderModels(registry?.models||[]);
    setProviderStates(registry?.providers||{});
+   providerForm.setFieldsValue(Object.fromEntries(['text','image','video'].map(op=>['ai_default_'+op+'_model',registry?.defaults?.[op]||''])));
   }
   catch(e){message.error(String(e));}
  };
@@ -88,6 +89,15 @@ export default function AiSalesAdminPage(){
      <Form.Item name="ai_provider_cloudflare_account" label="شناسه ۳۲ کاراکتری حساب Cloudflare">
        <Input placeholder="Cloudflare Account ID" dir="ltr" style={{minWidth:250}}/>
      </Form.Item>
+    </Space>
+    <Space wrap style={{display:'flex'}}>
+     {Object.entries(operationLabels).map(([op,label])=><Form.Item key={op}
+       name={'ai_default_'+op+'_model'} label={'مدل پیش‌فرض '+label+' (مدیر / بدون اشتراک)'}>
+       <Select allowClear showSearch optionFilterProp="label" placeholder="انتخاب مدل"
+        style={{minWidth:250}} options={providerModels.filter(m=>m.modality===op&&m.active).map(m=>({
+         value:m.model_key,label:(providerLabels[m.provider]||m.provider)+' / '+m.title
+        }))}/>
+      </Form.Item>)}
     </Space>
     <Button type="primary" htmlType="submit" loading={loading}>ذخیره امن کلیدها</Button>
    </Form>
