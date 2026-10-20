@@ -182,10 +182,10 @@ install -d -m 0700 /etc/x-ui /etc/masiha-vpn-extension /opt/masiha-vpn-extension
 # via systemd-run so final recovery survives panel service restarts.
 install -m 0644 "$REPO_ROOT/deploy/full-backup.py" /opt/masiha-vpn-extension/full_backup.py
 install -m 0644 "$REPO_ROOT/deploy/web-backup-worker.py" /opt/masiha-vpn-extension/web_backup_worker.py
-for file in manager.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py gamification.py entertainment.py media_library.py social.py audio_fingerprint.py ai_commerce.py ai_models.py ai_media.py ai_fal_video.py ai_conversation.py runtime_config.py; do
+for file in manager.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py gamification.py entertainment.py media_library.py social.py audio_fingerprint.py ai_commerce.py ai_models.py ai_media.py ai_fal_video.py ai_conversation.py runtime_config.py bot_texts.py bot_texts_export.py bot_texts.fa.json; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
 done
-for file in test_unified.py test_sales.py test_media_library.py test_rozmusic_importer.py test_rozmusic_upload.py roz_telegram_upload.py smoke_panel.py test_tunnels.py; do
+for file in test_unified.py test_sales.py test_media_library.py test_rozmusic_importer.py test_rozmusic_upload.py roz_telegram_upload.py smoke_panel.py test_tunnels.py test_bot_texts_navigation.py; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
 done
 # OpenConnect executes this route helper as a subprocess during QA. Installing
@@ -199,6 +199,8 @@ p=pathlib.Path('/etc/masiha-vpn-extension/config.json')
 p.write_text(json.dumps({'domain':sys.argv[1],'panel_path':sys.argv[2]},indent=2)+'\n')
 p.chmod(0o600)
 PY
+# Populate comprehensive editable text catalog; merge without erasing overrides.
+python3 /opt/masiha-vpn-extension/bot_texts_export.py /etc/masiha-vpn-extension/sales/bot_texts.fa.json
 # ACME HTTP-01 needs public TCP/80 and the DNS A record to target this host.
 # Domain was validated before performing any installation changes.
 systemctl enable --now nginx
