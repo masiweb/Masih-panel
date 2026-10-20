@@ -41,7 +41,7 @@ def home(c,uid):
  s=settings(c)
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  buttons=[
-  [("🛒 خرید جدید","plans"),("📦 اشتراک‌های من","services")],
+  [("🛒 خرید جدید","buynew"),("📦 اشتراک‌های من","services")],
   [("🤖 هوش مصنوعی","fun:ai")],
   [("🎵 موزیک","fun:music"),("🎬 فیلم","fun:film")],
   [("💬 کلاب چت ناشناس","soc:home")],
@@ -250,6 +250,14 @@ def handle(c,up):
  if body in ("کیف پول","💳 کیف پول"):cmd="wallet"
  if not q and not body.startswith("/start") and cmd not in ("home","fun","fun:points","wallet") and u["state"]:
   state=u["state"]
+  if state.startswith("ais:"):
+   import ai_commerce
+   ai_commerce.input_message(c,uid,state,m)
+   return
+  if state.startswith("aisadmin:"):
+   import ai_commerce
+   ai_commerce.admin_input(c,uid,state,body)
+   return
   if state.startswith("soc:"):
    social.input_text(c,uid,state,m,up["update_id"])
    return
@@ -258,6 +266,10 @@ def handle(c,up):
    return
   if state=="ai:chat":
    entertainment.ai_answer(c,uid,body,up["update_id"])
+   return
+  if state.startswith(("ai:image:","ai:video:")):
+   import ai_media
+   ai_media.input_message(c,uid,state,m,up["update_id"])
    return
   if state.startswith("a:"):
    admin_text(c,uid,state,body,up["update_id"])
@@ -358,6 +370,18 @@ def handle(c,up):
   # including when AI or media is opened directly from the main menu.
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   entertainment.callback(c,uid,cmd)
+ elif cmd=="buynew":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  enqueue(c,uid,"🛍 خرید اشتراک جدید",[
+   [("🤖 خرید اشتراک هوش مصنوعی","ais:home")],
+   [("🌐 خرید اشتراک VPN","plans")],
+   [("🏠 منوی اصلی","home")]])
+ elif cmd.startswith("aisadmin:"):
+  import ai_commerce
+  ai_commerce.admin_callback(c,uid,cmd)
+ elif cmd.startswith("ais:"):
+  import ai_commerce
+  ai_commerce.callback(c,uid,cmd)
  elif cmd.startswith("soc:"):
   social.callback(c,uid,cmd)
  elif cmd.startswith("med:"):

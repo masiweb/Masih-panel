@@ -23,6 +23,7 @@ install -m 0644 "$SIDE/masiha-vite.config.mjs" "$SRC/masiha-vite.config.mjs"
 install -m 0644 "$SIDE/MediaBroadcastSettings.tsx" "$SRC/src/pages/vpn/MediaBroadcastSettings.tsx"
 install -m 0644 "$SIDE/SocialAdminPage.tsx" "$SRC/src/pages/vpn/SocialAdminPage.tsx"
 install -m 0644 "$SIDE/ClubUserProfileModal.tsx" "$SRC/src/pages/vpn/ClubUserProfileModal.tsx"
+install -m 0644 "$SIDE/AiSalesAdminPage.tsx" "$SRC/src/pages/vpn/AiSalesAdminPage.tsx"
 # The official 3x-ui frontend is rebuilt from a pinned source revision.
 # Inject media settings as an independent addon, never a native binary patch.
 python3 - "$SRC/src/pages/vpn/SalesBotPage.tsx" <<'PYMEDIA'
@@ -58,6 +59,7 @@ s=s.replace("مدیریت مسیحا سوشال","مدیریت کلاب ناشن
 p.write_text(s)
 PYSOC
 python3 "$SIDE/patch_users_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
+python3 "$SIDE/patch_ai_sales_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys
 from pathlib import Path
@@ -86,6 +88,8 @@ if [[ -s "$ROOT/runtime/rozmusic_importer.py" &&
   install -m 0644 "$ROOT/runtime/roz_telegram_upload.py" /opt/masiha-vpn-extension/roz_telegram_upload.py
   install -m 0644 "$ROOT/runtime/rozmusic_importer.py" /opt/masiha-vpn-extension/rozmusic_importer.py
   install -m 0644 "$ROOT/runtime/audio_fingerprint.py" /opt/masiha-vpn-extension/audio_fingerprint.py
+  install -m 0644 "$ROOT/runtime/ai_commerce.py" /opt/masiha-vpn-extension/ai_commerce.py
+  install -m 0644 "$ROOT/runtime/ai_media.py" /opt/masiha-vpn-extension/ai_media.py
   install -m 0644 "$ROOT/deploy/masiha-rozmusic-import.service" /etc/systemd/system/masiha-rozmusic-import.service
 fi
 

@@ -29,26 +29,52 @@ def points(c,uid):
    [[("دعوت دوستان","referral"),("هوش مصنوعی","fun:ai")],
     [("↩️ سرگرمی","fun"),("🏠 منوی اصلی","home")]])
 
+def ai_menu(c,uid):
+ cfg=settings(c)
+ if not cfg["ai_enabled"] and uid not in cfg["admins"]:
+  return enqueue(c,uid,"🤖 سرویس هوش مصنوعی هنوز فعال نشده است.",
+     [[("🛒 خرید اشتراک داخل ربات","ais:list:bot")]])
+ import ai_commerce
+ ent=c.execute("""SELECT COALESCE(SUM(remaining_text),0),COALESCE(SUM(remaining_image),0),
+  COALESCE(SUM(remaining_video),0) FROM ai_sale_subscriptions
+  WHERE user_id=? AND expires>?""",(uid,now())).fetchone()
+ text=("🤖 هوش مصنوعی داخل ربات\n"+
+   "سهمیه فعال: متن "+str(ent[0] or 0)+" | تصویر "+str(ent[1] or 0)+
+   " | ویدیو "+str(ent[2] or 0)+"\n"+
+   "تعرفه هر درخواست موفق (بدون اشتراک): متن "+str(cfg.get("ai_cost_text",cfg["ai_cost"]))+
+   "، تصویر "+str(cfg["ai_cost_image"])+"، ویدیو "+str(cfg["ai_cost_video"])+" امتیاز")
+ buttons=[[("💬 گفتگو متنی","fun:ai:text")],
+   [("🖼 ساخت / ویرایش تصویر","fun:ai:image")],
+   [("🎬 ساخت / ویرایش ویدیو ≤۱۰ثانیه","fun:ai:video")],
+   [("🛒 خرید اشتراک داخل ربات","ais:list:bot")],
+   [("↩️ سرگرمی","fun")]]
+ return enqueue(c,uid,text,buttons)
+
 def ai_start(c,uid):
  cfg=settings(c)
  if not cfg["ai_enabled"] and uid not in cfg["admins"]:
   return enqueue(c,uid,"🤖 هوش مصنوعی در حال آماده‌سازی است. پس از ثبت تنظیمات API توسط مدیر فعال می‌شود.",
        [[("⭐ امتیازات من","fun:points"),("↩️ سرگرمی","fun")]])
- cost=cfg["ai_cost"]
- if uid not in cfg["admins"] and loyalty.balance(c,uid)<cost:
+ import ai_commerce
+ cost=cfg.get("ai_cost_text",cfg["ai_cost"])
+ has_sub=bool(ai_commerce.available(c,uid,"text"))
+ if uid not in cfg["admins"] and not has_sub and loyalty.balance(c,uid)<cost:
   return enqueue(c,uid,"برای استفاده از هوش مصنوعی "+str(cost)+" امتیاز لازم دارید. از خرید یا دعوت دوستان امتیاز بگیرید.",
        [[("⭐ امتیازات من","fun:points"),("دعوت دوستان","referral"),("↩️ سرگرمی","fun")]])
  c.execute("UPDATE users SET state='ai:chat' WHERE id=?",(uid,))
  enqueue(c,uid,"🤖 پرسش خود را در پیام بعدی ارسال کنید.\n"+
      ("✅ مدیر: بدون کسر امتیاز." if uid in cfg["admins"] else
+      "✅ از سهمیه اشتراک داخل ربات استفاده می‌شود." if has_sub else
       "هزینه هر پاسخ موفق: "+str(cost)+" امتیاز.")+
      " برای خروج «/start» را بفرستید.",[[("↩️ انصراف و بازگشت","fun")]])
 
 def ai_answer(c,uid,question,update_id):
  cfg=settings(c)
  if not cfg["ai_enabled"] and uid not in cfg["admins"]:raise ValueError("هوش مصنوعی موقتاً غیرفعال است")
- cost=integer(cfg["ai_cost"],1,10000)
- if uid not in cfg["admins"] and loyalty.balance(c,uid)<cost:
+ import ai_commerce
+ cost=integer(cfg.get("ai_cost_text",cfg["ai_cost"]),0,1000000000)
+ sub=bool(ai_commerce.available(c,uid,"text"))
+ if uid not in cfg["admins"] and not sub and loyalty.balance(c,uid)<cost:
   raise ValueError("امتیاز کافی برای استفاده از هوش مصنوعی ندارید")
  # Requests use an update-specific idempotency reference. The AI answer is
  # queued in the same SQLite transaction as the point debit.
@@ -56,8 +82,11 @@ def ai_answer(c,uid,question,update_id):
  if c.execute("SELECT 1 FROM ai_usage WHERE reference=?",(ref,)).fetchone():
   return enqueue(c,uid,"پاسخ این پیام قبلاً ثبت شده است.",[[("↩️ سرگرمی","fun")]])
  answer=loyalty.query_ai(cfg,question)
- charge=0 if uid in cfg["admins"] else cost
- if charge:loyalty.redeem(c,uid,charge,ref,now())
+ charge=0 if uid in cfg["admins"] else (0 if sub else cost)
+ if uid not in cfg["admins"] and sub:
+  if not ai_commerce.consume(c,uid,"text",ref):
+   raise ValueError("سهمیه اشتراک کافی نیست")
+ elif charge:loyalty.redeem(c,uid,charge,ref,now())
  c.execute("INSERT INTO ai_usage(user_id,reference,model,points,created) VALUES(?,?,?,?,?)",
           (uid,ref,cfg["ai_model"],charge,now()))
  audit(c,"ai_usage",str(uid)+":points:"+str(cost))
@@ -67,7 +96,11 @@ def ai_answer(c,uid,question,update_id):
 def callback(c,uid,cmd):
  if cmd=="fun":return menu(c,uid)
  if cmd=="fun:points":return points(c,uid)
- if cmd=="fun:ai":return ai_start(c,uid)
+ if cmd=="fun:ai":return ai_menu(c,uid)
+ if cmd=="fun:ai:text":return ai_start(c,uid)
+ if cmd in ("fun:ai:image","fun:ai:video"):
+  import ai_media
+  return ai_media.menu(c,uid,cmd.rsplit(":",1)[1])
  if cmd=="fun:music":return media_library.kind_menu(c,uid,"music")
  if cmd=="fun:film":return media_library.kind_menu(c,uid,"film")
  if cmd=="fun:game":

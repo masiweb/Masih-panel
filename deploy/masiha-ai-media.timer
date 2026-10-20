@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule independent AI image and video processing
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=25s
+AccuracySec=10s
+Persistent=true
+Unit=masiha-ai-media.service
+
+[Install]
+WantedBy=timers.target

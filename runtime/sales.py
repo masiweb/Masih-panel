@@ -33,7 +33,7 @@ def bot_message(c,key,**values):
  except (KeyError,ValueError,AttributeError,IndexError):
   return MESSAGE_DEFAULTS[key].format_map(values)
 
-DEFAULT={"enabled":False,"token":"","admins":[],"welcome":"به فروشگاه مسیحا خوش آمدید","support":"برای پشتیبانی پیام خود را ارسال کنید.","card":"","channel":"","require_contact":False,"buy":True,"renew":True,"wallet":True,"transfer":False,"trial":False,"referrals":False,"commission":5,"discounts":True,"notifications":True,"self_delete":False,"reseller":False,"reseller_discount":10,"trial_plan":0,"warning_days":3,"usage_warning_percent":10,"report_channel":"","bulk":False,"rename":True,"rotate":False,"new_user_notice":True,"zarinpal":False,"merchant_id":"","points_per_toman":100000,"points_per_purchase_unit":10,"points_per_referral":20,"ai_enabled":False,"ai_cost":5,"ai_api_url":"","ai_api_key":"","ai_model":""}
+DEFAULT={"enabled":False,"token":"","admins":[],"welcome":"به فروشگاه مسیحا خوش آمدید","support":"برای پشتیبانی پیام خود را ارسال کنید.","card":"","channel":"","require_contact":False,"buy":True,"renew":True,"wallet":True,"transfer":False,"trial":False,"referrals":False,"commission":5,"discounts":True,"notifications":True,"self_delete":False,"reseller":False,"reseller_discount":10,"trial_plan":0,"warning_days":3,"usage_warning_percent":10,"report_channel":"","bulk":False,"rename":True,"rotate":False,"new_user_notice":True,"zarinpal":False,"merchant_id":"","points_per_toman":100000,"points_per_purchase_unit":10,"points_per_referral":20,"ai_enabled":False,"ai_cost":5,"ai_cost_text":5,"ai_cost_image":50,"ai_cost_video":250,"ai_media_enabled":False,"ai_image_model":"gpt-image-1-mini","ai_video_model":"sora-2","ai_api_url":"","ai_api_key":"","ai_model":""}
 def now():return int(time.time())
 def conn():
  BASE.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -71,6 +71,10 @@ def conn():
  social.setup(c)
  import audio_fingerprint
  audio_fingerprint.setup(c)
+ import ai_commerce
+ ai_commerce.setup(c)
+ import ai_media
+ ai_media.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
  # Telegram usernames are optional and can change; update on later messages.
  if not any(col[1]=="telegram_username" for col in c.execute("PRAGMA table_info(users)")):
@@ -355,8 +359,10 @@ def save_settings(c,r):
     parsed=urllib.parse.urlparse(v)
     if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:
      raise ValueError("API هوش مصنوعی باید آدرس HTTPS عمومی باشد")
-  elif k=="ai_model":
+  elif k in ("ai_model","ai_image_model","ai_video_model"):
    v=text(v,100)
+   if k in ("ai_image_model","ai_video_model") and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{1,99}",v):
+    raise ValueError("نام مدل تصویر یا ویدیو معتبر نیست")
   elif k=="merchant_id":
    if not v:continue
    try:v=str(uuid.UUID(v))
@@ -689,6 +695,43 @@ def admin(req):
         json.dumps({"chat_id":destination,"photo":file_id})))
    audit(c,"social_admin_gallery",row["code"]+" | admin:"+str(destination))
    return {"count":len(files[:5])}
+  if a=="ai_sale_costs":
+   fields=("ai_cost_text","ai_cost_image","ai_cost_video","ai_media_enabled","ai_image_model","ai_video_model")
+   values=req.get("values")
+   if values is None:return {k:s[k] for k in fields}
+   if not isinstance(values,dict) or not values or set(values)-set(fields):raise ValueError("تنظیمات نامعتبر است")
+   for k,v in values.items():
+    if k.startswith("ai_cost_"):v=integer(v,0,1000000)
+    elif k=="ai_media_enabled":
+     if type(v) is not bool:raise ValueError("وضعیت نامعتبر است")
+    else:
+     v=text(v,90)
+     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{1,89}",v):raise ValueError("نام مدل نامعتبر است")
+    put(c,k,v)
+   audit(c,"ai_media_prices",",".join(sorted(values)))
+   return {k:settings(c)[k] for k in fields}
+  if a=="ai_sale_get":
+   import ai_commerce
+   return {"models":[dict(r) for r in c.execute("SELECT * FROM ai_sale_models ORDER BY id")],
+    "plans":ai_commerce.catalog(c),
+    "stock":[dict(r) for r in c.execute("""SELECT plan_id,COUNT(*) stock,
+     SUM(CASE WHEN order_id IS NULL THEN 1 ELSE 0 END) available
+     FROM ai_ready_stock GROUP BY plan_id""")],
+    "orders":[{k:r[k] for k in ("id","user_id","plan_id","email","status","created","reason")}
+     for r in c.execute("SELECT * FROM ai_sale_orders ORDER BY created DESC LIMIT 100")]}
+  if a=="ai_sale_model":
+   import ai_commerce
+   return {"id":ai_commerce.model(c,req.get("values",{}))}
+  if a=="ai_sale_plan":
+   import ai_commerce
+   return {"id":ai_commerce.plan(c,req.get("values",{}))}
+  if a=="ai_sale_stock":
+   import ai_commerce
+   return {"id":ai_commerce.stock(c,req.get("values",{}))}
+  if a=="ai_sale_decide":
+   import ai_commerce
+   ai_commerce.admin_decide(c,"web-admin",req.get("id"),req.get("decision"),req.get("reason",""))
+   return True
   if a=="social_adjust":
    import social
    return social.adjust_account(c,req.get("code"),req.get("operation"),

@@ -698,7 +698,7 @@ class Commerce(unittest.TestCase):
    sent=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=98765432 ORDER BY id DESC LIMIT 1").fetchone()["payload"])
    buttons=[b.get("callback_data") for row in sent["reply_markup"]["inline_keyboard"] for b in row]
    self.assertNotIn("trial",buttons)
-   self.assertIn("plans",buttons)
+   self.assertIn("buynew",buttons)
    with patch.object(w,"telegram_channel_member",return_value=True):
     w.handle(c,{"update_id":43212,"callback_query":{
      "from":{"id":98765432},"message":{"chat":{"id":98765432,"type":"private"}},"data":"plans"}})
@@ -1042,7 +1042,7 @@ class Commerce(unittest.TestCase):
    self.assertIn("approve:1",str(rows[1]["payload"]))
  def test_new_home_menu_exact_order_and_admin_only(self):
   expected=[
-    ["plans","services"],["fun:ai"],["fun:music","fun:film"],
+    ["buynew","services"],["fun:ai"],["fun:music","fun:film"],
     ["soc:home"],["points_discount"],["fun","support"],["wallet"]
   ]
   with s.conn() as c:
