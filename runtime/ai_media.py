@@ -36,8 +36,6 @@ def _cfg(c):
  config=sales.settings(c)
  if not config.get("ai_media_enabled"):
   raise ValueError("ساخت تصویر و ویدیو هنوز از سوی مدیر فعال نشده است")
- if not config.get("ai_api_key") or len(config["ai_api_key"])<12:
-  raise ValueError("برای تولید تصویر و ویدیو باید کلید API در پنل وب وارد شود")
  return config
 
 def _balance(c,uid,kind):
@@ -159,35 +157,34 @@ def _grab(c,file_id,kind):
   return path.read_bytes()
 
 def _provider_create(c,row,key,cfg):
+ import ai_models
+ model=ai_models.resolved(c,row["uid"],row["kind"])
+ vendor=model["provider"]
  prompt=row["prompt"]
  if row["kind"]=="image":
-  model=cfg["ai_image_model"]
+  if vendor=="cloudflare":
+   if row["file_id"]:raise ValueError("این مدل فقط ساخت تصویر را انجام می‌دهد؛ ویرایش تصویر به مدل OpenAI نیاز دارد")
+   return "image",ai_models.cloudflare_image(c,model,prompt)
+  if vendor!="openai":raise ValueError("این مدل توانایی تولید تصویر ندارد")
+  key=ai_models.provider_key(c,"openai")
   if row["file_id"]:
    data=_grab(c,row["file_id"],"image")
-   result=_api(key,"/images/edits",multipart={"model":model,"prompt":prompt,"image":("image/jpeg",data)},
-             limit=24_000_000,timeout=115)
+   result=_api(key,"/images/edits",multipart={"model":model["model_id"],
+    "prompt":prompt,"image":("image/jpeg",data)},limit=24_000_000,timeout=115)
   else:
-   result=_api(key,"/images/generations",data={"model":model,"prompt":prompt,"size":"1024x1024"},
-             limit=24_000_000,timeout=115)
+   result=_api(key,"/images/generations",data={"model":model["model_id"],
+    "prompt":prompt,"size":"1024x1024"},limit=24_000_000,timeout=115)
   payload=json.loads(result)
   encoded=payload["data"][0].get("b64_json")
   if not isinstance(encoded,str):raise ValueError("پاسخ تصویر فاقد فایل است")
-  image=base64.b64decode(encoded,validate=True)
-  if len(image)>MAX_MEDIA:raise ValueError("تصویر خروجی بیش از حد مجاز است")
-  return "image",image
- model=cfg["ai_video_model"]
- if row["file_id"]:
-  data=_grab(c,row["file_id"],"video")
-  result=_api(key,"/videos/edits",multipart={
-    "model":model,"prompt":prompt,"video":("video/mp4",data)},timeout=65)
- else:
-  result=_api(key,"/videos",multipart={
-    "model":model,"prompt":prompt,"size":"1280x720","seconds":str(VIDEO_SECONDS)},timeout=65)
- payload=json.loads(result)
- provider_id=payload.get("id")
- if not isinstance(provider_id,str) or not re.fullmatch(r"video_[A-Za-z0-9_-]{8,100}",provider_id):
-  raise ValueError("شناسه پروژه ویدیو نامعتبر است")
- return "video",provider_id
+  raw=base64.b64decode(encoded,validate=True)
+  if len(raw)>MAX_MEDIA:raise ValueError("تصویر خروجی بیش از حد مجاز است")
+  return "image",raw
+ if vendor!="fal":raise ValueError("برای ویدیو یک ارائه‌دهنده فعال انتخاب کنید")
+ if row["file_id"]:raise ValueError("ویدیوی ورودی در مدل انتخابی پشتیبانی نمی‌شود")
+ import ai_fal_video
+ request=ai_fal_video.submit(model["model_id"],ai_models.provider_key(c,"fal"),prompt)
+ return "video",json.dumps({"model_key":model["model_key"],"request_id":request})
 
 def _send_file(c,uid,kind,raw):
  import sales
@@ -224,7 +221,7 @@ def _after_delivery(c,row):
    if cost:loyalty.redeem(c,row["uid"],cost,ref,sales.now())
  else:cost=0
  c.execute("INSERT OR IGNORE INTO ai_usage(user_id,reference,model,points,created) VALUES(?,?,?,?,?)",
- (row["uid"],ref,cfg["ai_image_model" if kind=="image" else "ai_video_model"],cost,sales.now()))
+ (row["uid"],ref,__import__("ai_models").resolved(c,row["uid"],kind)["model_id"],cost,sales.now()))
  c.execute("UPDATE ai_media_jobs SET status='done',updated=? WHERE id=?",(sales.now(),row["id"]))
  sales.enqueue(c,row["uid"],"✅ "+("تصویر" if kind=="image" else "ویدیو")+
   " ارسال شد. "+("سهمیه اشتراک استفاده شد." if not cost else "امتیاز کسرشده: "+str(cost)),
@@ -237,12 +234,12 @@ def run_once():
     WHERE status IN ('queued','polling') ORDER BY id LIMIT 1""").fetchone()
   if not item:return "idle"
   cfg=sales.settings(c)
-  if not cfg.get("ai_media_enabled") or not cfg.get("ai_api_key"):return "media_disabled"
+  if not cfg.get("ai_media_enabled"):return "media_disabled"
   try:
    if item["status"]=="queued":
     if not _balance(c,item["uid"],item["kind"]):
      raise ValueError("امتیاز یا سهمیه کافی نیست")
-    type_,value=_provider_create(c,item,cfg["ai_api_key"],cfg)
+    type_,value=_provider_create(c,item,cfg.get("ai_api_key",""),cfg)
     if type_=="video":
      c.execute("UPDATE ai_media_jobs SET status='polling',provider_id=?,updated=? WHERE id=?",
        (value,sales.now(),item["id"]))
@@ -250,12 +247,14 @@ def run_once():
     _send_file(c,item["uid"],"image",value)
     _after_delivery(c,item)
     return "image_done"
-   video_id=item["provider_id"]
-   if not re.fullmatch(r"video_[A-Za-z0-9_-]{8,100}",video_id):raise ValueError("شناسه خروجی نامعتبر است")
-   payload=json.loads(_api(cfg["ai_api_key"],"/videos/"+video_id,timeout=35))
-   if payload.get("status") in ("queued","in_progress"):return "video_processing"
-   if payload.get("status")!="completed":raise ValueError("ساخت ویدیو توسط سرویس به پایان نرسید")
-   raw=_api(cfg["ai_api_key"],"/videos/"+video_id+"/content",limit=MAX_MEDIA,timeout=65)
+   import ai_models,ai_fal_video
+   info=json.loads(item["provider_id"])
+   model=ai_models.select(c,info["model_key"],"video")
+   if model["provider"]!="fal":raise ValueError("مدل ویدیوی صف نامعتبر است")
+   status,video_url=ai_fal_video.status(model["model_id"],
+     ai_models.provider_key(c,"fal"),info["request_id"])
+   if status=="pending":return "video_processing"
+   raw=ai_fal_video.download_video(video_url,MAX_MEDIA)
    _send_file(c,item["uid"],"video",raw)
    _after_delivery(c,item)
    return "video_done"
