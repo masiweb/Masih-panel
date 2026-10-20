@@ -34,9 +34,10 @@ class AssignmentTests(unittest.TestCase):
  def test_no_secret_leak_and_provider_route(self):
   with sales.conn() as c:
    sales.put(c,"ai_provider_google_key","EXAMPLE_TEST_KEY_123456")
-   reply=sales.admin({"action":"ai_model_catalog"})
-   self.assertTrue(reply["providers"]["google"])
-   self.assertNotIn("EXAMPLE_TEST_KEY_123456",str(reply))
+  reply=sales.admin({"action":"ai_model_catalog"})
+  self.assertTrue(reply["providers"]["google"])
+  self.assertNotIn("EXAMPLE_TEST_KEY_123456",str(reply))
+  with sales.conn() as c:
    with patch.object(ai_models,"_api_json",return_value={"choices":[{"message":{"content":"سلام"}}]}) as mock:
     value=ai_models.text_response(c,ai_models.select(c,"gg-lite","text"),"سلام")
     self.assertEqual(value,"سلام")
