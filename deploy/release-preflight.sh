@@ -61,7 +61,7 @@ grep -Fq "contact_onboarding_rollout_v2" runtime/sales_worker.py
 grep -Fq "request_missing_phones" runtime/sales.py
 grep -Fq "دریافت اجباری شماره حساب تلگرام" deploy/install-sidecar.sh
 
-(cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py test_rozmusic_fast.py)
+(cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py test_rozmusic_fast.py test_music_search_backfill.py)
 for f in runtime/audio_fingerprint.py runtime/test_audio_fingerprint.py
            do [[ -s "$f" ]] || { echo "Missing audio fingerprint: $f" >&2; exit 1; }; done
 for f in deploy/install-audio-fingerprint.sh deploy/masiha-audio-fingerprint.service deploy/masiha-audio-fingerprint.timer sidecar/test_dynamic_auth.py
@@ -76,7 +76,7 @@ python3 -m py_compile deploy/recover-start-prompts.py
 for f in runtime/social.py runtime/test_social.py sidecar/SocialAdminPage.tsx docs/MASIHA_SOCIAL_FA.md; do
  [[ -s "$f" ]] || { echo "Missing social feature: $f" >&2; exit 1; }
 done
-for f in runtime/roz_telegram_upload.py runtime/rozmusic_importer.py runtime/test_rozmusic_upload.py runtime/test_rozmusic_importer.py deploy/masiha-rozmusic-import.service; do
+for f in runtime/roz_telegram_upload.py runtime/rozmusic_importer.py runtime/roz_cover_backfill.py runtime/test_rozmusic_upload.py runtime/test_rozmusic_importer.py deploy/masiha-rozmusic-import.service; do
   [[ -s "$f" ]] || { echo "Missing Telegram audio import file: $f" >&2; exit 2; }
 done
 ! grep -q "VALUES(0,'music','link'" runtime/rozmusic_importer.py ||

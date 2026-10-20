@@ -175,7 +175,7 @@ def verified_storage_chat(settings):
     return admins[0]
 
 
-def stream_once(url, artist, title, settings, article_url=None):
+def stream_once(url, artist, title, settings, article_url=None, fingerprint_status=None):
     """Even on a failed transfer or interruption, remove the temporary MP3."""
     if not settings.get("token") or not settings.get("enabled"):
         raise RuntimeError("Bot is not enabled or its token is not configured")
@@ -187,11 +187,15 @@ def stream_once(url, artist, title, settings, article_url=None):
         # The temporary MP3 is available only here: persist a fingerprint,
         # never the original audio. An indexing failure must not lose media.
         if article_url:
+            indexed = False
             try:
                 import audio_fingerprint
-                audio_fingerprint.index_imported_source(article_url,path)
+                indexed = bool(audio_fingerprint.index_imported_source(article_url,path))
             except (ImportError,OSError,ValueError,RuntimeError,subprocess.SubprocessError):
                 pass
+            # Results are per-job: no global/thread-local status races.
+            if isinstance(fingerprint_status,list):
+                fingerprint_status.append(indexed)
         # Delete the *message* silently. file_id remains usable by the same bot,
         # as confirmed by real getFile check before full-archive activation.
         removed = delete_storage_message(settings, chat_id, response["message_id"])

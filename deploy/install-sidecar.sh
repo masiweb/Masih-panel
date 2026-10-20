@@ -89,6 +89,7 @@ if [[ -s "$ROOT/runtime/rozmusic_importer.py" &&
     { echo "Missing Telegram MP3 uploader" >&2; exit 1; }
   install -m 0644 "$ROOT/runtime/roz_telegram_upload.py" /opt/masiha-vpn-extension/roz_telegram_upload.py
   install -m 0644 "$ROOT/runtime/rozmusic_importer.py" /opt/masiha-vpn-extension/rozmusic_importer.py
+  install -m 0644 "$ROOT/runtime/roz_cover_backfill.py" /opt/masiha-vpn-extension/roz_cover_backfill.py
   install -m 0644 "$ROOT/runtime/audio_fingerprint.py" /opt/masiha-vpn-extension/audio_fingerprint.py
   install -m 0644 "$ROOT/runtime/ai_commerce.py" /opt/masiha-vpn-extension/ai_commerce.py
   install -m 0644 "$ROOT/runtime/ai_media.py" /opt/masiha-vpn-extension/ai_media.py

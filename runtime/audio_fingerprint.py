@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import quote
+from urllib.error import HTTPError
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 ROOT = Path("/var/lib/masiha-audio-fp")
@@ -217,7 +218,31 @@ def process_reference(c,row):
     mid=row["id"]
     with tempfile.TemporaryDirectory(prefix="masiha-fp-ref-",dir="/tmp") as d:
         path=Path(d)/"original.mp3"
-        download_telegram(c,row["file_id"],path,MAX_DOWNLOAD)
+        try:
+            download_telegram(c,row["file_id"],path,MAX_DOWNLOAD)
+        except (ValueError,OSError,TimeoutError,HTTPError) as original_error:
+            # Telegram Bot API file downloads are capped at ~20 MB.
+            # For catalog-owned licensed tracks only, recover their original
+            # authorized source in the short-lived scratch directory.
+            source=c.execute("""SELECT article_url FROM roz_catalog_sources
+                      WHERE media_id=? LIMIT 1""",(mid,)).fetchone()
+            if not source:
+                raise original_error
+            import rozmusic_importer as importer
+            import roz_telegram_upload as loader
+            parsed=importer.parse_article(importer.get(source["article_url"]))
+            if not parsed:
+                raise original_error
+            last=original_error
+            for link in [parsed["mp3"]]+parsed.get("mp3_fallbacks",[]):
+                try:
+                    loader.download_mp3(link,path)
+                    break
+                except (ValueError,OSError,TimeoutError,HTTPError) as e:
+                    last=e
+                    path.unlink(missing_ok=True)
+            else:
+                raise last
         index_audio(path,"m"+str(mid))
     c.execute("""INSERT INTO audio_fp_index(media_id,indexed,state,updated) VALUES(?,1,'done',?)
      ON CONFLICT(media_id) DO UPDATE SET indexed=1,state='done',error='',updated=excluded.updated""",
@@ -237,6 +262,13 @@ def run_once():
                 notify(c,item["user_id"],"⚠️ شناسایی صوتی این نمونه انجام نشد؛ با یک نمونه واضح‌تر دوباره امتحان کنید.",
                        dedupe="audio-fp:error:"+str(item["id"]))
             return "query_processed"
+        # Keep foreground voice queries usable throughout bulk import.
+        # Older catalog references are filled AFTER the primary upload queue.
+        exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='roz_catalog_queue'").fetchone()
+        if exists and c.execute("""SELECT 1 FROM roz_catalog_queue WHERE
+              state IN ('pending','processing') OR
+              (state='error' AND attempts<3) LIMIT 1""").fetchone():
+            return "waiting_for_catalog_import"
         media=c.execute("""SELECT m.id,m.file_id FROM media_items m
              LEFT JOIN audio_fp_index i ON i.media_id=m.id
              WHERE m.kind='music' AND m.status='published'

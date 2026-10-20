@@ -214,7 +214,7 @@ def kind_menu(c,uid,kind):
  send(c,uid,GENRE_LABEL[kind]+" | فایل را بفرستید یا فوروارد کنید.",
   [[("➕ ارسال رسانه","med:upload:"+kind),("🆕 آخرین ۲۰ مورد","med:latest:"+kind)],
    [("📂 رسانه‌های من","med:mine:"+kind),("📚 پلی‌لیست‌ها","med:lists:"+kind)],
-   [("🔎 جست‌وجو","med:search:"+kind),("🔥 برترین‌ها","med:top:"+kind)],
+   [("🔎 جست‌وجو","med:searchmenu:"+kind),("🔥 برترین‌ها","med:top:"+kind)],
    *([[("🎙 جستجوی صوتی موزیک","med:voicefind")]] if kind=="music" else []),
    [("🏆 برترین کاربران","med:leaders:"+kind),("↩️ سرگرمی","fun")]])
 
@@ -589,24 +589,43 @@ def leaders(c,uid,kind):
  send(c,uid,"🏆 برترین سازندگان پلی‌لیست\n"+(listing or "هنوز رتبه‌بندی موجود نیست"),
       [[("↩️ رسانه‌ها","med:"+kind)]])
 
-def search(c,uid,kind,term):
+def music_search_menu(c,uid):
+ send(c,uid,"🔎 روش جستجوی موزیک را انتخاب کنید:",
+  [[("🎵 بر اساس نام موزیک","med:searchfield:music:title"),
+    ("🎤 بر اساس خواننده","med:searchfield:music:artist")],
+   [("📝 بر اساس متن ترانه","med:searchfield:music:lyrics"),
+    ("🔎 جستجوی همه موارد","med:searchfield:music:all")],
+   [("🎙 جستجوی صوتی موزیک","med:voicefind")],
+   [("↩️ بازگشت به موزیک","med:music")]])
+
+def search(c,uid,kind,term,field="all"):
  term=clean(term,120)
  if len(term)<2:raise ValueError("عبارت جست‌وجو حداقل ۲ حرف باشد")
- # Escape user-provided SQL LIKE wildcards; bound parameter only.
+ if field not in ("all","title","artist","lyrics"):raise ValueError("نوع جستجوی موزیک معتبر نیست")
+ if kind!="music" and field!="all":raise ValueError("نوع جستجوی فیلم معتبر نیست")
  escaped=term.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")
  like="%"+escaped+"%"
- rows=c.execute("""SELECT * FROM media_items WHERE kind=? AND status='published'
-  AND (title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' OR actors LIKE ? ESCAPE '\\'
-       OR genre LIKE ? ESCAPE '\\' OR lyrics LIKE ? ESCAPE '\\' OR director LIKE ? ESCAPE '\\'
-       OR description LIKE ? ESCAPE '\\')
-  ORDER BY id DESC LIMIT 20""",(kind,*([like]*7))).fetchall()
- playlists=c.execute("""SELECT * FROM playlists WHERE kind=? AND removed=0 AND (private=0 OR owner_id=? OR EXISTS(
-   SELECT 1 FROM playlist_members WHERE playlist_id=playlists.id AND user_id=?))
+ if kind=="music" and field!="all":
+  # Fixed allowlist prevents user-controlled SQL identifiers.
+  fields={"title":"title","artist":"artist","lyrics":"lyrics"}
+  rows=c.execute("SELECT * FROM media_items WHERE kind=? AND status='published' AND "+
+    fields[field]+" LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT 20",(kind,like)).fetchall()
+  playlists=[]
+ else:
+  rows=c.execute("""SELECT * FROM media_items WHERE kind=? AND status='published'
+   AND (title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' OR actors LIKE ? ESCAPE '\\'
+    OR genre LIKE ? ESCAPE '\\' OR lyrics LIKE ? ESCAPE '\\' OR director LIKE ? ESCAPE '\\'
+    OR description LIKE ? ESCAPE '\\') ORDER BY id DESC LIMIT 20""",(kind,*([like]*7))).fetchall()
+  playlists=c.execute("""SELECT * FROM playlists WHERE kind=? AND removed=0 AND
+   (private=0 OR owner_id=? OR EXISTS(SELECT 1 FROM playlist_members
+      WHERE playlist_id=playlists.id AND user_id=?))
    AND name LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT 10""",(kind,uid,uid,like)).fetchall()
  buttons=[[(_media_summary(x)[:51],"med:play:"+str(x["id"]))] for x in rows]
  buttons += [[("📚 "+p["name"][:47],"med:pl:"+str(p["id"]))] for p in playlists]
- send(c,uid,"🔎 نتیجه جست‌وجو: "+term+"\n"+("چیزی پیدا نشد." if not buttons else str(len(buttons))+" مورد"),
-      buttons+[[("↩️ رسانه‌ها","med:"+kind)]])
+ return send(c,uid,"🔎 نتیجه جست‌وجو: "+term+"\n"+
+    ("چیزی پیدا نشد." if not buttons else str(len(buttons))+" مورد"),
+    buttons+[[(("↩️ روش‌های جستجو" if kind=="music" else "↩️ رسانه‌ها"),
+                "med:searchmenu:music" if kind=="music" else "med:"+kind)]])
 
 def callback(c,uid,cmd):
  parts=cmd.split(":")
@@ -626,6 +645,13 @@ def callback(c,uid,cmd):
             (parts[3],row["id"]))
   return _prompt(c,uid,c.execute("SELECT * FROM media_items WHERE id=?",
                                  (row["id"],)).fetchone())
+ if op=="searchmenu" and x=="music":
+  return music_search_menu(c,uid)
+ if op=="searchfield" and x=="music" and len(parts)==4 and parts[3] in ("title","artist","lyrics","all"):
+  _state(c,uid,"med:searchfield:music:"+parts[3])
+  label={"title":"نام موزیک","artist":"نام خواننده","lyrics":"بخشی از متن ترانه","all":"نام، خواننده یا بخشی از متن ترانه"}[parts[3]]
+  return send(c,uid,"🔎 "+label+" را وارد کنید.",
+    [[("↩️ روش‌های جستجو","med:searchmenu:music")]])
  if op=="voicefind":
   _state(c,uid,"med:voicefind")
   return send(c,uid,
@@ -642,6 +668,7 @@ def callback(c,uid,cmd):
  if op in ("plfeed","plmine","pltop") and x in FIELDS:
   return playlists(c,uid,x,{"plfeed":"feed","plmine":"mine","pltop":"top"}[op])
  if op=="leaders" and x in FIELDS:return leaders(c,uid,x)
+ if op=="search" and x=="music":return music_search_menu(c,uid)
  if op=="search" and x in FIELDS:
   _state(c,uid,"med:search:"+x)
   return send(c,uid,"🔎 نام، خواننده یا بخشی از متن را بنویسید.",
@@ -811,6 +838,11 @@ def text_input(c,uid,state,message,update_id):
   pid=int(parts[2]);_comment(c,uid,"playlist",pid,message.get("text",""))
   _state(c,uid,"")
   return comments(c,uid,"playlist",pid)
+ if op=="searchfield" and len(parts)==4 and parts[2]=="music":
+  field=parts[3]
+  if field not in ("title","artist","lyrics","all"):raise ValueError("فیلد جستجو نامعتبر است")
+  _state(c,uid,"")
+  return search(c,uid,"music",message.get("text",""),field)
  if op=="search":
   kind=parts[2];_state(c,uid,"")
   return search(c,uid,kind,message.get("text",""))

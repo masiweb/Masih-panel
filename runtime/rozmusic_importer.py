@@ -130,6 +130,9 @@ def database():
   imported INTEGER NOT NULL, updated INTEGER NOT NULL
  );
  """)
+ # Persist verified status per media ID, not just the audfprint data file.
+ import audio_fingerprint
+ audio_fingerprint.setup(c)
  c.execute("""INSERT OR IGNORE INTO users(id,name,balance,created)
               VALUES(0,'RozMusic Licensed Catalog',0,?)""",(int(time.time()),))
  # Reuse an existing PUBLIC all playlist created by the bot administrator.
@@ -212,6 +215,7 @@ def save(c,playlist_id,article_url,row,telegram_file_id,cover_id=""):
  c.execute("""INSERT INTO roz_catalog_sources(article_url,media_id,imported,updated)
    VALUES(?,?,?,?) ON CONFLICT(article_url) DO UPDATE SET media_id=excluded.media_id,
    updated=excluded.updated""",(article_url,mid,stamp,stamp))
+ return mid
 
 def rollback_legacy_links(c):
  """Old link-only imports must be requeued, never shown to listeners."""
@@ -281,10 +285,13 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
     else:
      sources=[data["mp3"]]+data.get("mp3_fallbacks",[])
      last_error=None
+     fp_status=[]
      for source in sources:
       try:
+       fp_status.clear()
        file_id,unique_id,size,deleted=telegram_upload.stream_once(
-           source,data["artist"],data["title"],cfg,article_url=url)
+           source,data["artist"],data["title"],cfg,article_url=url,
+           fingerprint_status=fp_status)
        break
       except (ValueError,HTTPError) as exc:
        # e.g. old 320kbps version is over 47MiB or no longer available.
@@ -302,7 +309,12 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
        cover_id=telegram_upload.upload_cover(data["cover"],cfg)
       except (ValueError,HTTPError,URLError,TimeoutError,OSError,RuntimeError) as cover_exc:
        print("COVER_RETRY_LATER",type(cover_exc).__name__,flush=True)
-     save(c,pid,url,data,file_id,cover_id)
+     mid=save(c,pid,url,data,file_id,cover_id)
+     if fp_status and fp_status[-1]:
+      c.execute("""INSERT INTO audio_fp_index(media_id,indexed,state,attempts,error,updated)
+           VALUES(?,1,'done',0,'',?) ON CONFLICT(media_id) DO UPDATE SET
+           indexed=1,state='done',attempts=0,error='',updated=excluded.updated""",
+          (mid,int(time.time())))
      c.execute("""UPDATE roz_catalog_queue SET state='done',last_error='',updated=?
                   WHERE url=?""",(int(time.time()),url))
      print("TELEGRAM_FILE_SAVED bytes",size,"TEMP_FILE_REMOVED yes",
@@ -390,6 +402,13 @@ def main():
    n=(run_parallel(c,pid,a.delay,a.workers)
       if a.workers>1 and a.max_posts==0 else run(c,pid,a.delay,a.max_posts))
    print("POSTS_PROCESSED_THIS_RUN",n,flush=True)
+   if a.max_posts==0 and not c.execute("""SELECT 1 FROM roz_catalog_queue
+        WHERE state IN ('pending','processing') OR
+        (state='error' AND attempts<3) LIMIT 1""").fetchone():
+    import roz_cover_backfill
+    print("COVER_BACKFILL_START",flush=True)
+    roz_cover_backfill.run(c,sales_settings=None,delay=a.delay)
+    print("COVER_BACKFILL_FINISHED",flush=True)
   print("CATALOG_STATUS",json.dumps(stats(c,pid)),flush=True)
  finally:c.close()
 
