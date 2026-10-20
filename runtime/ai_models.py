@@ -47,7 +47,8 @@ def setup(c):
    c.execute("ALTER TABLE ai_sale_plans ADD COLUMN model_"+op+" TEXT NOT NULL DEFAULT ''")
 def credentials(c):
  s=settings(c)
- return {p:bool(s.get(KEY_FIELDS[p]) or (p=="openai" and s.get("ai_api_key"))) for p in PROVIDERS}
+ return {p:bool(s.get(KEY_FIELDS[p]) or (p=="openai" and s.get("ai_api_key")))
+         and (p!="cloudflare" or bool(s.get("ai_provider_cloudflare_account"))) for p in PROVIDERS}
 def catalog(c):
  cred=credentials(c)
  return [dict(r,configured=cred.get(r["provider"],False))

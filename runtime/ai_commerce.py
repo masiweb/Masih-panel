@@ -125,6 +125,15 @@ def choose(c,uid,pid):
  if not p or not p["active"] or not p["model_active"]:raise ValueError("این پلن در دسترس نیست")
  if p["kind"]=="ready" and not c.execute("SELECT 1 FROM ai_ready_stock WHERE plan_id=? AND order_id IS NULL",(pid,)).fetchone():
   raise ValueError("موجودی ایمیل آماده این پلن تمام شده است")
+ if p["kind"]=="bot":
+  import ai_models
+  connected=ai_models.credentials(c)
+  for op in OPS:
+   chosen=p["model_"+op]
+   if p["credits_"+op] and chosen:
+    model=ai_models.select(c,chosen,op)
+    if not connected.get(model["provider"],False):
+     raise ValueError("مدل "+op+" هنوز کلید API فعال ندارد؛ برای خرید با مدیر تماس بگیرید")
  ident="ai-"+secrets.token_hex(12)
  c.execute("""INSERT INTO ai_sale_orders(id,user_id,plan_id,plan_snapshot,created,updated)
  VALUES(?,?,?,?,?,?)""",(ident,uid,pid,json.dumps(dict(p),ensure_ascii=False),now(),now()))

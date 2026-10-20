@@ -24,6 +24,10 @@ class AssignmentTests(unittest.TestCase):
    plan=ai_commerce.plan(c,{"name":"Hybrid","kind":"bot","model_id":family,
     "price":15000,"days":30,"credits_text":20,"credits_image":4,"credits_video":2,
     "model_text":"gg-lite","model_image":"cf-flux","model_video":"fal-wan"})
+   with self.assertRaises(ValueError):ai_commerce.choose(c,77,plan)
+   for key in ('google','cloudflare','fal'):
+    sales.put(c,'ai_provider_'+key+'_key','TEST_KEY_'+key+'_0123456789')
+   sales.put(c,'ai_provider_cloudflare_account','a'*32)
    oid=ai_commerce.choose(c,77,plan)
    c.execute("""INSERT INTO ai_sale_subscriptions(order_id,user_id,expires,
     remaining_text,remaining_image,remaining_video,created)
