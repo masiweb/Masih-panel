@@ -1,11 +1,30 @@
 #!/usr/bin/python3
 """Resume-safe after-catalog cover migration. Do not duplicate audio or broadcasts."""
+import html
+import re
 import sqlite3
 import time
 from urllib.error import HTTPError,URLError
 
 import rozmusic_importer as music
 import roz_telegram_upload as uploader
+
+def cover_from_page(source_html):
+    """Find a trusted picture independently of MP3 availability on old pages."""
+    if not isinstance(source_html,str):
+        return ""
+    # Original article thumbnail first, then social sharing image.
+    candidate_patterns=(
+        r'<img\b[^>]*?data-src=["\x27]([^"\x27]+)["\x27]',
+        r'<meta\b[^>]*property=["\x27]og:image["\x27][^>]*content=["\x27]([^"\x27]+)["\x27]',
+    )
+    for pattern in candidate_patterns:
+        for candidate in re.findall(pattern,source_html,re.I):
+            try:
+                return uploader.validate_cover_url(html.unescape(candidate))
+            except ValueError:
+                continue
+    return ""
 
 def setup(c):
  c.execute("""CREATE TABLE IF NOT EXISTS roz_cover_backfill (
@@ -39,8 +58,7 @@ def run(c,sales_settings=None,delay=0.6,max_items=0):
   if not item or (max_items and total>=max_items):break
   mid=item["id"]
   try:
-   data=music.parse_article(music.get(item["article_url"]))
-   cover=data.get("cover") if data else ""
+   cover=cover_from_page(music.get(item["article_url"]))
    if not cover:
     c.execute("""INSERT INTO roz_cover_backfill(media_id,attempts,state,last_error,updated)
        VALUES(?,3,'skipped','no_cover',?) ON CONFLICT(media_id) DO UPDATE SET

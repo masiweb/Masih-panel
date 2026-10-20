@@ -40,6 +40,14 @@ class MusicFeatures(unittest.TestCase):
   media.callback(self.c,self.uid,"med:searchfield:music:lyrics")
   media.text_input(self.c,self.uid,"med:searchfield:music:lyrics",{"text":"مهتاب"},100)
   self.assertEqual(self.c.execute("SELECT state FROM users WHERE id=?",(self.uid,)).fetchone()[0],"")
+ def test_cover_recovery_when_old_audio_links_are_missing(self):
+  page='<h1>آهنگ قدیمی</h1><meta property="og:image" content="https://rozmusic.com/wp-content/uploads/old-cover.jpg">'
+  self.assertIsNone(importer.parse_article(page))
+  self.assertEqual(covers.cover_from_page(page),
+      "https://rozmusic.com/wp-content/uploads/old-cover.jpg")
+  self.assertEqual(covers.cover_from_page("<html>بدون تصویر</html>"),"")
+  self.assertEqual(covers.cover_from_page('<img data-src="https://evil.example.com/cover.jpg">'),"")
+
  def test_backfill_respects_import_and_is_idempotent(self):
   mid=self.item()
   self.c.execute("INSERT INTO roz_catalog_queue(url,state) VALUES(?,'pending')",("https://rozmusic.com/new.html",))
