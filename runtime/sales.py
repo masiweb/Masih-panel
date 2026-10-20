@@ -84,6 +84,8 @@ def conn():
  ai_models.setup(c)
  import ai_media
  ai_media.setup(c)
+ import ai_conversation
+ ai_conversation.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
  # Telegram usernames are optional and can change; update on later messages.
  if not any(col[1]=="telegram_username" for col in c.execute("PRAGMA table_info(users)")):

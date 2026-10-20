@@ -62,13 +62,18 @@ def ai_start(c,uid):
   return enqueue(c,uid,"برای استفاده از هوش مصنوعی "+str(cost)+" امتیاز لازم دارید. از خرید یا دعوت دوستان امتیاز بگیرید.",
        [[("⭐ امتیازات من","fun:points"),("دعوت دوستان","referral"),("↩️ سرگرمی","fun")]])
  c.execute("UPDATE users SET state='ai:chat' WHERE id=?",(uid,))
- enqueue(c,uid,"🤖 پرسش خود را در پیام بعدی ارسال کنید.\n"+
+ import ai_conversation
+ count=c.execute("SELECT COUNT(*) FROM ai_chat_history WHERE user_id=?",(uid,)).fetchone()[0]
+ enqueue(c,uid,"🤖 پرسش خود را در پیام بعدی ارسال کنید.\n"
+     + ("🧠 گفتگوهای قبلی شما در ادامه پاسخ‌ها لحاظ می‌شود. پیام‌های ذخیره‌شده: "+str(count)+"\n" if count else
+        "🧠 از این سؤال به بعد سابقه مکالمه شما حفظ می‌شود.\n") +
+
      ("✅ مدیر: بدون کسر امتیاز." if uid in cfg["admins"] else
       "✅ از سهمیه اشتراک داخل ربات استفاده می‌شود." if has_sub else
       "هزینه هر پاسخ موفق: "+str(cost)+" امتیاز.")+
      " برای خروج «/start» را بفرستید.",[[("↩️ انصراف و بازگشت","fun")]])
 
-def ai_answer(c,uid,question,update_id):
+def ai_answer(c,uid,question,update_id,long_choice=None):
  cfg=settings(c)
  if not cfg["ai_enabled"] and uid not in cfg["admins"]:raise ValueError("هوش مصنوعی موقتاً غیرفعال است")
  import ai_commerce
@@ -76,19 +81,34 @@ def ai_answer(c,uid,question,update_id):
  sub=bool(ai_commerce.available(c,uid,"text"))
  if uid not in cfg["admins"] and not sub and loyalty.balance(c,uid)<cost:
   raise ValueError("امتیاز کافی برای استفاده از هوش مصنوعی ندارید")
- # Requests use an update-specific idempotency reference. The AI answer is
- # queued in the same SQLite transaction as the point debit.
+ import ai_conversation
+ question=(question or "").strip()
+ if not question or len(question)>1600:
+  raise ValueError("سؤال باید بین ۱ تا ۱۶۰۰ کاراکتر باشد")
+ # Requests use an update-specific idempotency reference. Duplicated
+ # callback/update delivery cannot charge again or create another offer.
  ref="ai:"+str(update_id)
  if c.execute("SELECT 1 FROM ai_usage WHERE reference=?",(ref,)).fetchone():
-  return enqueue(c,uid,"پاسخ این پیام قبلاً ثبت شده است.",[[("↩️ سرگرمی","fun")]])
+  return enqueue(c,uid,"✅ پاسخ این پیام قبلاً ثبت شده است.",
+     [[("💬 ادامه گفتگو","fun:ai:text")]])
+ # Don't call the provider (or debit credit) before the customer consents
+ # to the longer, file-based format.
+ if long_choice is None and ai_conversation.is_long(question):
+  return ai_conversation.offer(c,uid,question,update_id)
+ history=ai_conversation.previous(c,uid)
  import ai_models
+ expanded=bool(long_choice)
  if sub or cfg.get("ai_default_text_model"):
   chosen=ai_models.resolved(c,uid,"text")
-  answer=ai_models.text_response(c,chosen,question)
+  answer=ai_models.text_response(c,chosen,question,history=history,expanded=expanded)
   label=chosen["model_id"]
  else:
-  answer=loyalty.query_ai(cfg,question)
+  answer=loyalty.query_ai(cfg,question,history=history,expanded=expanded)
   label=cfg["ai_model"]
+ # Build both files before charging points/quota. Generation errors must
+ # not charge the customer or remove the pending confirmation.
+ if expanded:
+  ai_conversation.queue_files(c,uid,answer,ref)
  charge=0 if uid in cfg["admins"] else (0 if sub else cost)
  if uid not in cfg["admins"] and sub:
   if not ai_commerce.consume(c,uid,"text",ref):
@@ -97,14 +117,27 @@ def ai_answer(c,uid,question,update_id):
  c.execute("INSERT INTO ai_usage(user_id,reference,model,points,created) VALUES(?,?,?,?,?)",
           (uid,ref,label,charge,now()))
  audit(c,"ai_usage",str(uid)+":points:"+str(cost))
- enqueue(c,uid,"🤖 "+answer+"\n\n⭐ امتیاز باقی‌مانده: "+str(loyalty.balance(c,uid)),
-         [[("سؤال بعدی","fun:ai"),("↩️ سرگرمی","fun")]],key="ai-response:"+str(update_id))
+ ai_conversation.record(c,uid,question,answer,label,ref)
+ if long_choice is not None:
+  c.execute("DELETE FROM ai_long_requests WHERE user_id=? AND update_id=?",(uid,update_id))
+ if expanded:
+  enqueue(c,uid,"✅ پاسخ کامل آماده شد و در دو فایل PDF و TXT ارسال می‌شود.\n"
+   "⭐ امتیاز باقی‌مانده: "+str(loyalty.balance(c,uid)),
+   [[("💬 ادامه گفتگو","fun:ai:text"),("🗑 پاک‌کردن سابقه","fun:ai:clear")]],
+   key="ai-response:"+str(update_id),quick_nav=False)
+ else:
+  enqueue(c,uid,"🤖 "+answer+"\n\n⭐ امتیاز باقی‌مانده: "+str(loyalty.balance(c,uid)),
+   [[("💬 ادامه گفتگو","fun:ai:text"),("🗑 پاک‌کردن سابقه","fun:ai:clear"),
+     ("↩️ سرگرمی","fun")]],key="ai-response:"+str(update_id))
 
 def callback(c,uid,cmd):
  if cmd=="fun":return menu(c,uid)
  if cmd=="fun:points":return points(c,uid)
  if cmd=="fun:ai":return ai_menu(c,uid)
  if cmd=="fun:ai:text":return ai_start(c,uid)
+ if cmd=="fun:ai:clear":
+  import ai_conversation
+  return ai_conversation.clear(c,uid)
  if cmd in ("fun:ai:image","fun:ai:video"):
   import ai_media
   return ai_media.menu(c,uid,cmd.rsplit(":",1)[1])

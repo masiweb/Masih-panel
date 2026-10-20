@@ -127,7 +127,7 @@ def _cloudflare_base(c):
  if not re.fullmatch(r"[a-fA-F0-9]{32}",account):
   raise ValueError("شناسه حساب Cloudflare تنظیم نشده است")
  return "https://api.cloudflare.com/client/v4/accounts/"+account+"/ai"
-def text_response(c,model,prompt):
+def text_response(c,model,prompt,history=None,expanded=False):
  provider=model["provider"]
  if provider not in ("openai","google","groq","cloudflare"):
   raise ValueError("ارائه‌دهنده برای پاسخ متنی پشتیبانی نمی‌شود")
@@ -137,16 +137,20 @@ def text_response(c,model,prompt):
   "groq":"https://api.groq.com/openai/v1/chat/completions",
  }
  url=(_cloudflare_base(c)+"/v1/chat/completions" if provider=="cloudflare" else endpoints[provider])
- payload={"model":model["model_id"],"messages":[
-  {"role":"system","content":"You are a helpful Persian assistant. Never solicit passwords or secrets."},
-  {"role":"user","content":prompt[:1600]}]}
- if provider=="openai":payload["max_completion_tokens"]=420
- else:payload["max_tokens"]=420
+ instructions=("You are a helpful Persian assistant. Never solicit passwords or secrets. "
+   "Maintain continuity with the provided conversation context. "
+   "If the user requests a detailed report, write a complete structured response with sections "
+   "and clear examples. Do not pretend to have created attachments or links.")
+ payload={"model":model["model_id"],"messages":[{"role":"system","content":instructions}]
+          +list(history or [])+[{"role":"user","content":prompt[:1600]}]}
+ cap=4200 if expanded else 650
+ if provider=="openai":payload["max_completion_tokens"]=cap
+ else:payload["max_tokens"]=cap
  answer=_api_json(url,provider_key(c,provider),payload)
  try:response=answer["choices"][0]["message"]["content"]
  except (KeyError,IndexError,TypeError):raise ValueError("پاسخ متنی ارائه‌دهنده نامعتبر است") from None
  if not isinstance(response,str) or not response.strip():raise ValueError("پاسخ متنی نامعتبر است")
- return response[:3500]
+ return response[:18000 if expanded else 3500]
 def cloudflare_image(c,model,prompt):
  if model["provider"]!="cloudflare":raise ValueError("این مدل Cloudflare نیست")
  endpoint=_cloudflare_base(c)+"/run/"+quote(model["model_id"],safe="/@-_.")

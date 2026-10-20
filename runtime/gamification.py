@@ -94,7 +94,7 @@ def _is_public_host(url):
   if not ip.is_global:raise ValueError("AI API must resolve only to public IP addresses")
  return url
 
-def query_ai(config,prompt):
+def query_ai(config,prompt,history=None,expanded=False):
  """OpenAI-compatible Chat Completions endpoint. API key never enters Telegram."""
  url=_is_public_host(config["ai_api_url"])
  if not url.rstrip("/").endswith("/chat/completions"):
@@ -103,9 +103,15 @@ def query_ai(config,prompt):
   raise ValueError("اتصال هوش مصنوعی هنوز از پنل مدیریت تنظیم نشده است")
  if not isinstance(prompt,str) or not 1<=len(prompt.strip())<=1600:
   raise ValueError("پیام باید بین ۱ تا ۱۶۰۰ کاراکتر باشد")
- data=json.dumps({"model":config["ai_model"],"messages":[
-  {"role":"system","content":"You are a concise, safe Persian-language assistant. Do not request secrets."},
-  {"role":"user","content":prompt.strip()}],"max_tokens":350}).encode()
+ prompt_messages=[{"role":"system","content":(
+   "You are a helpful Persian assistant. Use the available conversation history to answer "
+   "follow-up questions accurately. Do not request passwords or secrets. "
+   "For detailed reports, respond thoroughly with clear sections and examples." if expanded
+   else "You are a helpful Persian-language assistant. Consider the prior dialogue; do not request secrets.")}]
+ prompt_messages.extend(history or [])
+ prompt_messages.append({"role":"user","content":prompt.strip()})
+ data=json.dumps({"model":config["ai_model"],"messages":prompt_messages,
+                   "max_tokens":4200 if expanded else 650}).encode()
  req=urllib.request.Request(url,data=data,headers={
   "Authorization":"Bearer "+config["ai_api_key"],
   "Content-Type":"application/json",
@@ -120,10 +126,10 @@ def query_ai(config,prompt):
  try:
   with opener.open(req,timeout=30) as reply:
    if reply.status!=200:raise ValueError("سرویس هوش مصنوعی موقتاً در دسترس نیست")
-   payload=json.loads(reply.read(50000))
+   payload=json.loads(reply.read(150000))
    answer=payload["choices"][0]["message"]["content"]
    if not isinstance(answer,str) or not answer.strip():raise ValueError("پاسخ هوش مصنوعی نامعتبر است")
-   return answer[:3500]
+   return answer[:18000 if expanded else 3500]
  except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,KeyError,IndexError,ValueError,TypeError) as exc:
   # Deliberately avoid leaking provider response/API key into Telegram.
   raise ValueError("ارتباط با سرویس هوش مصنوعی موفق نبود؛ امتیازی کسر نشد") from None

@@ -164,6 +164,17 @@ def handle(c,up):
  if u["blocked"]:return
  # Immutable random public ID exists from first contact with the bot.
  social.profile(c,uid)
+ # Notify each configured admin immediately upon FIRST contact, even if the
+ # newcomer has not joined the channel or supplied their Telegram phone.
+ # The outbox key is unique per admin and user, so /start retries are silent.
+ if new and s["new_user_notice"]:
+  for aid in s["admins"]:
+   enqueue(c,aid,"👤 کاربر جدید ربات\n"
+    "نام: "+str(who.get("first_name") or "بدون نام")[:80]+"\n"
+    "شناسه تلگرام: "+str(uid)+"\n"
+    "نام کاربری: "+("@"+str(who["username"])[:32] if who.get("username") else "ثبت نشده")+
+    "\nوضعیت: ثبت اولیه؛ عضویت کانال و شماره تلفن هنوز ممکن است تأیید نشده باشند.",
+    key="new-user:"+str(uid)+":"+str(aid),quick_nav=False)
  if body.startswith("/start soc_"):
   with contextlib.suppress(ValueError):
    social.by_code(c,body.split("soc_",1)[1].strip().split()[0])
@@ -226,8 +237,6 @@ def handle(c,up):
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   with contextlib.suppress(ValueError):
    if social.invite_start(c,uid,"/start soc_"+invite):return
- if new and s["new_user_notice"]:
-  for aid in s["admins"]:enqueue(c,aid,"عضو جدید: "+str(uid)+" / "+who.get("first_name",""))
  # Private playlist invitations are resolved only after mandatory channel/
  # contact onboarding has succeeded, and are scoped to the invitee.
  if not q and social.invite_start(c,uid,body):
@@ -367,6 +376,13 @@ def handle(c,up):
    ref="transfer:"+str(up["update_id"])
    money(c,uid,-amount,"transfer",ref+":out");money(c,target,amount,"transfer",ref+":in")
    c.execute("UPDATE users SET state='' WHERE id=?",(uid,));enqueue(c,uid,"انتقال انجام شد.");enqueue(c,target,"اعتبار دریافتی: "+str(amount)+" تومان");return
+ if cmd=="ai:clear":
+  import ai_conversation
+  return ai_conversation.clear(c,uid)
+ if cmd.startswith("ai:export:"):
+  import ai_conversation
+  question,original_update_id,wants_file=ai_conversation.consume_offer(c,uid,cmd)
+  return entertainment.ai_answer(c,uid,question,original_update_id,long_choice=wants_file)
  if cmd.startswith("/start") or cmd=="home":
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   home(c,uid)
@@ -693,11 +709,16 @@ def tick():
     WHERE o.done=0 AND o.next_try<=? AND
        (?=0 OR (u.id>0 AND TRIM(COALESCE(u.phone,''))<>'')
         OR o.dedupe LIKE 'phone-gate:%'
-        OR o.dedupe LIKE 'channel-gate:%')
+        OR o.dedupe LIKE 'channel-gate:%'
+        OR o.dedupe LIKE 'new-user:%')
     ORDER BY o.id LIMIT 15""",(now(),int(bool(s["require_contact"])))).fetchall():
    try:
     p=json.loads(row["payload"])
     if row["method"]=="file":upload(s,row["chat"],p["filename"],p["content"].encode())
+    elif row["method"]=="file_b64":
+     data=base64.b64decode(p["data"],validate=True)
+     if len(data)>12_000_000:raise ValueError("Document exceeds the approved size")
+     upload(s,row["chat"],p["filename"],data)
     elif row["method"]=="qr":
      import qrcode
      buf=io.BytesIO();qrcode.make(p["text"]).save(buf,format="PNG");upload(s,row["chat"],"subscription.png",buf.getvalue(),True)
