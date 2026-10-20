@@ -69,6 +69,8 @@ for f in deploy/install-audio-fingerprint.sh deploy/masiha-audio-fingerprint.ser
 grep -Fq "audio_fingerprint.py" deploy/install-ubuntu-24.04.sh
 python3 -m unittest -q runtime/test_audio_fingerprint.py
 python3 -m unittest -q runtime/test_ai_commerce.py runtime/test_ai_media.py
+python3 -m unittest -q runtime/test_ai_models.py
+for f in runtime/ai_models.py runtime/ai_fal_video.py; do [[ -s "$f" ]] || exit 1; done
 for f in runtime/social.py runtime/test_social.py sidecar/SocialAdminPage.tsx docs/MASIHA_SOCIAL_FA.md; do
  [[ -s "$f" ]] || { echo "Missing social feature: $f" >&2; exit 1; }
 done

@@ -1,0 +1,24 @@
+name: AI model routing regression
+on:
+  push:
+    branches:
+      - feature/ai-multimodel-subscriptions
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile changed runtime modules
+        run: python -m compileall -q runtime/ai_models.py runtime/ai_fal_video.py runtime/ai_commerce.py runtime/entertainment.py runtime/ai_media.py runtime/sales.py
+      - name: Run offline commerce and provider tests
+        run: cd runtime && python -m unittest -q test_ai_models.py test_ai_commerce.py test_ai_media.py

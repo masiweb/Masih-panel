@@ -90,6 +90,8 @@ if [[ -s "$ROOT/runtime/rozmusic_importer.py" &&
   install -m 0644 "$ROOT/runtime/audio_fingerprint.py" /opt/masiha-vpn-extension/audio_fingerprint.py
   install -m 0644 "$ROOT/runtime/ai_commerce.py" /opt/masiha-vpn-extension/ai_commerce.py
   install -m 0644 "$ROOT/runtime/ai_media.py" /opt/masiha-vpn-extension/ai_media.py
+  install -m 0644 "$ROOT/runtime/ai_models.py" /opt/masiha-vpn-extension/ai_models.py
+  install -m 0644 "$ROOT/runtime/ai_fal_video.py" /opt/masiha-vpn-extension/ai_fal_video.py
   install -m 0644 "$ROOT/deploy/masiha-rozmusic-import.service" /etc/systemd/system/masiha-rozmusic-import.service
 fi
 

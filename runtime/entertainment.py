@@ -81,14 +81,21 @@ def ai_answer(c,uid,question,update_id):
  ref="ai:"+str(update_id)
  if c.execute("SELECT 1 FROM ai_usage WHERE reference=?",(ref,)).fetchone():
   return enqueue(c,uid,"پاسخ این پیام قبلاً ثبت شده است.",[[("↩️ سرگرمی","fun")]])
- answer=loyalty.query_ai(cfg,question)
+ import ai_models
+ if sub or cfg.get("ai_default_text_model"):
+  chosen=ai_models.resolved(c,uid,"text")
+  answer=ai_models.text_response(c,chosen,question)
+  label=chosen["model_id"]
+ else:
+  answer=loyalty.query_ai(cfg,question)
+  label=cfg["ai_model"]
  charge=0 if uid in cfg["admins"] else (0 if sub else cost)
  if uid not in cfg["admins"] and sub:
   if not ai_commerce.consume(c,uid,"text",ref):
    raise ValueError("سهمیه اشتراک کافی نیست")
  elif charge:loyalty.redeem(c,uid,charge,ref,now())
  c.execute("INSERT INTO ai_usage(user_id,reference,model,points,created) VALUES(?,?,?,?,?)",
-          (uid,ref,cfg["ai_model"],charge,now()))
+          (uid,ref,label,charge,now()))
  audit(c,"ai_usage",str(uid)+":points:"+str(cost))
  enqueue(c,uid,"🤖 "+answer+"\n\n⭐ امتیاز باقی‌مانده: "+str(loyalty.balance(c,uid)),
          [[("سؤال بعدی","fun:ai"),("↩️ سرگرمی","fun")]],key="ai-response:"+str(update_id))
