@@ -182,8 +182,13 @@ def handle(c,up):
    payload={"chat_id":uid,"text":"برای شروع استفاده از ربات، ابتدا در کانال "+channel+
      " عضو شوید. سپس دکمه بررسی مجدد را بزنید.",
      "reply_markup":{"inline_keyboard":buttons}}
-   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
-     (secrets.token_hex(12),uid,"sendMessage",json.dumps(payload,ensure_ascii=False)))
+   # This is an onboarding response, not a paid feature. Users without a
+   # verified phone MUST receive it; the outbox normally suppresses all other
+   # messages until their own Telegram contact is shared.
+   # A minute bucket avoids spamming the same prompt on repeated /start.
+   c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+     ("channel-gate:join:"+str(uid)+":"+str(now()//60),uid,
+      "sendMessage",json.dumps(payload,ensure_ascii=False)))
    return
  # Strict gate also covers existing members and inline callback queries.
  # Only a contact object referring to the *sending Telegram account* passes.
@@ -563,6 +568,57 @@ def upload(s,chat,filename,content,photo=False):
  req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+("/sendPhoto" if photo else "/sendDocument"),data=body,headers={"Content-Type":"multipart/form-data; boundary="+boundary})
  with telegram_open(req,timeout=35) as r:
   if not json.load(r).get("ok"):raise ValueError("upload failed")
+def report_start_error(c,up,temporary=False):
+ """Never make a private /start silently fail before phone collection."""
+ m=up.get("message") or up.get("callback_query",{}).get("message",{})
+ if m.get("chat",{}).get("type")!="private":return
+ body=m.get("text") or ""
+ cmd=up.get("callback_query",{}).get("data","")
+ if not (body.startswith("/start") or cmd=="home"):return
+ uid=m["chat"]["id"]
+ msg=("⚠️ ارتباط موقت با سرویس برقرار نشد؛ درخواست شروع ذخیره شد و "
+      "دوباره به‌طور خودکار بررسی می‌شود." if temporary else
+      "⚠️ شروع ربات در حال حاضر با مشکل تنظیمات مواجه است. لطفاً دوباره /start را بزنید.")
+ # An explanation of interrupted onboarding must also bypass phone gating,
+ # while no paid feature or private account information is exposed.
+ enqueue(c,uid,msg,key="channel-gate:temporary:"+
+         str(uid)+":"+str(now()//180) if temporary else
+         "channel-gate:validation:"+str(up["update_id"]),quick_nav=False)
+
+def report_validation_error(c,up,reason):
+ m=up.get("message") or up.get("callback_query",{}).get("message",{})
+ if m.get("chat",{}).get("type")!="private":return
+ if (m.get("text") or "").startswith("/start") or up.get("callback_query",{}).get("data")=="home":
+  report_start_error(c,up)
+ else:
+  enqueue(c,m["chat"]["id"],str(reason))
+
+def retry_failed_updates(c):
+ """Replay durable failed updates while letting later users start normally."""
+ rows=c.execute("SELECT * FROM bot_retry_updates WHERE next_try<=? ORDER BY next_try,id LIMIT 10",
+                (now(),)).fetchall()
+ for row in rows:
+  up=json.loads(row["payload"])
+  try:
+   c.execute("BEGIN IMMEDIATE")
+   handle(c,up)
+   c.execute("INSERT OR IGNORE INTO updates VALUES(?,?)",(row["id"],now()))
+   c.execute("DELETE FROM bot_retry_updates WHERE id=?",(row["id"],))
+   c.commit()
+  except ValueError as exc:
+   c.rollback()
+   report_validation_error(c,up,exc)
+   c.execute("INSERT OR IGNORE INTO updates VALUES(?,?)",(row["id"],now()))
+   c.execute("DELETE FROM bot_retry_updates WHERE id=?",(row["id"],))
+   c.commit()
+  except Exception as exc:
+   c.rollback()
+   attempt=row["attempts"]+1
+   c.execute("""UPDATE bot_retry_updates SET attempts=?,next_try=?,last_error=?
+               WHERE id=?""",(attempt,now()+min(3600,2**min(attempt,11)),
+               type(exc).__name__,row["id"]))
+   c.commit()
+
 def tick():
  with conn() as c:
   s=settings(c);put(c,"heartbeat",now());c.commit()
@@ -582,6 +638,7 @@ def tick():
    c.commit()
   if not s.get("bot_username"):
    me=tg(s,"getMe",{});put(c,"bot_username",me["username"]);c.commit()
+  retry_failed_updates(c)
   updates=tg(s,"getUpdates",{"offset":s.get("offset",0),"timeout":1,"limit":20,"allowed_updates":["message","callback_query"]})
   for up in updates:
    if c.execute("SELECT 1 FROM updates WHERE id=?",(up["update_id"],)).fetchone():continue
@@ -591,17 +648,22 @@ def tick():
    except ValueError as e:
     # Expected user/business validation errors must not poison the queue.
     c.rollback()
-    m=up.get("message") or up.get("callback_query",{}).get("message",{})
-    if m.get("chat",{}).get("type")=="private":
-     enqueue(c,m["chat"]["id"],str(e))
+    report_validation_error(c,up,e)
     c.execute("INSERT OR IGNORE INTO updates VALUES(?,?)",(up["update_id"],now()))
     put(c,"offset",up["update_id"]+1)
     c.commit()
-   except Exception:
-    # An API/network/panel error is transient; DO NOT acknowledge the update.
-    # Otherwise paid orders or receipt approvals could be permanently lost.
+   except Exception as exc:
+    # A failed update is durably saved BEFORE advancing Telegram's offset.
+    # Replay it later independently so one channel/network failure cannot
+    # indefinitely block subsequent /start requests.
     c.rollback()
-    raise
+    c.execute("""INSERT OR IGNORE INTO bot_retry_updates
+     (id,payload,attempts,next_try,created,last_error)
+     VALUES(?,?,?,?,?,?)""",(up["update_id"],json.dumps(up,ensure_ascii=False),
+       1,now()+2,now(),type(exc).__name__))
+    report_start_error(c,up,temporary=True)
+    put(c,"offset",up["update_id"]+1)
+    c.commit()
    if up.get("callback_query"):
     with contextlib.suppress(Exception):tg(s,"answerCallbackQuery",{"callback_query_id":up["callback_query"]["id"]})
   # Receipt approval only changes status to paid; delivery is independent.
@@ -630,7 +692,8 @@ def tick():
     LEFT JOIN users AS u ON u.id=o.chat
     WHERE o.done=0 AND o.next_try<=? AND
        (?=0 OR (u.id>0 AND TRIM(COALESCE(u.phone,''))<>'')
-        OR o.dedupe LIKE 'phone-gate:%')
+        OR o.dedupe LIKE 'phone-gate:%'
+        OR o.dedupe LIKE 'channel-gate:%')
     ORDER BY o.id LIMIT 15""",(now(),int(bool(s["require_contact"])))).fetchall():
    try:
     p=json.loads(row["payload"])
@@ -650,7 +713,11 @@ def tick():
      audit(c,"telegram_delivery_failed","outbox:"+str(row["id"]))
    c.commit();time.sleep(.08)
   failed=c.execute("SELECT COUNT(*) FROM outbox WHERE done=-1").fetchone()[0]
-  put(c,"last_error",("ارسال "+str(failed)+" پیام تلگرام ناموفق مانده؛ صف خطا را بررسی کنید") if failed else "")
+  pending=c.execute("SELECT COUNT(*) FROM bot_retry_updates").fetchone()[0]
+  issues=[]
+  if failed:issues.append("ارسال "+str(failed)+" پیام تلگرام ناموفق مانده")
+  if pending:issues.append(str(pending)+" درخواست تلگرام در صف تلاش مجدد است")
+  put(c,"last_error","؛ ".join(issues))
   c.commit()
 def main():
  os.umask(0o077);BASE.mkdir(parents=True,exist_ok=True,mode=0o700)

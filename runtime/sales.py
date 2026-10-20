@@ -52,6 +52,13 @@ def conn():
  CREATE TABLE IF NOT EXISTS tickets(id INTEGER PRIMARY KEY,user_id INTEGER,body TEXT,reply TEXT DEFAULT '',created INTEGER);
  CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY,dedupe TEXT UNIQUE,chat INTEGER,method TEXT,payload TEXT,done INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,next_try INTEGER DEFAULT 0);
  CREATE TABLE IF NOT EXISTS updates(id INTEGER PRIMARY KEY,created INTEGER);
+ -- Failed Telegram deliveries must be retried independently, not block
+ -- later /start messages behind a single transient channel/API failure.
+ CREATE TABLE IF NOT EXISTS bot_retry_updates(
+  id INTEGER PRIMARY KEY,payload TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,
+  next_try INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,last_error TEXT NOT NULL DEFAULT ''
+ );
+ CREATE INDEX IF NOT EXISTS bot_retry_due ON bot_retry_updates(next_try,id);
  CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY,user_id INTEGER,amount INTEGER,authority TEXT UNIQUE,status TEXT,ref TEXT,created INTEGER);
  CREATE TABLE IF NOT EXISTS quotes(id TEXT PRIMARY KEY,user_id INTEGER,plan_id INTEGER,plan TEXT,renew_id TEXT,expires INTEGER);
  CREATE TABLE IF NOT EXISTS receipt_orders(topup_id INTEGER UNIQUE,order_id TEXT UNIQUE);

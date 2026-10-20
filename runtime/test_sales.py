@@ -12,7 +12,7 @@ class Commerce(unittest.TestCase):
   active=patch.object(s,"active_inbound_ids",return_value=set(range(1,1000)))
   active.start();self.addCleanup(active.stop)
   with s.conn() as c:
-   for t in ("social_reports","social_geo","social_blocks","social_chat_messages","social_chat_pairs","social_chat_queue","social_chat_invites","social_chat_quotes","social_discovery","social_profile_comments","social_reactions","social_profile_views","social_follows","social_profiles","media_items","playlists","playlist_likes","media_likes","settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
+   for t in ("social_reports","social_geo","social_blocks","social_chat_messages","social_chat_pairs","social_chat_queue","social_chat_invites","social_chat_quotes","social_discovery","social_profile_comments","social_reactions","social_profile_views","social_follows","social_profiles","media_items","playlists","playlist_likes","media_likes","settings","users","orders","plans","services","ledger","coupons","redeemed","outbox","topups","updates","bot_retry_updates","payments","quotes","receipt_orders","message_templates","loyalty_points","ai_usage"):c.execute("DELETE FROM "+t)
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(101,'test',100000,0)")
    c.execute("INSERT INTO users(id,name,balance,created) VALUES(102,'other',0,0)")
    c.execute("INSERT INTO plans(id,name,category,protocol,price,days,gb,inbounds,capacity,active) VALUES(1,'test','test','openvpn',10000,30,0,'[]',0,1)")
@@ -173,21 +173,34 @@ class Commerce(unittest.TestCase):
  def test_ownership(self):
   with s.conn() as c:
    with self.assertRaises(ValueError):w.deliver(c,102,"nonexistent")
- def test_transient_update_failure_does_not_acknowledge(self):
+ def test_transient_update_is_saved_and_retried_without_blocking(self):
   with s.conn() as c:
    s.put(c,"enabled",True)
    s.put(c,"token","123456:"+("x"*30))
    s.put(c,"admins",[101])
    s.put(c,"bot_username","test_bot")
-  update={"update_id":991,"message":{"from":{"id":101},"chat":{"id":101,"type":"private"},"text":"/start"}}
+  updates=[{"update_id":991,"message":{"from":{"id":101},
+       "chat":{"id":101,"type":"private"},"text":"/start"}}]
   def fake_tg(conf,method,payload):
-   if method=="getUpdates":return [update]
+   if method=="getUpdates":
+    result=updates[:]
+    updates.clear()
+    return result
    return True
-  with patch.object(w,"tg",side_effect=fake_tg), patch.object(w,"handle",side_effect=RuntimeError("temporary upstream outage")):
-   with self.assertRaises(RuntimeError):w.tick()
+  with patch.object(w,"tg",side_effect=fake_tg),patch.object(w,"handle",
+       side_effect=RuntimeError("temporary upstream outage")):
+   w.tick()
   with s.conn() as c:
    self.assertEqual(c.execute("SELECT count(*) FROM updates").fetchone()[0],0)
-   self.assertEqual(s.settings(c).get("offset",0),0)
+   self.assertEqual(s.settings(c).get("offset",0),992)
+   self.assertEqual(c.execute("SELECT count(*) FROM bot_retry_updates WHERE id=991").fetchone()[0],1)
+   c.execute("UPDATE bot_retry_updates SET next_try=0 WHERE id=991")
+  with patch.object(w,"tg",side_effect=fake_tg):
+   w.tick()
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT count(*) FROM bot_retry_updates").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT count(*) FROM updates WHERE id=991").fetchone()[0],1)
+
  def test_dead_letter_is_visible_and_retryable(self):
   with s.conn() as c:
    s.put(c,"enabled",True)
@@ -603,6 +616,164 @@ class Commerce(unittest.TestCase):
   s.admin({"action":"settings","values":{"require_contact":True}})
   with s.conn() as c:
    self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE dedupe LIKE 'phone-gate:rollout:%'").fetchone()[0],2)
+
+ def test_start_for_unverified_user_delivers_channel_join_prompt_before_phone(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True)
+   s.put(c,"require_contact",True)
+   s.put(c,"channel","@test_channel")
+   s.put(c,"contact_onboarding_rollout_v2",True)
+   s.put(c,"bot_username","testbot")
+   s.put(c,"notifications",False)
+   with patch.object(w,"telegram_channel_member",return_value=False):
+    for ident in (80101,80102):
+     w.handle(c,{"update_id":ident,"message":{"from":{"id":765432,"first_name":"New"},
+       "chat":{"id":765432,"type":"private"},"text":"/start"}})
+   rows=c.execute("SELECT dedupe,payload FROM outbox WHERE chat=765432").fetchall()
+   self.assertEqual(len(rows),1,"repeated /start should not flood new user")
+   self.assertTrue(rows[0]["dedupe"].startswith("channel-gate:join:"))
+   message=json.loads(rows[0]["payload"])
+   self.assertIn("عضو شوید",message["text"])
+   self.assertTrue(any(b["callback_data"]=="home" for row in message["reply_markup"]["inline_keyboard"]
+                         for b in row if "callback_data" in b))
+   # Content or marketing must never bypass the contact gate.
+   s.enqueue(c,765432,"PRIVATE_POST_ONBOARDING_CONTENT",key="protected:765432")
+  calls=[]
+  def fake_tg(conf,method,payload):
+   calls.append((method,payload))
+   return [] if method=="getUpdates" else {}
+  with patch.object(w,"tg",side_effect=fake_tg):
+   w.tick()
+  self.assertEqual([p["chat_id"] for m,p in calls if m=="sendMessage"],[765432])
+  self.assertFalse(any("PRIVATE_POST_ONBOARDING_CONTENT" in str(p) for _,p in calls))
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT done FROM outbox WHERE dedupe='protected:765432'").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT done FROM outbox WHERE dedupe LIKE 'channel-gate:join:%'").fetchone()[0],1)
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=765432").fetchone()[0],"")
+
+ def test_failed_start_is_durable_and_does_not_block_later_users(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True);s.put(c,"channel","@test_channel")
+   s.put(c,"require_contact",True);s.put(c,"notifications",False)
+   s.put(c,"bot_username","testbot");s.put(c,"contact_onboarding_rollout_v2",True)
+   s.put(c,"offset",99001)
+  incoming=[
+   {"update_id":99001,"message":{"from":{"id":600011,"first_name":"First"},
+       "chat":{"id":600011,"type":"private"},"text":"/start"}},
+   {"update_id":99002,"message":{"from":{"id":600012,"first_name":"Second"},
+       "chat":{"id":600012,"type":"private"},"text":"/start"}}]
+  calls=[]
+  def fake_tg(cfg,method,payload):
+   if method=="getUpdates":
+    if incoming:
+     delivered=incoming[:]
+     incoming.clear()
+     return delivered
+    return []
+   calls.append((method,payload))
+   return True
+  def first_channel_check(cfg,channel,uid):
+   if uid==600011:raise RuntimeError("temporary timeout")
+   return False
+  with patch.object(w,"tg",side_effect=fake_tg),patch.object(w,"telegram_channel_member",side_effect=first_channel_check):
+   w.tick()
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM bot_retry_updates").fetchone()[0],1)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM updates WHERE id=99002").fetchone()[0],1)
+   self.assertEqual(s.settings(c)["offset"],99003)
+   self.assertTrue(c.execute("SELECT 1 FROM outbox WHERE chat=600012 AND dedupe LIKE 'channel-gate:%'").fetchone())
+   c.execute("UPDATE bot_retry_updates SET next_try=0")
+  with patch.object(w,"tg",side_effect=fake_tg),patch.object(w,"telegram_channel_member",return_value=True):
+   w.tick()
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM bot_retry_updates").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM updates WHERE id=99001").fetchone()[0],1)
+   self.assertTrue(c.execute("SELECT 1 FROM outbox WHERE chat=600011 AND dedupe LIKE 'phone-gate:%'").fetchone())
+   self.assertTrue(c.execute("SELECT 1 FROM users WHERE id=600011").fetchone())
+   self.assertTrue(any(method=="sendMessage" and payload.get("chat_id")==600011 for method,payload in calls))
+   self.assertTrue(any(method=="sendMessage" and payload.get("chat_id")==600012 for method,payload in calls))
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM updates WHERE id IN (99001,99002)").fetchone()[0],2)
+
+ def test_durable_retry_validation_replies_to_nonstart_user(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True);s.put(c,"notifications",False)
+   s.put(c,"bot_username","testbot")
+   c.execute("""INSERT INTO bot_retry_updates
+    (id,payload,attempts,next_try,created,last_error)
+    VALUES(?,?,?,?,?,?)""",(99221,json.dumps({"update_id":99221,"message":{
+      "chat":{"id":102,"type":"private"},"from":{"id":102},"text":"not-a-start"}},
+      ensure_ascii=False),1,0,s.now(),"RuntimeError"))
+  delivered=[]
+  def mock_tg(conf,method,payload):
+   if method=="sendMessage":delivered.append(payload.get("text",""))
+   return [] if method=="getUpdates" else {}
+  with patch.object(w,"tg",side_effect=mock_tg),patch.object(w,"handle",
+    side_effect=ValueError("این دستور معتبر نیست")):
+   w.tick()
+  with s.conn() as c:
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM bot_retry_updates").fetchone()[0],0)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM updates WHERE id=99221").fetchone()[0],1)
+   self.assertIn("این دستور معتبر نیست",delivered)
+
+ def test_validation_failure_start_is_visible_without_bypassing_gates(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True);s.put(c,"channel","@test_channel")
+   s.put(c,"require_contact",True);s.put(c,"notifications",False)
+   s.put(c,"bot_username","testbot");s.put(c,"contact_onboarding_rollout_v2",True)
+   s.put(c,"offset",99101)
+  incoming=[{"update_id":99101,"message":{"from":{"id":600013,"first_name":"First"},
+      "chat":{"id":600013,"type":"private"},"text":"/start"}}]
+  calls=[]
+  def fake_tg(cfg,method,payload):
+   if method=="getUpdates":
+    if incoming:return [incoming.pop(0)]
+    return []
+   calls.append((method,payload));return True
+  with patch.object(w,"tg",side_effect=fake_tg),patch.object(w,"telegram_channel_member",
+     side_effect=ValueError("مدیر کانال تنظیم نشده است")):
+   w.tick()
+  with s.conn() as c:
+   self.assertTrue(c.execute("SELECT 1 FROM outbox WHERE chat=600013 AND dedupe LIKE 'channel-gate:validation:%'").fetchone())
+   self.assertFalse(c.execute("SELECT 1 FROM users WHERE id=600013").fetchone())
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM updates WHERE id=99101").fetchone()[0],1)
+  self.assertTrue(any(method=="sendMessage" for method,_ in calls))
+
+ def test_recovery_queues_only_latest_old_channel_prompt(self):
+  import importlib.util
+  module_path=Path(__file__).resolve().parents[1]/"deploy"/"recover-start-prompts.py"
+  spec=importlib.util.spec_from_file_location("onboarding_recovery",module_path)
+  recovery=importlib.util.module_from_spec(spec);spec.loader.exec_module(recovery)
+  with s.conn() as c:
+   payload={"chat_id":102,"text":"برای شروع استفاده از ربات، ابتدا در کانال @test_channel عضو شوید. سپس دکمه بررسی مجدد را بزنید.",
+      "reply_markup":{"inline_keyboard":[[
+       {"text":"📢 عضویت در کانال","url":"https://t.me/test_channel"},
+       {"text":"✅ بررسی مجدد عضویت","callback_data":"home"}]]}}
+   for i in range(2):
+    c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+      ("legacy-random:"+str(i),102,"sendMessage",json.dumps(payload,ensure_ascii=False)))
+   c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+      ("unverified-content",102,"sendMessage",json.dumps({"chat_id":102,"text":"private order"},ensure_ascii=False)))
+   self.assertEqual(recovery.recover(c),(1,1))
+   self.assertEqual(recovery.recover(c),(0,0))
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE done=2").fetchone()[0],1)
+   self.assertEqual(c.execute("SELECT COUNT(*) FROM outbox WHERE done=0 AND dedupe LIKE 'channel-gate:legacy:%'").fetchone()[0],1)
+   self.assertEqual(c.execute("SELECT done FROM outbox WHERE dedupe='unverified-content'").fetchone()[0],0)
+
+ def test_new_user_successful_channel_and_contact_onboarding(self):
+  with s.conn() as c:
+   s.put(c,"enabled",True);s.put(c,"require_contact",True);s.put(c,"channel","@test_channel")
+   with patch.object(w,"telegram_channel_member",return_value=True):
+    w.handle(c,{"update_id":80201,"message":{"from":{"id":765433,"first_name":"Join"},
+      "chat":{"id":765433,"type":"private"},"text":"/start"}})
+    self.assertTrue(c.execute("SELECT 1 FROM outbox WHERE chat=765433 AND dedupe LIKE 'phone-gate:%'").fetchone())
+    self.assertFalse(c.execute("SELECT 1 FROM outbox WHERE chat=765433 AND dedupe LIKE 'channel-gate:%'").fetchone())
+    w.handle(c,{"update_id":80202,"message":{"from":{"id":765433,"first_name":"Join"},
+      "chat":{"id":765433,"type":"private"},
+      "contact":{"user_id":765433,"phone_number":"+989123450123"}}})
+   self.assertEqual(c.execute("SELECT phone FROM users WHERE id=765433").fetchone()[0],"+989123450123")
+   self.assertTrue(any("inline_keyboard" in json.loads(row[0]).get("reply_markup",{}) for row in
+        c.execute("SELECT payload FROM outbox WHERE chat=765433")))
+   self.assertFalse(c.execute("SELECT 1 FROM orders WHERE user_id=765433").fetchone())
 
  def test_outbox_only_delivers_contact_challenge_before_verification(self):
   with s.conn() as c:

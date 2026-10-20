@@ -71,6 +71,7 @@ python3 -m unittest -q runtime/test_audio_fingerprint.py
 python3 -m unittest -q runtime/test_ai_commerce.py runtime/test_ai_media.py
 python3 -m unittest -q runtime/test_ai_models.py
 for f in runtime/ai_models.py runtime/ai_fal_video.py; do [[ -s "$f" ]] || exit 1; done
+python3 -m py_compile deploy/recover-start-prompts.py
 for f in runtime/social.py runtime/test_social.py sidecar/SocialAdminPage.tsx docs/MASIHA_SOCIAL_FA.md; do
  [[ -s "$f" ]] || { echo "Missing social feature: $f" >&2; exit 1; }
 done
