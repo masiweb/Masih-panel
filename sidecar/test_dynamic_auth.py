@@ -52,15 +52,16 @@ class DynamicPanelAuth(unittest.TestCase):
   h.headers={"Host":"localhost.test","Cookie":""}
   responses=[]
   h.send_bytes=lambda code,body,*args: responses.append((code,body))
-  with patch.object(mod,"upstream_panel_token",return_value=None):
-   h.path="/masiha-ui/api/session"
+  with patch.object(mod,"upstream_panel_token",return_value=None),\
+       patch.object(mod,"current_panel_path",return_value="/custom-route/"):
+   h.path="/custom-route/panel/api/masiha-session"
    mod.Handler.do_GET(h)
   self.assertEqual(responses[0][0],401)
   self.assertNotIn("private",str(responses[0]))
  def test_authenticated_session_keeps_stable_api_base(self):
   h=object.__new__(mod.Handler)
   h.headers={"Host":"localhost.test","Cookie":"session=fake"}
-  h.path="/masiha-ui/api/session"
+  h.path="/custom-route/panel/api/masiha-session"
   responses=[]
   h.send_bytes=lambda code,body,*args: responses.append((code,body))
   with patch.object(mod,"upstream_panel_token",return_value="csrf-validated"),\
@@ -68,6 +69,23 @@ class DynamicPanelAuth(unittest.TestCase):
    mod.Handler.do_GET(h)
   self.assertEqual(responses[0][0],200)
   self.assertEqual(responses[0][1]["obj"]["native_panel"],"/custom-route/")
-  self.assertEqual(responses[0][1]["obj"]["api_base"],"/xui/")
+  self.assertEqual(responses[0][1]["obj"]["api_base"],"/custom-route/")
+
+ def test_native_path_validation_disallows_old_separate_panel_and_wrong_path(self):
+  with patch.object(mod,"current_panel_path",return_value="/new-private/"):
+   self.assertTrue(mod.trusted_panel_api_path("/new-private/panel/api/sales-bot","sales-bot"))
+   self.assertTrue(mod.trusted_panel_api_path("/new-private/panel/api/masiha-session","masiha-session"))
+   self.assertFalse(mod.trusted_panel_api_path("/xui/panel/api/sales-bot","sales-bot"))
+   self.assertFalse(mod.trusted_panel_api_path("/other/panel/api/sales-bot","sales-bot"))
+  h=object.__new__(mod.Handler)
+  h.headers={"Host":"localhost.test","Cookie":"session=fake"}
+  h.path="/masiha-ui/api/session"
+  result=[]
+  h.send_bytes=lambda code,body,*args: result.append((code,body))
+  with patch.object(mod,"upstream_panel_token",return_value="csrf-validated"),\
+       patch.object(mod,"current_panel_path",return_value="/new-private/"):
+   mod.Handler.do_GET(h)
+  self.assertEqual(result[0][0],404)
+  self.assertNotIn("new-private",str(result[0]))
 
 if __name__=="__main__":unittest.main()

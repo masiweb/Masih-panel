@@ -11,6 +11,55 @@
   window.__masihaNavBridgeStarted = true;
 
   var PREFIX = '/masiha-ui/';
+  // The user is already authenticated in this native window. Store only
+  // the panel path, never a cookie, session value, or API token.
+  function rememberNativePanelPath() {
+    var m = location.pathname.match(/^(\/(?:[A-Za-z0-9._~-]+\/){1,6})panel(?:\/|$)/);
+    if (m && !m[1].includes('..')) {
+      try { sessionStorage.setItem('masiha:native-panel', m[1]); } catch (_) {}
+    }
+  }
+  rememberNativePanelPath();
+
+  // Old native SalesBotPage is intentionally not a second destination.
+  // Redirect internal SPA navigation to the complete independent UI.
+  function collapseLegacyRoutes() {
+    // SANAei renders native menu entries as Ant Design LI elements rather
+    // than anchors. Remove ONLY the duplicate legacy sales UI entry.
+    document.querySelectorAll(
+      'li[data-menu-id$="/sales-bot"],li[data-menu-id$="/sales-bot/"]'
+    ).forEach(function (item) {
+      if (!item.classList.contains('masiha-sidecar-menu-item')) {
+        item.hidden = true;
+        item.setAttribute('aria-hidden', 'true');
+        item.style.display = 'none';
+      }
+    });
+    document.querySelectorAll('a[href]').forEach(function (link) {
+      if (link.closest('.masiha-sidecar-menu-item')) return;
+      var url;
+      try { url = new URL(link.getAttribute('href'), location.href); }
+      catch (_) { return; }
+      if (url.origin !== location.origin || !/\/panel\/sales-bot\/?$/.test(url.pathname)) return;
+      if (link.getAttribute('href') !== PREFIX+'#bot') link.setAttribute('href', PREFIX+'#bot');
+      // Correct stale text as well, while preserving existing menu layout.
+      if (!link.dataset.masihaRouted) {
+        link.dataset.masihaRouted = '1';
+        var label = link.querySelector('.ant-menu-title-content');
+        if (label && label.textContent) label.textContent = 'مدیریت مسیحا';
+      }
+    });
+  }
+  document.addEventListener('click', function(event) {
+    var anchor = event.target && event.target.closest && event.target.closest('a[href]');
+    if (!anchor || anchor.closest('.masiha-sidecar-menu-item')) return;
+    var href = anchor.getAttribute('href');
+    if (href === PREFIX+'#bot') {
+      event.preventDefault();
+      event.stopPropagation();
+      location.assign(href);
+    }
+  }, true);
   var ITEMS = [
     { key: 'bot', text: 'تنظیمات ربات فروش', icon: '🤖' },
     { key: 'openvpn', text: 'OpenVPN', icon: '🔒' },
@@ -160,6 +209,8 @@
   function synchronize() {
     scheduled = false;
     if (!document.body) return;
+    rememberNativePanelPath();
+    collapseLegacyRoutes();
     var nav = desktopMenu();
     var found = false;
     if (nav) {

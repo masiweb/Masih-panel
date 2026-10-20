@@ -109,3 +109,8 @@
  .masiha-sidecar-menu-item { margin: 8px 12px 12px!important; }
  .masiha-sidecar-submenu { padding: 4px; }
 }
+
+/* The native binary still bundles an old sales route. All management lives
+   in the update-safe Masiha menu; hide the duplicate native menu entry. */
+li.ant-menu-item[data-menu-id$="/sales-bot"],
+li.ant-menu-item[data-menu-id$="/sales-bot/"] { display: none !important; }

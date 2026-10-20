@@ -45,11 +45,21 @@ const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
   assert.equal(win.document.querySelectorAll('.ant-drawer .masiha-sidecar-menu-item').length,1,'Mobile drawer item available');
   assert.equal(win.document.querySelectorAll('.masiha-sidecar-menu-item').length,2,'No duplicate menu item after sync');
 
+  // Old native Ant Design sales menu must not show the incomplete screen.
+  const legacy=win.document.createElement('li');
+  legacy.className='ant-menu-item';
+  legacy.setAttribute('data-menu-id','/sales-bot');
+  legacy.textContent='تنظیمات ربات فروش';
+  win.document.querySelector('.ant-sidebar ul').appendChild(legacy);
+  await pause(60);
+  assert.equal(legacy.hidden,true,'Old incomplete sales link is hidden');
+
   // Official updates can change classes: on panel path a fallback remains.
   sidebar.remove(); drawer.remove();
   win.history.replaceState({},'','/xui/panel/');
   win.dispatchEvent(new win.PopStateEvent('popstate'));
   await pause(60);
+  assert.equal(win.sessionStorage.getItem('masiha:native-panel'),'/xui/','Native panel path cached after SPA navigation');
   assert.equal(win.document.querySelectorAll('#masiha-nav-fallback').length,1,'Fallback route without matched sidebar');
   assert.equal(win.document.querySelector('#masiha-nav-fallback a').getAttribute('href'),'/masiha-ui/');
 

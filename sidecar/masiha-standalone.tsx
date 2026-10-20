@@ -36,16 +36,27 @@ function Panel() {
   </div>;
 }
 async function boot(){
-  window.X_UI_BASE_PATH='/xui/';
+  // Path-scoped x-ui cookies are sent only to native routes. The injected
+  // launcher stores the visited path (not credentials) in sessionStorage.
+  // A direct bookmark on the default installation can use /xui/.
+  const saved=window.sessionStorage.getItem('masiha:native-panel')||'';
+  const candidate=(/^\/(?:[A-Za-z0-9._~-]+\/){1,6}$/.test(saved)&&!saved.includes('..'))
+    ? saved : '/xui/';
+  window.X_UI_BASE_PATH=candidate;
   const root=createRoot(document.getElementById('app')!);
   root.render(<div className="m-loading"><Spin size="large"/>در حال تأیید ورود مدیر…</div>);
   try {
-    const r=await fetch('/masiha-ui/api/session', {credentials:'same-origin', headers:{'X-Requested-With':'XMLHttpRequest'}});
-    if (!r.ok) throw new Error('نشست مدیر معتبر نیست. از مسیر فعلی و محرمانه پنل سنایی وارد شوید و مجدداً این صفحه را باز کنید.');
+    const r=await fetch(candidate+'panel/api/masiha-session', {
+      credentials:'same-origin', headers:{'X-Requested-With':'XMLHttpRequest'},
+      cache:'no-store'
+    });
+    if (!r.ok) throw new Error('نشست مدیر یا مسیر پنل معتبر نیست. از منوی «مدیریت مسیحا» در داخل پنل سنایی وارد شوید.');
     const data=await r.json();
     if (!data.success || typeof data.obj?.csrf_token!=='string' || typeof data.obj?.native_panel!=='string')
       throw new Error('نشست مدیریت معتبر نیست.');
+    if(data.obj.native_panel!==candidate) throw new Error('مسیر پنل سنایی تغییر کرده است. مدیریت مسیحا را از منوی پنل سنایی باز کنید.');
     (window as any).__masihaNativePanel=data.obj.native_panel;
+    window.X_UI_BASE_PATH=data.obj.native_panel;
     const meta=document.createElement('meta');meta.name='csrf-token';meta.content=data.obj.csrf_token;
     document.head.appendChild(meta);
     setupHttp();

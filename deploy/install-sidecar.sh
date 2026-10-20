@@ -114,6 +114,40 @@ if needle not in s:
     s=s.replace(anchor,location+anchor,1)
     p.write_text(s)
 PYSESSION
+# Native x-ui authentication cookies are path-scoped. Serve the bootstrap
+# and the shared APIs on the actual native path, not /masiha-ui/api/*.
+# Regex allows future webBasePath changes without leaking the secret path;
+# the Python sidecar checks it against the LIVE x-ui DB on every request.
+python3 - "$NGINX" <<'PYNATIVE'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]);s=p.read_text()
+needle='  # MASIHA-NATIVE-AUTH-ROUTES BEGIN'
+if needle not in s:
+    routes="""  # MASIHA-NATIVE-AUTH-ROUTES BEGIN
+  # Retire the duplicate native sales screen; keep its backend API.
+  location = /xui/panel/sales-bot { return 302 "/masiha-ui/#bot"; }
+  location = /xui/panel/sales-bot/ { return 302 "/masiha-ui/#bot"; }
+  location ~ "^/(?:[A-Za-z0-9._~-]+/){1,6}panel/sales-bot/?$" {
+    return 302 "/masiha-ui/#bot";
+  }
+  location ~ "^/(?:[A-Za-z0-9._~-]+/){1,6}panel/api/(?:masiha-session|masiha-vpn|sales-bot|masiha-backup/(?:status|create|import|restore|download/.+))$" {
+    client_max_body_size 512m;
+    proxy_pass http://127.0.0.1:61794;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_request_buffering on;
+    proxy_read_timeout 360s;
+    proxy_send_timeout 360s;
+  }
+  # MASIHA-NATIVE-AUTH-ROUTES END
+"""
+    anchor='  # MASIHA-SIDECAR BEGIN'
+    if s.count(anchor)!=1:raise SystemExit('Missing Masiha sidecar location marker')
+    s=s.replace(anchor,routes+anchor,1)
+    p.write_text(s)
+PYNATIVE
 if ! grep -q 'MASIHA-SIDECAR BEGIN' "$NGINX"; then
   cp -a "$NGINX" "$NGINX.before-masiha-sidecar.$(date -u +%Y%m%dT%H%M%SZ).bak"
   python3 - "$NGINX" "$SIDE/nginx-locations.conf" <<'PY'

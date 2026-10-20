@@ -22,6 +22,12 @@ for p in /masiha-ui/ /masiha-ui/nav.js /masiha-ui/nav.css; do
  curl -fsSk --noproxy '*' --max-time 10 \
   --resolve "$DOMAIN:443:127.0.0.1" -o /dev/null "https://$DOMAIN$p"
 done
+# Regression: no duplicate legacy management route or unsecured bootstrap.
+redirect=$(curl -ksS --noproxy '*' --max-time 8 --resolve "$DOMAIN:443:127.0.0.1" -o /dev/null -w '%{redirect_url}' "https://$DOMAIN/xui/panel/sales-bot")
+[[ "$redirect" == "https://$DOMAIN/masiha-ui/#bot" ]]
+http=$(curl -ksS --noproxy '*' --max-time 8 --resolve "$DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$DOMAIN/xui/panel/api/masiha-session")
+[[ "$http" == '401' ]]
+grep -q "MASIHA-NATIVE-AUTH-ROUTES BEGIN" /etc/nginx/sites-available/masiha-vpn
 grep -q "MASIHA-SIDECAR BEGIN" /etc/nginx/sites-available/masiha-vpn
 grep -q "location ^~ /xui/panel/api/masiha-backup/" /etc/nginx/sites-available/masiha-vpn
 echo "UPGRADE_SAFE_MENU=PASS"

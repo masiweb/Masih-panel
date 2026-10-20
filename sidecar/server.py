@@ -45,7 +45,16 @@ JOBS = BACKUPS / "web-jobs"
 SECRET_FILE = Path("/root/.masiha-backup.key")
 HEX = re.compile(r"^[a-f0-9]{32}$")
 ARCHIVE = re.compile(r"^masiha-full-[a-zA-Z0-9_.-]+\.tar\.gz\.gpg$")
-PATH_BASE = "/xui/panel/api/"
+# Routing is keyed to the *current* native x-ui panel path.
+# The native x-ui cookie can be scoped to that path and is intentionally
+# never broadened to /masiha-ui or copied into client-side storage.
+def panel_api_base():
+    return current_panel_path().rstrip("/") + "/panel/api/"
+
+def trusted_panel_api_path(path, suffix):
+    return path == panel_api_base() + suffix
+
+PATH_BASE = "/xui/panel/api/"  # compatibility alias for imports/tests only
 MAX_UPLOAD = 512 << 20
 PAY_SLOTS = threading.BoundedSemaphore(4)
 LOG = __import__("logging").getLogger("masiha-sidecar")
@@ -194,22 +203,30 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/healthz":
             return self.send_bytes(200, {"up": True, "native_xui": "independent"})
-        if path == "/masiha-ui/api/session":
+        if trusted_panel_api_path(path, "masiha-session"):
+            # Bootstrap on the SAME native path as x-ui's cookie. A session
+            # scoped to /xui/ must never be expected on /masiha-ui/.
             if not self.auth():return
+            token=upstream_panel_token(self.headers.get("Cookie",""))
+            if not token:return self.error_json(401,"نشست معتبر نیست")
             return self.send_bytes(200, envelope(True,{
-              "csrf_token":upstream_panel_token(self.headers.get("Cookie","")),
-              "native_panel":current_panel_path(),
-              "api_base":"/xui/"
+                "csrf_token":token,
+                "native_panel":current_panel_path(),
+                "api_base":current_panel_path(),
             }))
+        if path == "/masiha-ui/api/session":
+            # Deprecated bootstrap: browser x-ui cookies are often path-scoped.
+            # Never echo the secret panel path to an unauthenticated caller.
+            return self.error_json(404,"Use authenticated native panel bootstrap")
         if path == "/xui/sales-payment":
             return self.payment()
         if not self.auth():
             return
-        if path == PATH_BASE + "masiha-backup/status":
+        if trusted_panel_api_path(path, "masiha-backup/status"):
             backups = [{"name": f.name, "size": f.stat().st_size,
                         "created": __import__("datetime").datetime.fromtimestamp(f.stat().st_mtime,
                                 __import__("datetime").timezone.utc).isoformat()}
-                       for f in BACKUPS.iterdir() if ARCHIVE.fullmatch(f.name) and private(f)]
+                       for f in (BACKUPS.iterdir() if BACKUPS.is_dir() else []) if ARCHIVE.fullmatch(f.name) and private(f)]
             backups.sort(key=lambda x: x["created"], reverse=True)
             jobs = []
             if JOBS.is_dir():
@@ -220,7 +237,7 @@ class Handler(BaseHTTPRequestHandler):
                         except (OSError, ValueError):
                             pass
             return self.send_bytes(200, envelope(True, {"backups": backups, "jobs": jobs, "has_key": private(SECRET_FILE)}))
-        prefix = PATH_BASE + "masiha-backup/download/"
+        prefix = panel_api_base() + "masiha-backup/download/"
         if path.startswith(prefix):
             name = unquote(path[len(prefix):])
             if name == "backup-secret.key":
@@ -274,20 +291,20 @@ class Handler(BaseHTTPRequestHandler):
         if not self.auth(changing=True):
             return
         try:
-            if path == PATH_BASE + "masiha-vpn":
+            if trusted_panel_api_path(path, "masiha-vpn"):
                 body = self.read_json(16384)
                 return self.send_bytes(200, json_command("manager.py", body))
-            if path == PATH_BASE + "sales-bot":
+            if trusted_panel_api_path(path, "sales-bot"):
                 body = self.read_json(65536)
                 return self.send_bytes(200, json_command("sales.py", body))
-            if path == PATH_BASE + "masiha-backup/create":
+            if trusted_panel_api_path(path, "masiha-backup/create"):
                 self.read_json(2048)
                 job = secrets.token_hex(16)
                 launch("create", job)
                 return self.send_bytes(202, envelope(True, {"job": job}))
-            if path == PATH_BASE + "masiha-backup/import":
+            if trusted_panel_api_path(path, "masiha-backup/import"):
                 return self.import_backup()
-            if path == PATH_BASE + "masiha-backup/restore":
+            if trusted_panel_api_path(path, "masiha-backup/restore"):
                 body = self.read_json(2048)
                 job = body.get("job", "")
                 if body.get("confirm") != "RESTORE" or not isinstance(job, str) or not HEX.fullmatch(job):
