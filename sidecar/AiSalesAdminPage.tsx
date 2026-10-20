@@ -4,10 +4,14 @@ import {HttpUtil} from '@/utils';
 type R=Record<string,any>;
 const kindLabels:Record<string,string>={bot:'🤖 داخل ربات',personal:'📧 ایمیل شخصی',ready:'📨 ایمیل آماده'};
 const operationLabels:Record<string,string>={text:'متن',image:'تصویر',video:'ویدیو'};
+const providerLabels:Record<string,string>={openai:'OpenAI',google:'Google Gemini',groq:'Groq',cloudflare:'Cloudflare Workers AI',fal:'fal.ai'};
 export default function AiSalesAdminPage(){
  const {message,modal}=App.useApp();
  const [state,setState]=useState<R>({models:[],plans:[],orders:[],stock:[]});
  const [loading,setLoading]=useState(false);
+ const [providerForm]=Form.useForm();
+ const [providerModels,setProviderModels]=useState<R[]>([]);
+ const [providerStates,setProviderStates]=useState<R>({});
  const [priceForm]=Form.useForm();
  const [modelForm]=Form.useForm();
  const [planForm]=Form.useForm();
@@ -23,7 +27,15 @@ export default function AiSalesAdminPage(){
   return r.obj as any;
  };
  const load=async()=>{
-  try{const [d,costs]=await Promise.all([call('ai_sale_get'),call('ai_sale_costs')]);setState(d||{models:[],plans:[],orders:[],stock:[]});priceForm.setFieldsValue(costs||{});}
+  try{
+   const [d,costs,registry]=await Promise.all([
+    call('ai_sale_get'),call('ai_sale_costs'),call('ai_model_catalog')
+   ]);
+   setState(d||{models:[],plans:[],orders:[],stock:[]});
+   priceForm.setFieldsValue(costs||{});
+   setProviderModels(registry?.models||[]);
+   setProviderStates(registry?.providers||{});
+  }
   catch(e){message.error(String(e));}
  };
  useEffect(()=>{void load()},[]);
@@ -51,6 +63,44 @@ export default function AiSalesAdminPage(){
  return <Space direction="vertical" style={{width:'100%'}} size="middle">
   <Alert type="info" showIcon title="🤖 فروش اشتراک‌های هوش مصنوعی"
     description="پلن‌های داخل ربات، ایمیل شخصی و ایمیل آماده مستقل از اشتراک VPN هستند. هزینه‌ها به تومان و سهمیه‌های داخل ربات به تعداد درخواست موفق محاسبه می‌شوند. هیچ رمز عبوری در ربات دریافت یا ذخیره نمی‌شود."/>
+  <Card size="small" title="🌐 فهرست مدل‌های AI و کلید سرویس‌ها">
+   <Alert type="warning" showIcon title="سهمیه رایگان، استفاده نامحدود یا بدون کلید نیست"
+     description="مدل‌های علامت‌دار با سهمیه رایگان مشروط به حساب ارائه‌دهنده هستند. OpenAI اشتراک ChatGPT را به‌جای اعتبار API نمی‌پذیرد. ویدیوی OpenAI Sora دیگر در API فعال نیست؛ گزینه‌های fal به اعتبار پولی نیاز دارند." style={{marginBottom:12}}/>
+   <Space wrap style={{marginBottom:12}}>
+    {Object.entries(providerLabels).map(([key,label])=>
+     <Tag key={key} color={providerStates[key]?'green':'default'}>
+      {label} — {providerStates[key]?'کلید ثبت‌شده':'نیازمند کلید API'}
+     </Tag>
+    )}
+   </Space>
+   <Form form={providerForm} layout="vertical" onFinish={async v=>{
+    const values=Object.fromEntries(Object.entries(v).filter(([_,x])=>typeof x==='string'&&String(x).trim()));
+    if(!Object.keys(values).length){message.info('یک کلید یا شناسه حساب وارد کنید');return;}
+    setLoading(true);
+    try{await call('ai_provider_config',{values});providerForm.resetFields();await load();message.success('تنظیمات ارائه‌دهنده ذخیره شد');}
+    catch(e){message.error(String(e));}finally{setLoading(false);}
+   }}>
+    <Space wrap>
+     {Object.entries(providerLabels).map(([provider,label])=><Form.Item key={provider}
+       name={'ai_provider_'+provider+'_key'} label={'کلید API — '+label}>
+       <Input.Password placeholder="خالی = حفظ کلید قبلی" autoComplete="new-password" style={{minWidth:200}}/>
+     </Form.Item>)}
+     <Form.Item name="ai_provider_cloudflare_account" label="شناسه ۳۲ کاراکتری حساب Cloudflare">
+       <Input placeholder="Cloudflare Account ID" dir="ltr" style={{minWidth:250}}/>
+     </Form.Item>
+    </Space>
+    <Button type="primary" htmlType="submit" loading={loading}>ذخیره امن کلیدها</Button>
+   </Form>
+   <Table rowKey="model_key" size="small" dataSource={providerModels} pagination={{pageSize:10}} scroll={{x:690}}
+     columns={[{title:'ارائه‌دهنده',render:(_:unknown,r:R)=>providerLabels[r.provider]||r.provider},
+       {title:'مدل',dataIndex:'title'},
+       {title:'نوع',render:(_:unknown,r:R)=>operationLabels[r.modality]||r.modality},
+       {title:'هزینه',render:(_:unknown,r:R)=>r.tier==='free_tier'?<Tag color="blue">سهمیه رایگان محدود</Tag>:<Tag>پولی</Tag>},
+       {title:'اتصال',render:(_:unknown,r:R)=>r.configured?<Tag color="green">کلید موجود</Tag>:<Tag color="orange">بدون کلید</Tag>},
+       {title:'فعال در پلن‌ها',render:(_:unknown,r:R)=><Switch checked={!!r.active}
+          onChange={async on=>{try{await call('ai_model_toggle',{model_key:r.model_key,active:on});await load();}
+          catch(e){message.error(String(e));}}}/>}]}/>
+  </Card>
   <Card size="small" title="⚙️ تعرفه‌های متن، عکس و ویدیو">
    <Form form={priceForm} layout="vertical" onFinish={async values=>{
      setLoading(true);
@@ -85,6 +135,10 @@ export default function AiSalesAdminPage(){
      {title:'قیمت (تومان)',render:(_:unknown,r:R)=>Number(r.price).toLocaleString('fa-IR')},
      {title:'مدت',render:(_:unknown,r:R)=>r.days+' روز'},
      {title:'سهمیه‌ها (متن/عکس/ویدیو)',render:(_:unknown,r:R)=>[r.credits_text,r.credits_image,r.credits_video].join(' / ')},
+     {title:'مدل‌ها (متن / تصویر / ویدیو)',render:(_:unknown,r:R)=>['text','image','video'].map(op=>{
+       const m=providerModels.find(x=>x.model_key===r['model_'+op]);
+       return m?.title||'تعریف نشده';
+      }).join(' / ')},
      {title:'آماده تحویل',render:(_:unknown,r:R)=>r.kind==='ready'?r.stock:'—'},
      {title:'وضعیت',render:(_:unknown,r:R)=>r.active?'فعال':'غیرفعال'},
      {title:'مدیریت',render:(_:unknown,r:R)=><Button onClick={()=>{planForm.setFieldsValue(r);setSelectedKind(r.kind);setPlanOpen(true)}}>ویرایش</Button>}]}/>
@@ -133,9 +187,19 @@ export default function AiSalesAdminPage(){
       <Form.Item name="price" label="قیمت (تومان)" rules={[{required:true}]}><InputNumber min={0} max={1000000000}/></Form.Item>
       <Form.Item name="days" label="مدت (روز)" rules={[{required:true}]}><InputNumber min={1} max={730}/></Form.Item>
     </Space>
-    {selectedKind==='bot'&&<Space wrap>
-     {Object.entries(operationLabels).map(([op,label])=><Form.Item key={op} name={'credits_'+op}
-       label={'سهمیه '+label} initialValue={0}><InputNumber min={0} max={1000000}/></Form.Item>)}
+    {selectedKind==='bot'&&<Space direction="vertical" style={{width:'100%'}}>
+     {Object.entries(operationLabels).map(([op,label])=><Space wrap key={op}>
+       <Form.Item name={'credits_'+op} label={'سهمیه '+label} initialValue={0}>
+        <InputNumber min={0} max={1000000}/>
+       </Form.Item>
+       <Form.Item name={'model_'+op} label={'مدل '+label+' (مستقل از سایر بخش‌ها)'}>
+        <Select allowClear showSearch optionFilterProp="label" style={{minWidth:280}} placeholder={'انتخاب مدل '+label}
+          options={providerModels.filter(m=>m.modality===op&&m.active).map(m=>({
+           value:m.model_key,label:(providerLabels[m.provider]||m.provider)+' / '+m.title+
+            (m.tier==='free_tier'?' — سهمیه رایگان محدود':' — پولی')+(!m.configured?' ⚠️ کلید ندارد':'')
+          }))}/>
+       </Form.Item>
+      </Space>)}
     </Space>}
     <Form.Item name="active" label="فعال" valuePropName="checked" initialValue={true}><Switch/></Form.Item>
     <Button htmlType="submit" type="primary" loading={loading}>ذخیره پلن</Button>

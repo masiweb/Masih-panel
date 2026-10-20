@@ -51,13 +51,16 @@ def menu(c,uid,kind):
  from sales import enqueue
  if kind not in ("image","video"):raise ValueError("نوع تولید نامعتبر است")
  config=_cfg(c)
+ import ai_models
+ chosen=ai_models.resolved(c,uid,kind)
+ ai_models.provider_key(c,chosen["provider"])
  if not _balance(c,uid,kind):
   raise ValueError("اعتبار کافی برای درخواست "+("تصویر" if kind=="image" else "ویدیو")+" ندارید")
  c.execute("UPDATE users SET state=? WHERE id=?",("ai:"+kind+":input",uid))
  cost=config.get("ai_cost_"+kind,0)
  enqueue(c,uid,
   ("🖼 ساخت یا ویرایش تصویر: متن درخواست یا عکس همراه کپشن را ارسال کنید." if kind=="image" else
-   "🎬 ساخت یا ویرایش ویدیوی حداکثر ۸ثانیه‌ای: متن درخواست، یا ویدیوی حداکثر ۱۰ثانیه همراه کپشن را ارسال کنید.")+
+   "🎬 ساخت ویدیوی کوتاه از متن: دستور ویدیوی موردنظر را ارسال کنید. مدل‌های فعلی ویرایش ویدیو را ندارند.")+
   "\nهزینه هر نتیجه موفق: "+str(cost)+" امتیاز، یا یک سهمیه از اشتراک داخل ربات."+
   "\nسهمیه/امتیاز فقط پس از ارسال نتیجه موفق کسر می‌شود.",
   [[("↩️ هوش مصنوعی","fun:ai")]])
@@ -87,6 +90,13 @@ def input_message(c,uid,state,message,update_id):
  if state.endswith(":input"):
   fid,seconds=_telegram_media(message,kind)
   prompt=(message.get("caption") or message.get("text") or "").strip()
+  if fid:
+   import ai_models
+   chosen=ai_models.resolved(c,uid,kind)
+   if kind=="video":
+    raise ValueError("مدل فعلی فقط تولید ویدیو از متن را پشتیبانی می‌کند؛ ویرایش ویدیو هنوز فعال نیست")
+   if chosen["provider"]=="cloudflare":
+    raise ValueError("مدل FLUX فقط ساخت تصویر را انجام می‌دهد؛ برای ویرایش مدل OpenAI را انتخاب کنید")
   if fid and not prompt:
    c.execute("""INSERT INTO ai_media_drafts(uid,kind,file_id,seconds,created)
     VALUES(?,?,?,?,?) ON CONFLICT(uid) DO UPDATE SET kind=excluded.kind,
@@ -187,8 +197,8 @@ def _send_file(c,uid,kind,raw):
  boundary="Masiha"+secrets.token_hex(12)
  method="sendPhoto" if kind=="image" else "sendVideo"
  name="photo" if kind=="image" else "video"
- filename="generated.png" if kind=="image" else "generated.mp4"
- content_type="image/png" if kind=="image" else "video/mp4"
+ filename=("generated.jpg" if raw[:2]==b"\xff\xd8" else "generated.png") if kind=="image" else "generated.mp4"
+ content_type=("image/jpeg" if raw[:2]==b"\xff\xd8" else "image/png") if kind=="image" else "video/mp4"
  data=("--"+boundary+"\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n"+str(uid)+
  "\r\n--"+boundary+"\r\nContent-Disposition: form-data; name=\""+name+
  "\"; filename=\""+filename+"\"\r\nContent-Type: "+content_type+"\r\n\r\n").encode() + raw + (

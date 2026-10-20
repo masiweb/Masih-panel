@@ -73,6 +73,8 @@ def conn():
  audio_fingerprint.setup(c)
  import ai_commerce
  ai_commerce.setup(c)
+ import ai_models
+ ai_models.setup(c)
  import ai_media
  ai_media.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
@@ -710,6 +712,22 @@ def admin(req):
     put(c,k,v)
    audit(c,"ai_media_prices",",".join(sorted(values)))
    return {k:settings(c)[k] for k in fields}
+  if a=="ai_model_catalog":
+   import ai_models
+   return {"models":ai_models.catalog(c),"providers":ai_models.credentials(c),
+           "cloudflare_account_set":bool(s.get("ai_provider_cloudflare_account"))}
+  if a=="ai_provider_config":
+   import ai_models
+   return ai_models.configure(c,req.get("values",{}))
+  if a=="ai_model_toggle":
+   import ai_models
+   key=str(req.get("model_key",""))
+   enabled=req.get("active")
+   if type(enabled) is not bool:raise ValueError("وضعیت مدل نامعتبر است")
+   if not c.execute("UPDATE ai_provider_models SET active=? WHERE model_key=?",
+       (int(enabled),key)).rowcount:raise ValueError("مدل پیدا نشد")
+   audit(c,"ai_model_toggle",key)
+   return {"success":True}
   if a=="ai_sale_get":
    import ai_commerce
    return {"models":[dict(r) for r in c.execute("SELECT * FROM ai_sale_models ORDER BY id")],

@@ -44,26 +44,43 @@ def setup(c):
  );
  """)
 def plan(c,details):
+ """Bind each modality to a separately selected provider/model preset."""
+ import ai_models
  name=str(details.get("name","")).strip()
  kind=details.get("kind")
  price=integer(details.get("price"),0,10**9)
  days=integer(details.get("days"),1,730)
- model=integer(details.get("model_id"),1,10**8)
+ model=integer(details.get("model_id"),1,10**8)  # sales product family, NOT generation model
  if kind not in TYPES or not 2<=len(name)<=80:raise ValueError("نوع یا نام پلن نامعتبر است")
- if not c.execute("SELECT 1 FROM ai_sale_models WHERE id=?",(model,)).fetchone():raise ValueError("مدل تعریف نشده است")
+ if not c.execute("SELECT 1 FROM ai_sale_models WHERE id=?",(model,)).fetchone():raise ValueError("مدل فروش تعریف نشده است")
  credits={x:integer(details.get("credits_"+x,0),0,1000000) for x in OPS}
  if kind!="bot" and any(credits.values()):raise ValueError("سهمیه مصرف فقط برای اشتراک داخل ربات است")
- values=(model,name,kind,price,days,*[credits[x] for x in OPS],int(details.get("active",True)))
  ident=details.get("id")
+ previous=None
  if ident is not None:
   ident=integer(ident,1)
-  if not c.execute("SELECT 1 FROM ai_sale_plans WHERE id=?",(ident,)).fetchone():raise ValueError("پلن پیدا نشد")
+  previous=c.execute("SELECT * FROM ai_sale_plans WHERE id=?",(ident,)).fetchone()
+  if not previous:raise ValueError("پلن پیدا نشد")
+ selections={}
+ for op in OPS:
+  key=str(details.get("model_"+op,(previous["model_"+op] if previous else "")) or "").strip()
+  if kind=="bot" and key:
+   ai_models.select(c,key,op)
+  if kind!="bot" and key:raise ValueError("مدل مصرف API فقط برای اشتراک داخل ربات است")
+  if kind=="bot" and credits[op]>0 and not key and not previous:
+   raise ValueError("برای سهمیه "+op+" مدل ارائه‌دهنده را انتخاب کنید")
+  selections[op]=key
+ values=(model,name,kind,price,days,*[credits[x] for x in OPS],
+         int(details.get("active",True)),*[selections[x] for x in OPS])
+ if previous:
   c.execute("""UPDATE ai_sale_plans SET model_id=?,name=?,kind=?,price=?,days=?,
-   credits_text=?,credits_image=?,credits_video=?,active=? WHERE id=?""",(*values,ident))
+   credits_text=?,credits_image=?,credits_video=?,active=?,
+   model_text=?,model_image=?,model_video=? WHERE id=?""",(*values,ident))
  else:
   ident=c.execute("""INSERT INTO ai_sale_plans
-    (model_id,name,kind,price,days,credits_text,credits_image,credits_video,active)
-    VALUES(?,?,?,?,?,?,?,?,?)""",values).lastrowid
+   (model_id,name,kind,price,days,credits_text,credits_image,credits_video,active,
+   model_text,model_image,model_video)
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",values).lastrowid
  audit(c,"ai_plan_change",str(ident))
  return ident
 
