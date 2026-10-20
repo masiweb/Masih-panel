@@ -13,9 +13,23 @@ import subprocess
 import signal
 import ssl
 import tempfile
+import threading
+import time
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
+
+_STORAGE_SEND_LOCK=threading.Lock()
+_STORAGE_LAST=0.0
+
+def storage_send_pace():
+    """Bound sendAudio + sendPhoto to one per 1.15s for one storage chat."""
+    global _STORAGE_LAST
+    with _STORAGE_SEND_LOCK:
+        wait=_STORAGE_LAST+1.15-time.monotonic()
+        if wait>0:
+            time.sleep(wait)
+        _STORAGE_LAST=time.monotonic()
 
 MAX_AUDIO = 47 * 1024 * 1024  # Telegram multipart sendAudio <= 50 MB
 CHUNK = 64 * 1024
@@ -105,6 +119,7 @@ def upload_to_telegram(path, artist, title, token, chat_id):
     conn = http.client.HTTPSConnection("api.telegram.org", timeout=120,
                                       context=ssl.create_default_context())
     try:
+        storage_send_pace()
         conn.putrequest("POST", "/bot" + token + "/sendAudio", skip_accept_encoding=True)
         conn.putheader("Content-Type", "multipart/form-data; boundary=" + boundary)
         conn.putheader("Content-Length", str(len(prefix) + file_size + len(suffix)))
@@ -181,3 +196,74 @@ def stream_once(url, artist, title, settings, article_url=None):
         # as confirmed by real getFile check before full-archive activation.
         removed = delete_storage_message(settings, chat_id, response["message_id"])
         return response["file_id"], response["file_unique_id"], size, removed
+
+
+
+def upload_cover(url, settings):
+    """Upload one resized JPEG to the bot's storage chat and keep photo file_id.
+
+    Download only licensed-source HTTPS images. Cover bytes live in RAM only.
+    """
+    import io
+    from PIL import Image, ImageOps, UnidentifiedImageError
+    url = validate_cover_url(url)
+    request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "image/jpeg,image/png,image/webp"})
+    with AUDIO_HTTP.open(request, timeout=18) as response:
+        validate_cover_url(response.url)
+        if response.headers.get("Content-Length", "").isdigit() and int(response.headers["Content-Length"]) > 2_000_000:
+            raise ValueError("Cover file too large")
+        raw = response.read(2_000_001)
+    if not 100 <= len(raw) <= 2_000_000:
+        raise ValueError("Cover file size invalid")
+    with Image.open(io.BytesIO(raw)) as image:
+        if image.width * image.height > 4_000_000:
+            raise ValueError("Cover dimensions too large")
+        image.load()
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image.thumbnail((320,320))
+        out = io.BytesIO()
+        image.save(out,format="JPEG",quality=78,optimize=True)
+        photo = out.getvalue()
+    if len(photo)>190_000:
+        raise ValueError("Compressed cover exceeds 190KB")
+    chat_id = verified_storage_chat(settings)
+    boundary = "MasihaCover_" + secrets.token_hex(12)
+    front, back = multipart_fields({"chat_id":chat_id,"disable_notification":"true"},boundary)
+    # Multipart_fields sets field name 'audio'. Change the binary part
+    # only: photo is a distinct Telegram method and never confuses file IDs.
+    front = front.replace(b'name="audio"; filename="track.mp3"',b'name="photo"; filename="cover.jpg"')
+    front = front.replace(b"Content-Type: audio/mpeg",b"Content-Type: image/jpeg")
+    conn=http.client.HTTPSConnection("api.telegram.org",timeout=35,context=ssl.create_default_context())
+    try:
+        storage_send_pace()
+        conn.putrequest("POST","/bot"+settings["token"]+"/sendPhoto",skip_accept_encoding=True)
+        conn.putheader("Content-Type","multipart/form-data; boundary="+boundary)
+        conn.putheader("Content-Length",str(len(front)+len(photo)+len(back)))
+        conn.endheaders()
+        conn.send(front)
+        conn.send(photo)
+        conn.send(back)
+        response=conn.getresponse()
+        result=json.loads(response.read(40_000))
+        if response.status!=200 or not result.get("ok"):
+            raise RuntimeError("Telegram cover HTTP "+str(response.status))
+        message=result.get("result") or {}
+        photos=message.get("photo") or []
+        if not photos or not photos[-1].get("file_id"):
+            raise RuntimeError("Telegram cover has no photo file_id")
+        delete_storage_message(settings,chat_id,message.get("message_id"))
+        return photos[-1]["file_id"]
+    finally:
+        conn.close()
+
+
+def validate_cover_url(url):
+    p=urlsplit(url)
+    if p.scheme!="https" or p.username or p.password or p.port not in (None,443) or p.fragment:
+        raise ValueError("Unsafe cover URL")
+    host=(p.hostname or "").lower()
+    if host!="rozmusic.com" and not host.endswith(".rozmusic.com"):
+        raise ValueError("Untrusted cover host")
+    if not p.path.lower().endswith((".jpg",".jpeg",".png",".webp")):
+        raise ValueError("Invalid cover extension")
+    return url

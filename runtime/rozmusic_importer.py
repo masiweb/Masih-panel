@@ -101,8 +101,17 @@ def parse_article(body):
  ly.feed(body)
  lyrics="\n".join(re.sub(r"[ \t]+"," ",line).strip() for line in
                   "".join(ly.output).splitlines() if line.strip())
+ # Prefer the article's own featured image to generic (sometimes stale) OG art.
+ cover=""
+ image_sources=re.findall(r'<img\b[^>]*?data-src=["\x27]([^"\x27]+)["\x27]',body,re.I)
+ image_sources+=re.findall(r'<meta\b[^>]*property=["\x27]og:image["\x27][^>]*content=["\x27]([^"\x27]+)["\x27]',body,re.I)
+ for img in image_sources:
+  try:
+   cover=telegram_upload.validate_cover_url(html.unescape(img))
+   break
+  except ValueError:continue
  return {"artist":artist,"title":title,"lyrics":lyrics[:MAX_LYRICS],
-         "mp3":valid_mp3[0],"mp3_fallbacks":valid_mp3[1:3]}
+         "mp3":valid_mp3[0],"mp3_fallbacks":valid_mp3[1:3],"cover":cover}
 
 def database():
  import sales
@@ -172,7 +181,7 @@ def index(c,delay=1.0,max_sitemaps=0):
   if delay and j<len(files):time.sleep(delay)
  return len(files),added
 
-def save(c,playlist_id,article_url,row,telegram_file_id):
+def save(c,playlist_id,article_url,row,telegram_file_id,cover_id=""):
  """Publish only AFTER verified Telegram upload. No external URL in public rows."""
  if not isinstance(telegram_file_id,str) or not 10<=len(telegram_file_id)<=1024:
   raise ValueError("Missing verified Telegram audio file_id")
@@ -184,15 +193,15 @@ def save(c,playlist_id,article_url,row,telegram_file_id):
  if existing:
   mid=existing[0]
   cur=c.execute("""UPDATE media_items SET title=?,artist=?,lyrics=?,source_url='',
-    telegram_method='sendAudio',file_id=?,status='published',rights_ok=1
+    telegram_method='sendAudio',file_id=?,cover_id=?,status='published',rights_ok=1
     WHERE id=? AND owner_id=0""",
-    (row["title"],row["artist"],row["lyrics"],telegram_file_id,mid))
+    (row["title"],row["artist"],row["lyrics"],telegram_file_id,cover_id,mid))
   if cur.rowcount!=1:raise RuntimeError("Imported media does not belong to system owner")
  else:
   mid=c.execute("""INSERT INTO media_items(owner_id,kind,telegram_method,file_id,unique_id,
-   source_url,title,artist,lyrics,status,rights_ok,created)
-   VALUES(0,'music','sendAudio',?,?,'',?,?,?,'published',1,?)""",
-   (telegram_file_id,stable_id,row["title"],row["artist"],row["lyrics"],stamp)).lastrowid
+   source_url,title,artist,lyrics,cover_id,status,rights_ok,created)
+   VALUES(0,'music','sendAudio',?,?,'',?,?,?,?,'published',1,?)""",
+   (telegram_file_id,stable_id,row["title"],row["artist"],row["lyrics"],cover_id,stamp)).lastrowid
  c.execute("""INSERT OR IGNORE INTO playlist_entries(playlist_id,media_id,created)
               VALUES(?,?,?)""",(playlist_id,mid,stamp))
  # Announce to subscribed bot users only when a Telegram file first
@@ -233,7 +242,7 @@ def stats(c,playlist_id):
          "done":state.get("done",0),"skipped":state.get("skipped",0),
          "error":state.get("error",0),"playlist_all":n}
 
-def run(c,pid,delay=3.0,max_posts=0):
+def run(c,pid,delay=3.0,max_posts=0,prepare=True):
  """The only public publishing path is confirmed sendAudio + Telegram file_id."""
  import http.client
  import sales
@@ -241,14 +250,23 @@ def run(c,pid,delay=3.0,max_posts=0):
  if not cfg.get("enabled") or not cfg.get("token"):
   raise RuntimeError("Bot must be configured and enabled before music uploads")
  telegram_upload.verified_storage_chat(cfg)
- rollback_legacy_links(c)
+ if prepare:rollback_legacy_links(c)
  processed=0
  while True:
-  item=c.execute("""SELECT q.url,q.attempts FROM roz_catalog_queue q
+  c.execute("BEGIN IMMEDIATE")
+  try:
+   item=c.execute("""SELECT q.url,q.attempts FROM roz_catalog_queue q
    WHERE q.state='pending' OR q.state='error' AND q.attempts<3
    ORDER BY CASE WHEN EXISTS(SELECT 1 FROM roz_catalog_sources s WHERE s.article_url=q.url)
                  THEN 0 ELSE 1 END,
             CASE WHEN q.state='pending' THEN 0 ELSE 1 END,q.url LIMIT 1""").fetchone()
+   if item:
+    c.execute("UPDATE roz_catalog_queue SET state='processing',updated=? WHERE url=?",
+              (int(time.time()),item["url"]))
+   c.commit()
+  except BaseException:
+   c.rollback()
+   raise
   if not item:break
   url=item["url"]
   try:
@@ -278,7 +296,13 @@ def run(c,pid,delay=3.0,max_posts=0):
        last_error=exc
      else:
       raise last_error or ValueError("No downloadable MP3 candidate")
-     save(c,pid,url,data,file_id)
+     cover_id=""
+     if data.get("cover"):
+      try:
+       cover_id=telegram_upload.upload_cover(data["cover"],cfg)
+      except (ValueError,HTTPError,URLError,TimeoutError,OSError,RuntimeError) as cover_exc:
+       print("COVER_RETRY_LATER",type(cover_exc).__name__,flush=True)
+     save(c,pid,url,data,file_id,cover_id)
      c.execute("""UPDATE roz_catalog_queue SET state='done',last_error='',updated=?
                   WHERE url=?""",(int(time.time()),url))
      print("TELEGRAM_FILE_SAVED bytes",size,"TEMP_FILE_REMOVED yes",
@@ -286,6 +310,7 @@ def run(c,pid,delay=3.0,max_posts=0):
   except HTTPError as exc:
    if exc.code in (429,503):
     print("SOURCE_RATE_LIMIT_PAUSE",exc.code,flush=True)
+    c.execute("UPDATE roz_catalog_queue SET state='pending',updated=0 WHERE url=?",(url,))
     c.commit()
     time.sleep(180)
     continue
@@ -312,14 +337,49 @@ def run(c,pid,delay=3.0,max_posts=0):
   if delay:time.sleep(delay)
  return processed
 
+def run_parallel(c,pid,delay=0.6,workers=5):
+ """Run bounded jobs concurrently with separate SQLite connections.
+
+ Claiming is atomic; a terminated process leaves jobs recoverable.
+ The fingerprint engine retains its existing inter-process lock.
+ """
+ import fcntl
+ from concurrent.futures import ThreadPoolExecutor
+ import sales
+ if not 1<=workers<=6:raise ValueError("Invalid worker count")
+ lockpath=sales.BASE/"rozmusic-import.lock"
+ lockpath.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+ with lockpath.open("a+b") as lock:
+  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError:
+   raise RuntimeError("A music importer is already running")
+  # No other importer holds the flock; restore jobs interrupted by stop.
+  c.execute("UPDATE roz_catalog_queue SET state='pending',updated=0 WHERE state='processing'")
+  c.commit()
+  rollback_legacy_links(c)
+  dbfile=c.execute("PRAGMA database_list").fetchone()[2]
+  def worker(index):
+   worker_db=sqlite3.connect(dbfile,timeout=45)
+   worker_db.row_factory=sqlite3.Row
+   worker_db.execute("PRAGMA busy_timeout=45000")
+   try:
+    processed=run(worker_db,pid,delay,prepare=False)
+    print("UPLOAD_WORKER",index,"PROCESSED",processed,flush=True)
+    return processed
+   finally:worker_db.close()
+  with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="music-import") as pool:
+   results=list(pool.map(worker,range(workers)))
+  return sum(results)
+
 def main():
  p=argparse.ArgumentParser(description="Authorized RozMusic -> public playlist all sync")
  p.add_argument("action",choices=("index","run","upload","status"))
  p.add_argument("--max-sitemaps",type=int,default=0)
  p.add_argument("--max-posts",type=int,default=0)
  p.add_argument("--delay",type=float,default=3.0)
+ p.add_argument("--workers",type=int,default=1)
  a=p.parse_args()
- if a.max_sitemaps<0 or a.max_posts<0 or not 0.5<=a.delay<=30:
+ if a.max_sitemaps<0 or a.max_posts<0 or not 0.5<=a.delay<=30 or not 1<=a.workers<=6:
   p.error("Invalid import bounds: use delay 0.5 to 30 seconds")
  c,pid=database()
  try:
@@ -327,7 +387,8 @@ def main():
    count,added=index(c,a.delay,a.max_sitemaps)
    print("SITEMAPS_INDEXED",count,"NEW_URLS",added,flush=True)
   if a.action in ("run","upload"):
-   n=run(c,pid,a.delay,a.max_posts)
+   n=(run_parallel(c,pid,a.delay,a.workers)
+      if a.workers>1 and a.max_posts==0 else run(c,pid,a.delay,a.max_posts))
    print("POSTS_PROCESSED_THIS_RUN",n,flush=True)
   print("CATALOG_STATUS",json.dumps(stats(c,pid)),flush=True)
  finally:c.close()

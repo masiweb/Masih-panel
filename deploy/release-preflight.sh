@@ -61,7 +61,7 @@ grep -Fq "contact_onboarding_rollout_v2" runtime/sales_worker.py
 grep -Fq "request_missing_phones" runtime/sales.py
 grep -Fq "دریافت اجباری شماره حساب تلگرام" deploy/install-sidecar.sh
 
-(cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py)
+(cd runtime && python3 -m unittest -q test_rozmusic_importer.py test_rozmusic_upload.py test_rozmusic_fast.py)
 for f in runtime/audio_fingerprint.py runtime/test_audio_fingerprint.py
            do [[ -s "$f" ]] || { echo "Missing audio fingerprint: $f" >&2; exit 1; }; done
 for f in deploy/install-audio-fingerprint.sh deploy/masiha-audio-fingerprint.service deploy/masiha-audio-fingerprint.timer sidecar/test_dynamic_auth.py
