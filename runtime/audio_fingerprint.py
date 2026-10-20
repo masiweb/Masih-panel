@@ -50,6 +50,11 @@ def setup(c):
     );
     CREATE INDEX IF NOT EXISTS audio_fp_queries_state ON audio_fp_queries(state,id);
     """)
+    cols={r[1] for r in c.execute("PRAGMA table_info(audio_fp_index)")}
+    if "fingerprint_id" not in cols:
+        c.execute("ALTER TABLE audio_fp_index ADD COLUMN fingerprint_id TEXT NOT NULL DEFAULT ''")
+        # Old indexed media used the 'm<media_id>' audfprint marker.
+        c.execute("UPDATE audio_fp_index SET fingerprint_id='m'||media_id WHERE indexed=1")
 
 def available():
     return ENGINE.is_file() and shutil.which("ffmpeg") is not None
@@ -244,9 +249,10 @@ def process_reference(c,row):
             else:
                 raise last
         index_audio(path,"m"+str(mid))
-    c.execute("""INSERT INTO audio_fp_index(media_id,indexed,state,updated) VALUES(?,1,'done',?)
-     ON CONFLICT(media_id) DO UPDATE SET indexed=1,state='done',error='',updated=excluded.updated""",
-     (mid,int(time.time())))
+    c.execute("""INSERT INTO audio_fp_index(media_id,indexed,state,fingerprint_id,updated)
+     VALUES(?,1,'done',?,?) ON CONFLICT(media_id) DO UPDATE SET
+     indexed=1,state='done',fingerprint_id=excluded.fingerprint_id,error='',
+     updated=excluded.updated""",(mid,"m"+str(mid),int(time.time())))
 
 def run_once():
     if not available():return "dependencies_missing"

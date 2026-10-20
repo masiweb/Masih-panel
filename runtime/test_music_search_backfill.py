@@ -65,6 +65,8 @@ class MusicFeatures(unittest.TestCase):
   with patch.object(importer,"get",return_value=HTML),patch.object(importer.telegram_upload,"verified_storage_chat",return_value=self.uid),patch.object(importer.telegram_upload,"stream_once",side_effect=transfer),patch.object(importer.telegram_upload,"upload_cover",return_value="TG_PHOTO_ID_123456"),patch("media_library.broadcast_new_media"):
    importer.run(self.c,self.pid,delay=0,max_posts=1)
   self.assertEqual(tuple(self.c.execute("SELECT indexed,state FROM audio_fp_index").fetchone()),(1,"done"))
+  ref=self.c.execute("SELECT fingerprint_id FROM audio_fp_index").fetchone()[0]
+  self.assertTrue(ref.startswith("a") and len(ref)==25)
  def test_reference_backfill_waits_for_catalog(self):
   self.item()
   self.c.execute("INSERT INTO roz_catalog_queue(url,state) VALUES(?,'pending')",("https://rozmusic.com/new.html",))

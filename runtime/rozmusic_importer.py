@@ -311,10 +311,12 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
        print("COVER_RETRY_LATER",type(cover_exc).__name__,flush=True)
      mid=save(c,pid,url,data,file_id,cover_id)
      if fp_status and fp_status[-1]:
-      c.execute("""INSERT INTO audio_fp_index(media_id,indexed,state,attempts,error,updated)
-           VALUES(?,1,'done',0,'',?) ON CONFLICT(media_id) DO UPDATE SET
-           indexed=1,state='done',attempts=0,error='',updated=excluded.updated""",
-          (mid,int(time.time())))
+      fingerprint_id="a"+hashlib.sha256(url.encode()).hexdigest()[:24]
+      c.execute("""INSERT INTO audio_fp_index
+           (media_id,indexed,state,attempts,error,fingerprint_id,updated)
+           VALUES(?,1,'done',0,'',?,?) ON CONFLICT(media_id) DO UPDATE SET
+           indexed=1,state='done',attempts=0,error='',fingerprint_id=excluded.fingerprint_id,
+           updated=excluded.updated""",(mid,fingerprint_id,int(time.time())))
      c.execute("""UPDATE roz_catalog_queue SET state='done',last_error='',updated=?
                   WHERE url=?""",(int(time.time()),url))
      print("TELEGRAM_FILE_SAVED bytes",size,"TEMP_FILE_REMOVED yes",
