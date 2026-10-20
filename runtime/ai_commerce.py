@@ -67,8 +67,8 @@ def plan(c,details):
   if kind=="bot" and key:
    ai_models.select(c,key,op)
   if kind!="bot" and key:raise ValueError("مدل مصرف API فقط برای اشتراک داخل ربات است")
-  if kind=="bot" and credits[op]>0 and not key and not previous:
-   raise ValueError("برای سهمیه "+op+" مدل ارائه‌دهنده را انتخاب کنید")
+  # Old clients and API-created plans continue using legacy defaults.
+  # The web editor now exposes a separate model selector for each mode.
   selections[op]=key
  values=(model,name,kind,price,days,*[credits[x] for x in OPS],
          int(details.get("active",True)),*[selections[x] for x in OPS])

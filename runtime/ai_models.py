@@ -54,7 +54,7 @@ def catalog(c):
          for r in c.execute("SELECT * FROM ai_provider_models ORDER BY modality,provider,title")]
 def configure(c,values):
  if not isinstance(values,dict) or not values:raise ValueError("تنظیمات ارائه‌دهندگان معتبر نیست")
- allowed={*KEY_FIELDS.values(),"ai_provider_cloudflare_account"}
+ allowed={*KEY_FIELDS.values(),"ai_provider_cloudflare_account",*[f"ai_default_{op}_model" for op in KINDS]}
  if set(values)-allowed:raise ValueError("فیلد ناشناخته ارائه‌دهنده")
  for key,value in values.items():
   if not isinstance(value,str) or len(value)>500:raise ValueError("مقدار نامعتبر است")
@@ -64,6 +64,10 @@ def configure(c,values):
     raise ValueError("کلید API معتبر نیست")
    if value:put(c,key,value)
    # Empty form field means KEEP existing key. No retrieval of secrets.
+  elif key.startswith("ai_default_"):
+   op=key[len("ai_default_"):-len("_model")]
+   if value:select(c,value,op)
+   put(c,key,value)
   else:
    if not re.fullmatch(r"[a-fA-F0-9]{32}",value):
     raise ValueError("شناسه حساب Cloudflare باید ۳۲ کاراکتر هگز باشد")
@@ -88,7 +92,7 @@ def resolved(c,uid,kind):
    if key:return select(c,key,kind)
  cfg=settings(c)
  defaults={"text":"oa-mini","image":"oa-imgmini","video":""}
- key=defaults[kind]
+ key=cfg.get("ai_default_"+kind+"_model") or defaults[kind]
  if kind=="text":
   custom=cfg.get("ai_model","")
   found=c.execute("SELECT model_key FROM ai_provider_models WHERE model_id=? AND modality='text' AND provider='openai'",
@@ -135,7 +139,7 @@ def text_response(c,model,prompt):
  payload={"model":model["model_id"],"messages":[
   {"role":"system","content":"You are a helpful Persian assistant. Never solicit passwords or secrets."},
   {"role":"user","content":prompt[:1600]}]}
- if provider!="groq":payload["max_completion_tokens"]=420
+ if provider=="openai":payload["max_completion_tokens"]=420
  else:payload["max_tokens"]=420
  answer=_api_json(url,provider_key(c,provider),payload)
  try:response=answer["choices"][0]["message"]["content"]
