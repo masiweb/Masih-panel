@@ -6,6 +6,7 @@ import './pages/vpn/SalesBotPage.css';
 import './masiha-standalone.css';
 import SalesBotPage from './pages/vpn/SalesBotPage';
 import VPNPage from './pages/vpn/VPNPage';
+import UnifiedAccountsPage from './pages/vpn/UnifiedAccountsPage';
 import BackupRestorePanel from './pages/vpn/BackupRestorePanel';
 import {setupHttp} from './api/http-init';
 
@@ -14,6 +15,9 @@ const tabs = [
   {key:'bot', title:'تنظیمات ربات'},
   {key:'openvpn', title:'OpenVPN'},
   {key:'openconnect', title:'OpenConnect'},
+  {key:'shared',title:'اشتراک مشترک'},
+  {key:'l2tp',title:'L2TP/IPsec'},
+  {key:'ikev2',title:'IKEv2/IPsec'},
   {key:'backup', title:'بکاپ و بازیابی'}
 ];
 function Panel() {
@@ -31,6 +35,9 @@ function Panel() {
     <main className="m-content">{selected==='bot'?<SalesBotPage/>:
       selected==='openvpn'?<VPNPage protocol="openvpn"/>:
       selected==='openconnect'?<VPNPage protocol="openconnect"/>:
+      selected==='shared'?<UnifiedAccountsPage/>:
+      selected==='l2tp'?<VPNPage protocol="l2tp"/>:
+      selected==='ikev2'?<VPNPage protocol="ikev2"/>:
       selected==='backup'?<BackupRestorePanel/>:<Alert type="warning" message="صفحه یافت نشد"/>}</main>
     <footer className="m-footer">نسخه مستقل مسیحا — این بخش با آپدیت فایل اجرایی x-ui بازنویسی نمی‌شود.</footer>
   </div>;

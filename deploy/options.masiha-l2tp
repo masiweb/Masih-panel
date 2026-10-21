@@ -1,0 +1,13 @@
+name xl2tpd
+auth
+require-mschap-v2
+refuse-pap
+refuse-chap
+refuse-mschap
+ms-dns 1.1.1.1
+ms-dns 8.8.8.8
+mtu 1400
+mru 1400
+lock
+hide-password
+nodefaultroute

@@ -1,0 +1,9 @@
+[global]
+ipsec saref = yes
+[lns default]
+ip range = 10.84.0.10-10.84.0.240
+local ip = 10.84.0.1
+require authentication = yes
+name = xl2tpd
+pppoptfile = /etc/ppp/options.masiha-l2tp
+length bit = yes

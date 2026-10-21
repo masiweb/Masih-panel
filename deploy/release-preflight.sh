@@ -9,7 +9,7 @@ for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/f
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/social.py runtime/test_social.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/web-backup-worker.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/social.py runtime/test_social.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/masiha-ppp-hook.sh runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/web-backup-worker.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -83,7 +83,7 @@ done
   { echo "Unsafe URL-only public import detected" >&2; exit 2; }
 echo "PASS: sales, named checkout, trials, Telegram and quota tests"
 # Check exact key shell scripts and source files required at deployment time.
-for f in runtime/manager.py runtime/unified.py runtime/worker.py runtime/sales.py \
+for f in runtime/manager.py runtime/ipsec_backend.py runtime/ipsec_accounting.py runtime/test_ipsec.py runtime/unified.py runtime/worker.py runtime/sales.py \
          runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/runtime_config.py \
          runtime/bot_texts.py runtime/bot_texts_export.py runtime/bot_texts_admin.py runtime/bot_texts.fa.json \
          runtime/test_bot_texts_navigation.py runtime/test_bot_texts_admin.py \

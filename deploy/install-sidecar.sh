@@ -16,6 +16,8 @@ NODE=/opt/masiha-vpn-toolchains/node-v24.21.0-linux-x64/bin
 [[ -f /etc/nginx/sites-available/masiha-vpn ]] || { echo "Missing Masiha nginx site" >&2;exit 1; }
 install -d -m 0755 /var/www/masiha-ui /opt/masiha-vpn-extension
 install -m 0644 "$SIDE/server.py" /opt/masiha-vpn-extension/sidecar_server.py
+install -m 0644 "$ROOT/runtime/ipsec_backend.py" /opt/masiha-vpn-extension/ipsec_backend.py
+install -m 0644 "$ROOT/runtime/ipsec_accounting.py" /opt/masiha-vpn-extension/ipsec_accounting.py
 install -m 0644 "$SIDE/masiha-standalone.html" "$SRC/masiha-standalone.html"
 install -m 0644 "$SIDE/masiha-standalone.tsx" "$SRC/src/masiha-standalone.tsx"
 install -m 0644 "$SIDE/standalone.css" "$SRC/src/masiha-standalone.css"
@@ -25,6 +27,7 @@ install -m 0644 "$SIDE/SocialAdminPage.tsx" "$SRC/src/pages/vpn/SocialAdminPage.
 install -m 0644 "$SIDE/ClubUserProfileModal.tsx" "$SRC/src/pages/vpn/ClubUserProfileModal.tsx"
 install -m 0644 "$SIDE/AiSalesAdminPage.tsx" "$SRC/src/pages/vpn/AiSalesAdminPage.tsx"
 install -m 0644 "$SIDE/BotTextsAdminPage.tsx" "$SRC/src/pages/vpn/BotTextsAdminPage.tsx"
+install -m 0644 "$SIDE/UnifiedAccountsPage.tsx" "$SRC/src/pages/vpn/UnifiedAccountsPage.tsx"
 # The official 3x-ui frontend is rebuilt from a pinned source revision.
 # Inject media settings as an independent addon, never a native binary patch.
 python3 - "$SRC/src/pages/vpn/SalesBotPage.tsx" <<'PYMEDIA'
@@ -62,6 +65,7 @@ PYSOC
 python3 "$SIDE/patch_users_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
 python3 "$SIDE/patch_ai_sales_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
 python3 "$SIDE/patch_bot_texts_tab.py" "$SRC/src/pages/vpn/SalesBotPage.tsx"
+python3 "$SIDE/patch_ipsec_pages.py" "$SRC/src/pages/vpn/VPNPage.tsx"
 python3 - "$SRC/src/pages/vpn/VPNPage.tsx" <<'PY'
 import sys
 from pathlib import Path

@@ -1,0 +1,35 @@
+config setup
+    uniqueids=yes
+
+conn masiha-ikev2
+    keyexchange=ikev2
+    type=tunnel
+    auto=add
+    left=%any
+    leftid=@MASIHA_DOMAIN
+    leftcert=/etc/letsencrypt/live/MASIHA_DOMAIN/fullchain.pem
+    leftauth=pubkey
+    leftsendcert=always
+    leftsubnet=0.0.0.0/0
+    right=%any
+    rightauth=eap-mschapv2
+    eap_identity=%identity
+    rightsourceip=10.83.0.0/24
+    rightdns=1.1.1.1,8.8.8.8
+    ike=aes256-sha256-modp2048,aes256gcm16-prfsha256-modp2048!
+    esp=aes256gcm16,aes256-sha256!
+    dpdaction=clear
+
+conn masiha-l2tp
+    keyexchange=ikev1
+    type=transport
+    auto=add
+    left=%any
+    leftprotoport=17/1701
+    right=%any
+    rightprotoport=17/%any
+    authby=secret
+    forceencaps=yes
+    ike=aes256-sha256-modp2048!
+    esp=aes256-sha256!
+    dpdaction=clear

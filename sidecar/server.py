@@ -294,6 +294,10 @@ class Handler(BaseHTTPRequestHandler):
             if trusted_panel_api_path(path, "masiha-vpn"):
                 body = self.read_json(16384)
                 return self.send_bytes(200, json_command("manager.py", body))
+            if trusted_panel_api_path(path, "masiha-profiles"):
+                body = self.read_json(2048)
+                return self.send_bytes(200, json_command("unified.py", body))
+
             if trusted_panel_api_path(path, "sales-bot"):
                 body = self.read_json(65536)
                 return self.send_bytes(200, json_command("sales.py", body))

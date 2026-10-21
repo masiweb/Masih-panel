@@ -7,7 +7,11 @@ import contextlib, hashlib, json, os, secrets, sqlite3, sys, time
 from pathlib import Path
 import manager
 DB=os.environ.get("MASIHA_PANEL_DB","/etc/x-ui/x-ui.db")
-PROTOCOLS=("openvpn","openconnect")
+PROTOCOLS=("openvpn","openconnect","ikev2","l2tp")
+def active_protocols():
+ import ipsec_backend
+ return tuple(p for p in PROTOCOLS if p in ("openvpn","openconnect") or ipsec_backend.configured(p))
+
 def connection():
  c=sqlite3.connect(DB,timeout=20);c.row_factory=sqlite3.Row
  return c
@@ -103,7 +107,7 @@ def reconcile():
  ids={r["id"] for r in rows}
  for ident,a in list(accounts.items()):
   if ident not in ids or next(r["created_at"] for r in rows if r["id"]==ident)!=a["generation"]:
-   for proto in PROTOCOLS:
+   for proto in active_protocols():
     with manager.db() as m:exists=m.execute("SELECT 1 FROM users WHERE protocol=? AND username=?",(proto,a["username"])).fetchone()
     if exists:manager.handle({"action":"delete","protocol":proto,"username":a["username"]})
    with connection() as c:c.execute("DELETE FROM masiha_accounts WHERE client_id=?",(ident,))
@@ -115,11 +119,12 @@ def reconcile():
    with connection() as c:c.execute("INSERT INTO masiha_accounts(client_id,generation,username,password) VALUES(?,?,?,?)",(a["client_id"],a["generation"],a["username"],a["password"]))
   try:
    enabled=permitted(r);deadline=max(0,expiry(r)//1000)
-   for proto in PROTOCOLS:
+   for proto in active_protocols():
     with manager.db() as m:existing=m.execute("SELECT * FROM users WHERE protocol=? AND username=?",(proto,a["username"])).fetchone()
     if existing and bool(existing["enabled"])==enabled and existing["expires"]==deadline:continue
     req={"protocol":proto,"action":"update" if existing else "create","username":a["username"],"enabled":enabled,"expires":deadline}
-    if proto=="openconnect" and not existing:req["password"]=a["password"]
+    if proto in ("openconnect","ikev2","l2tp") and not existing:
+     req["password"]=a["password"]
     manager.handle(req)
    with connection() as c:c.execute("UPDATE masiha_accounts SET ready=1,error='' WHERE client_id=?",(r["id"],))
   except Exception:
@@ -136,7 +141,7 @@ def profiles(subid):
   if not permitted(r):continue
   a=accounts.get(r["id"])
   if not a or not a["ready"] or a["generation"]!=r["created_at"]:continue
-  for proto in PROTOCOLS:
+  for proto in active_protocols():
    with manager.db() as m:row=m.execute("SELECT * FROM users WHERE protocol=? AND username=?",(proto,a["username"])).fetchone()
    if not row:continue
    cfg=manager.profile(row)

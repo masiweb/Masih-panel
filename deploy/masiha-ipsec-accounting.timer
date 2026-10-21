@@ -1,0 +1,10 @@
+[Unit]
+Description=Masiha IPsec shared quota sampling
+[Timer]
+OnBootSec=20sec
+OnUnitInactiveSec=10sec
+AccuracySec=2sec
+Persistent=true
+Unit=masiha-ipsec-accounting.service
+[Install]
+WantedBy=timers.target

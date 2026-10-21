@@ -83,6 +83,9 @@ def disable(c,row):
     c.commit()
     disconnect(row["protocol"],row)
 def profile(row):
+    if row["protocol"] in ("ikev2","l2tp"):
+        import ipsec_backend
+        return ipsec_backend.profile(row["protocol"],row["username"])
     if not row["enabled"] or row["expires"] and row["expires"]<=int(time.time()): raise ValueError("کاربر غیرفعال یا منقضی است")
     if row["protocol"]=="openconnect":
         return {"filename":row["username"]+"-openconnect.txt","content":"Server: https://"+HOST+":4443\nUsername: "+row["username"]+"\nProtocol: AnyConnect / OpenConnect\nPassword: use the password set by the administrator\n"}
@@ -96,6 +99,9 @@ def profile(row):
     return {"filename":row["username"]+".ovpn","content":"\n".join(parts)+"\n"}
 def handle(req):
     protocol=req.get("protocol")
+    if protocol in ("ikev2","l2tp"):
+        import ipsec_backend
+        return ipsec_backend.handle(req)
     if protocol not in UNITS: raise ValueError("Invalid protocol")
     action=req.get("action")
     with db() as c:
