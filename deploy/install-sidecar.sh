@@ -90,6 +90,7 @@ if [[ -s "$ROOT/runtime/rozmusic_importer.py" &&
   install -m 0644 "$ROOT/runtime/roz_telegram_upload.py" /opt/masiha-vpn-extension/roz_telegram_upload.py
   install -m 0644 "$ROOT/runtime/rozmusic_importer.py" /opt/masiha-vpn-extension/rozmusic_importer.py
   install -m 0644 "$ROOT/runtime/roz_cover_backfill.py" /opt/masiha-vpn-extension/roz_cover_backfill.py
+  install -m 0644 "$ROOT/runtime/acoustid_client.py" /opt/masiha-vpn-extension/acoustid_client.py
   install -m 0644 "$ROOT/runtime/audio_fingerprint.py" /opt/masiha-vpn-extension/audio_fingerprint.py
   install -m 0644 "$ROOT/runtime/ai_commerce.py" /opt/masiha-vpn-extension/ai_commerce.py
   install -m 0644 "$ROOT/runtime/ai_media.py" /opt/masiha-vpn-extension/ai_media.py

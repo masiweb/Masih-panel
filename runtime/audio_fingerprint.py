@@ -18,6 +18,7 @@ import tempfile
 import time
 from urllib.parse import quote
 from urllib.error import HTTPError
+import acoustid_client
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 ROOT = Path("/var/lib/masiha-audio-fp")
@@ -70,10 +71,11 @@ def enqueue(c,uid,update_id,file):
         raise ValueError("اندازه فایل صوتی بیش از حد مجاز است (حداکثر ۹ مگابایت)")
     if type(duration) is not int or not 5<=duration<=45:
         raise ValueError("۵ تا ۴۵ ثانیه از صدای واقعی آهنگ را ارسال کنید")
-    if not available():
-        raise ValueError("سرویس شناسایی صوتی هنوز در دسترس نیست")
-    if not DATABASE.exists():
-        raise ValueError("نمایه صوتی آهنگ‌ها هنوز آماده نشده است؛ ابتدا چند آهنگ باید اثرانگشت‌گذاری شوند")
+    if not (acoustid_client.configured() and Path(acoustid_client.FPCALC).is_file()):
+        if not available():
+            raise ValueError("سرویس شناسایی صوتی هنوز در دسترس نیست")
+        if not DATABASE.exists():
+            raise ValueError("نمایه صوتی آهنگ‌ها هنوز آماده نشده است؛ ابتدا چند آهنگ باید اثرانگشت‌گذاری شوند")
     ts=int(time.time())
     c.execute("""INSERT OR IGNORE INTO audio_fp_queries
      (user_id,update_id,file_id,created) VALUES(?,?,?,?)""",(uid,update_id,fid,ts))
@@ -199,25 +201,58 @@ def notify(c,uid,body,mid=None,dedupe=None):
 
 def process_query(c,row):
     uid=row["user_id"];ident=row["id"]
+    recognized=[]
+    api_problem=""
     with tempfile.TemporaryDirectory(prefix="masiha-fp-query-",dir="/tmp") as d:
         dest=Path(d)/"query.ogg"
         download_telegram(c,row["file_id"],dest,MAX_QUERY)
-        matched=recognize_audio(dest)
+        if acoustid_client.configured():
+            try:
+                recognized=acoustid_client.identify(dest)
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired) as ex:
+                # Voice lookup stays usable if external API has an outage.
+                api_problem=type(ex).__name__
+        if recognized:
+            result=acoustid_client.match_catalog(c,recognized)
+            if result:
+                media,track=result
+                body=("🎵 موزیک شناسایی شد: "+media["title"]+
+                    (" | "+media["artist"] if media["artist"] else "")+
+                    "\n✅ با آرشیو ربات تطبیق داده شد.")
+                notify(c,uid,body,media["id"],"audio-fp:result:"+str(ident))
+                c.execute("""UPDATE audio_fp_queries SET state='done',media_id=?,
+                    message='matched_api',updated=? WHERE id=?""",
+                    (media["id"],int(time.time()),ident))
+                return
+        # Local fingerprint matching remains as a privacy-friendly fallback.
+        matched=recognize_audio(dest) if available() and DATABASE.exists() else None
     media=resolve_match(c,matched) if matched else None
     if media:
         body=("🎵 موزیک شناسایی شد: "+media["title"]+
               (" | "+media["artist"] if media["artist"] else ""))
         notify(c,uid,body,media["id"],"audio-fp:result:"+str(ident))
-        c.execute("""UPDATE audio_fp_queries SET state='done',media_id=?,message='matched',updated=?
-          WHERE id=?""",(media["id"],int(time.time()),ident))
+        c.execute("""UPDATE audio_fp_queries SET state='done',media_id=?,
+          message='matched_local',updated=? WHERE id=?""",
+          (media["id"],int(time.time()),ident))
+    elif recognized:
+        top=recognized[0]
+        body=("🎵 نتیجه شناسایی صوتی:\n"
+              "🎶 آهنگ: "+top["title"]+
+              ("\n🎤 خواننده: "+top["artist"] if top["artist"] else "")+
+              "\n\nاین آهنگ در آرشیو فعلی ربات پیدا نشد.")
+        notify(c,uid,body,dedupe="audio-fp:result:"+str(ident))
+        c.execute("""UPDATE audio_fp_queries SET state='done',
+          message='identified_not_in_catalog',updated=? WHERE id=?""",
+          (int(time.time()),ident))
     else:
         indexed=c.execute("SELECT COUNT(*) FROM audio_fp_index WHERE indexed=1").fetchone()[0]
         total=c.execute("SELECT COUNT(*) FROM media_items WHERE kind='music' AND status='published'").fetchone()[0]
-        note= "این موزیک در بخش نمایه‌گذاری‌شده آرشیو پیدا نشد."
+        note="این موزیک در بخش نمایه‌گذاری‌شده آرشیو پیدا نشد."
         if indexed<total:note+="\nℹ️ شناسایی صوتی آرشیو در حال تکمیل است."
+        if api_problem:note+="\n⚠️ سرویس شناسایی خارجی موقتاً در دسترس نبود."
         notify(c,uid,"🔎 "+note,dedupe="audio-fp:result:"+str(ident))
-        c.execute("UPDATE audio_fp_queries SET state='done',message='not_found',updated=? WHERE id=?",
-                  (int(time.time()),ident))
+        c.execute("""UPDATE audio_fp_queries SET state='done',message='not_found',
+          updated=? WHERE id=?""",(int(time.time()),ident))
 
 def process_reference(c,row):
     mid=row["id"]
@@ -255,7 +290,8 @@ def process_reference(c,row):
      updated=excluded.updated""",(mid,"m"+str(mid),int(time.time())))
 
 def run_once():
-    if not available():return "dependencies_missing"
+    if not available() and not (acoustid_client.configured() and Path(acoustid_client.FPCALC).is_file()):
+        return "dependencies_missing"
     import sales
     with sales.conn() as c:
         setup(c)

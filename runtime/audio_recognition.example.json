@@ -1,0 +1,5 @@
+{
+  "provider": "acoustid",
+  "enabled": false,
+  "client_key": ""
+}

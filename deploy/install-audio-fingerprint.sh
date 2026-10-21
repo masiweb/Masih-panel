@@ -3,7 +3,7 @@ set -Eeuo pipefail
 [[ $(id -u) -eq 0 ]] || { echo "Use root" >&2; exit 1; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y -q --no-install-recommends ffmpeg python3-numpy python3-scipy python3-docopt python3-joblib python3-psutil
+apt-get install -y -q --no-install-recommends libchromaprint-tools ffmpeg python3-numpy python3-scipy python3-docopt python3-joblib python3-psutil
 mkdir -p /opt/masiha-audio-fp /var/lib/masiha-audio-fp
 chmod 0700 /var/lib/masiha-audio-fp
 if [[ ! -d /opt/masiha-audio-fp/audfprint/.git ]]; then
@@ -13,7 +13,12 @@ fi
 git -C /opt/masiha-audio-fp/audfprint fetch --quiet origin cb03ba99feafd41b8874307f0f4e808a6ce34362
 git -C /opt/masiha-audio-fp/audfprint checkout --quiet cb03ba99feafd41b8874307f0f4e808a6ce34362
 [[ "$(git -C /opt/masiha-audio-fp/audfprint rev-parse HEAD)" == cb03ba99feafd41b8874307f0f4e808a6ce34362 ]]
+install -m 0644 "$ROOT/runtime/acoustid_client.py" /opt/masiha-vpn-extension/acoustid_client.py
 install -m 0644 "$ROOT/runtime/audio_fingerprint.py" /opt/masiha-vpn-extension/audio_fingerprint.py
+mkdir -p /etc/masiha-vpn-extension/sales
+if [[ ! -e /etc/masiha-vpn-extension/sales/audio_recognition.json ]]; then
+  install -m 0600 "$ROOT/runtime/audio_recognition.example.json" /etc/masiha-vpn-extension/sales/audio_recognition.json
+fi
 install -m 0644 "$ROOT/deploy/masiha-audio-fingerprint.service" /etc/systemd/system/
 install -m 0644 "$ROOT/deploy/masiha-audio-fingerprint.timer" /etc/systemd/system/
 python3 -m py_compile /opt/masiha-vpn-extension/audio_fingerprint.py
