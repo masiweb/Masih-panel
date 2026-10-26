@@ -92,7 +92,9 @@ def collect():
  try:
   import routeros6
   routeros6.collect()
- except Exception as e:errors.append("routeros6: "+str(e))
+ except (OSError,RuntimeError,ValueError,ConnectionError) as e:
+  # Secondary TCP listener failure must not break provisioning for other VPNs.
+  print("RouterOS6 status error: "+type(e).__name__,file=sys.stderr)
  if errors:raise RuntimeError("; ".join(errors))
 def reconcile():
  initialize()

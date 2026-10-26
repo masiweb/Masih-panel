@@ -76,6 +76,7 @@ server 10.85.0.0 255.255.255.0
 ca $DIR/ca.crt
 cert $DIR/server.crt
 key $DIR/server.key
+dh none
 verify-client-cert none
 username-as-common-name
 auth-user-pass-verify /opt/masiha-vpn-extension/ros6-auth-hook.sh via-file

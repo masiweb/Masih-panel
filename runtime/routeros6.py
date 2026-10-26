@@ -63,7 +63,9 @@ def auth(password_file):
 
 def session(username, real_address, started):
     import unified
-    return unified.ovpn_session("ros6-" + username, real_address, started)
+    # OpenVPN status and hooks may report slightly different timestamps.
+    # The remote TCP IP:port identifies a connection for its lifetime.
+    return unified.ovpn_session("ros6-" + username, real_address, "tcp-session")
 
 
 def hook():
@@ -109,7 +111,7 @@ def management(command):
 def collect():
     """Sample RouterOS TCP sessions into native x-ui client_traffics."""
     import unified
-    if not installed():
+    if not installed() or not SOCKET.exists():
         return
     for line in management("status 3").splitlines():
         parts = line.split("\t")
@@ -142,6 +144,7 @@ def profiles(account, domain):
     script = "\n".join((
         "# MikroTik RouterOS 6.48.6; upload masiha-ros6-ca.crt via WinBox Files first.",
         '/certificate import file-name=masiha-ros6-ca.crt passphrase=""',
+        '/certificate set [find where common-name="Masiha RouterOS6 CA"] trusted=yes',
         "# IMPORTANT: set add-default-route=yes only if you want ALL router traffic tunneled.",
         '/interface ovpn-client add name=masiha-ros6 connect-to="' + domain +
         '" port=' + str(PORT) + ' mode=ip user="' + username +

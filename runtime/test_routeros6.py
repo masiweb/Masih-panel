@@ -85,6 +85,7 @@ class RouterOS6(unittest.TestCase):
         self.assertIn("cipher=aes256", items[1]["content"])
         self.assertIn("auth=sha1", items[1]["content"])
         self.assertIn("verify-server-certificate=yes", items[1]["content"])
+        self.assertIn('common-name="Masiha RouterOS6 CA"] trusted=yes', items[1]["content"])
         self.assertIn(PASSWORD, items[1]["content"])
         self.assertNotIn("tls-crypt", items[1]["content"])
         self.assertNotIn("protocol=udp", items[1]["content"])
@@ -94,6 +95,7 @@ class RouterOS6(unittest.TestCase):
     def test_live_accounting_from_status_without_double_creation(self):
         self.base.joinpath("ca.crt").write_text("CA")
         self.base.joinpath("server.conf").write_text("server")
+        self.base.joinpath("mgmt.sock").touch()  # management mocked, no live socket
         status = ("\t".join(["CLIENT_LIST", USER, "1.2.3.4:54321",
                               "10.85.0.2", "", "512", "1024", "now",
                               "1700000000", USER, "1", "0"]) + "\n")
@@ -105,6 +107,13 @@ class RouterOS6(unittest.TestCase):
         self.assertEqual(args[1], "openvpn")
         self.assertEqual(args[-2:], (512, 1024))
         read.assert_called_once_with("status 3")
+
+    def test_sampling_and_disconnect_share_session_identity(self):
+        a = routeros6.session(USER, "198.51.100.1:34567", "1730000000")
+        b = routeros6.session(USER, "198.51.100.1:34567", "1730000003")
+        c = routeros6.session(USER, "198.51.100.1:34568", "1730000003")
+        self.assertEqual(a,b)
+        self.assertNotEqual(a,c)
 
     def test_connect_rejects_expired_and_disconnect_counts(self):
         env = {"username": USER, "script_type": "client-connect",
