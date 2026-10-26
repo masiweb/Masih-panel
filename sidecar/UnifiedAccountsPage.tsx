@@ -10,8 +10,12 @@ async function api(path:string,method='GET',body?:unknown){
  headers:{'Accept':'application/json','X-Requested-With':'XMLHttpRequest',
  ...(method==='POST'?{'Content-Type':'application/json','X-CSRF-Token':document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content||''}:{})},
  ...(method==='POST'?{body:JSON.stringify(body)}:{})});
- const json=await res.json();
- if(!res.ok||json.success!==true)throw new Error(json.msg||'درخواست ناموفق بود');
+ const raw=await res.text();
+ if(!raw.trim())throw new Error('پاسخ سرور خالی بود (HTTP '+res.status+').');
+ let json:{success?:boolean;msg?:string;obj?:unknown};
+ try{json=JSON.parse(raw);}
+ catch{throw new Error('پاسخ سرور JSON معتبر نیست (HTTP '+res.status+').');}
+ if(!res.ok||json.success!==true)throw new Error(json.msg||'درخواست ناموفق بود (HTTP '+res.status+')');
  return json.obj;
 }
 export default function UnifiedAccountsPage(){

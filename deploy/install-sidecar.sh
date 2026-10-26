@@ -142,7 +142,7 @@ if needle not in s:
   location ~ "^/(?:[A-Za-z0-9._~-]+/){1,6}panel/sales-bot/?$" {
     return 302 "/masiha-ui/#bot";
   }
-  location ~ "^/(?:[A-Za-z0-9._~-]+/){1,6}panel/api/(?:masiha-session|masiha-vpn|sales-bot|masiha-backup/(?:status|create|import|restore|download/.+))$" {
+  location ~ "^/(?:[A-Za-z0-9._~-]+/){1,6}panel/api/(?:masiha-session|masiha-vpn|masiha-profiles|sales-bot|masiha-backup/(?:status|create|import|restore|download/.+))$" {
     client_max_body_size 512m;
     proxy_pass http://127.0.0.1:61794;
     proxy_http_version 1.1;
@@ -159,6 +159,20 @@ if needle not in s:
     s=s.replace(anchor,routes+anchor,1)
     p.write_text(s)
 PYNATIVE
+# Upgrade sites that already contain native authenticated routes.
+python3 - "$NGINX" <<'PYPROFILES'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+old="masiha-session|masiha-vpn|sales-bot|masiha-backup/"
+new="masiha-session|masiha-vpn|masiha-profiles|sales-bot|masiha-backup/"
+if old in s:
+    assert s.count(old)==1, "Duplicate native Masiha API patterns"
+    p.write_text(s.replace(old,new,1))
+elif new not in s:
+    raise SystemExit("Missing native Masiha API location; manual review required")
+PYPROFILES
 if ! grep -q 'MASIHA-SIDECAR BEGIN' "$NGINX"; then
   cp -a "$NGINX" "$NGINX.before-masiha-sidecar.$(date -u +%Y%m%dT%H%M%SZ).bak"
   python3 - "$NGINX" "$SIDE/nginx-locations.conf" <<'PY'
