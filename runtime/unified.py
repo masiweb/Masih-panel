@@ -89,6 +89,10 @@ def collect():
      continue
     credit(name,"openconnect",oc_session(d.get("ID",item["ID"])),int(d["RX"]),int(d["TX"]))
  except Exception as e:errors.append("openconnect: "+str(e))
+ try:
+  import routeros6
+  routeros6.collect()
+ except Exception as e:errors.append("routeros6: "+str(e))
  if errors:raise RuntimeError("; ".join(errors))
 def reconcile():
  initialize()
@@ -148,6 +152,10 @@ def profiles(subid):
    if proto=="openconnect":
     cfg["content"]="Server: https://"+manager.HOST+":4443\nUsername: "+a["username"]+"\nPassword: "+a["password"]+"\nProtocol: AnyConnect / OpenConnect\n"
    result.append({**cfg,"protocol":proto,"clientId":r["id"],"label":r["email"],"expires":max(0,expiry(r)//1000)})
+  # RouterOS6 uses the same subscription, credentials, expiry and usage ledger.
+  import routeros6
+  for extra in routeros6.profiles(a, manager.HOST):
+   result.append({**extra,"clientId":r["id"],"label":r["email"],"expires":max(0,expiry(r)//1000)})
  return result
 def hook():
  env=os.environ

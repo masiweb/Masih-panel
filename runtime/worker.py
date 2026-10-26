@@ -15,7 +15,7 @@ def network():
     subprocess.run(["sysctl","-w","net.ipv4.ip_forward=1"],check=True)
     routes=__import__("json").loads(subprocess.check_output(["ip","-j","route","show","default"]))
     egress=CONFIG.get("egress_interface") or next(r["dev"] for r in routes if r.get("dev"))
-    for iface,subnet in [("tun-masiha","10.81.0.0/24"),("vpns+","10.82.0.0/24")]:
+    for iface,subnet in [("tun-masiha","10.81.0.0/24"),("vpns+","10.82.0.0/24"),("tun-masiha-ros6","10.85.0.0/24")]:
         ensure(["iptables","-w","-t","nat","-A","POSTROUTING","-s",subnet,"-o",egress,"-j","MASQUERADE"])
         ensure(["iptables","-w","-A","FORWARD","-i",iface,"-s",subnet,"-o",egress,"-j","ACCEPT"])
         ensure(["iptables","-w","-A","FORWARD","-i",egress,"-o",iface,"-d",subnet,"-m","conntrack","--ctstate","RELATED,ESTABLISHED","-j","ACCEPT"])
