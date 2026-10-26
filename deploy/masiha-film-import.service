@@ -1,0 +1,22 @@
+[Unit]
+Description=Masiha licensed film upload worker
+After=network-online.target masiha-vpn-extension.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/masiha-vpn-extension
+ExecStart=/usr/bin/python3 /opt/masiha-vpn-extension/film_importer.py run-once
+TimeoutStartSec=1600
+Nice=15
+CPUWeight=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/masiha-vpn-extension /var/tmp/masiha-films
+StandardOutput=journal
+StandardError=journal

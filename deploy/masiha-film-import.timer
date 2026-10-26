@@ -1,0 +1,11 @@
+[Unit]
+Description=Masiha film upload periodic queue
+[Timer]
+OnBootSec=4min
+OnUnitInactiveSec=3min
+RandomizedDelaySec=20sec
+AccuracySec=10sec
+Unit=masiha-film-import.service
+Persistent=true
+[Install]
+WantedBy=timers.target

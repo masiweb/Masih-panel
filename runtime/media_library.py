@@ -158,13 +158,20 @@ def broadcast_new_media(c,mid):
  sent=0
  recipients=c.execute("SELECT id FROM users WHERE id>0 AND blocked=0 ORDER BY id").fetchall()
  for (recipient,) in recipients:
-  payload={"chat_id":recipient,field:row["file_id"],"reply_markup":button}
-  if row["telegram_method"]!="sendVideoNote":payload["caption"]=caption[:950]
+  if row["kind"]=="film":
+   # Notify about each newly published movie or series episode; do not push
+   # multi-GB files to users who have not chosen to watch them.
+   method="sendMessage"
+   payload={"chat_id":recipient,"text":caption[:1000],"reply_markup":button}
+  else:
+   method=row["telegram_method"]
+   payload={"chat_id":recipient,field:row["file_id"],"reply_markup":button}
+   if method!="sendVideoNote":payload["caption"]=caption[:950]
   # Prefixed stable idempotency key survives retries, restarts, and duplicate
   # publication callbacks. Never modifies messages already delivered.
   key="media-broadcast:"+media_kind+":"+str(mid)+":"+str(recipient)
   c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
-            (key,recipient,row["telegram_method"],json.dumps(payload,ensure_ascii=False)))
+            (key,recipient,method,json.dumps(payload,ensure_ascii=False)))
   sent+=c.execute("SELECT changes()").fetchone()[0]
  return sent
 
@@ -457,6 +464,15 @@ def _preview(c,uid,row):
   if row["actors"]:caption+="\nبازیگران: "+row["actors"][:95]
   if row["director"]:caption+="\nکارگردان: "+row["director"]
   if row["description"]:caption+="\n"+row["description"][:120]
+  if c.execute("SELECT 1 FROM sqlite_master WHERE name='film_titles'").fetchone():
+   extra=c.execute("""SELECT rating,rating_source,original_title FROM film_titles
+      WHERE id=(SELECT title_id FROM film_variants
+                WHERE file_id=? LIMIT 1)""",(row["file_id"],)).fetchone()
+   if extra:
+    if extra["rating"] is not None:
+     caption+="\n⭐ امتیاز: "+str(extra["rating"])+"/10"+(
+         " ("+extra["rating_source"]+")" if extra["rating_source"] else "")
+    if extra["original_title"]:caption+="\nنام اصلی: "+extra["original_title"][:160]
  return caption
 
 def play(c,uid,mid):
@@ -485,6 +501,27 @@ def play(c,uid,mid):
   payload={"chat_id":uid,"text":description[:4000]}
  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
       (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
+ # Imported movies and series allow selecting each available quality/version.
+ if row["kind"]=="film" and c.execute(
+       "SELECT 1 FROM sqlite_master WHERE name='film_variants'").fetchone():
+  import film_importer
+  variants=c.execute("""SELECT v.* FROM film_variants v JOIN film_titles t
+      ON t.id=v.title_id WHERE t.source='hexdl'
+      AND v.file_id=? AND v.uploaded>0 LIMIT 1""",(row["file_id"],)).fetchall()
+  if variants:
+   variants=c.execute("""SELECT v.* FROM film_variants v
+      JOIN film_import_jobs j ON j.variant_id=v.id
+      WHERE v.title_id=? AND v.season=? AND v.episode=?
+        AND j.state='done' AND v.uploaded>0
+      ORDER BY CAST(REPLACE(v.quality,'p','') AS INTEGER),v.id""",
+      (variants[0]["title_id"],row["season"],row["episode"])).fetchall()
+  if variants:
+   quality_buttons=[[(
+     "🎞 "+v["quality"]+" | "+
+     ("دوبله" if v["dubbed"]=="yes" else "اصلی" if v["dubbed"]=="no" else "زبان نامشخص")+
+     (" | زیرنویس" if v["subtitles"] not in ("none","unknown") else ""),
+     "med:filmfile:"+str(v["id"]))] for v in variants]
+   return send(c,uid,"🎬 کیفیت و نسخه موردنظر را انتخاب کنید.",quality_buttons+buttons)
  # Message two is the Telegram-hosted music/video itself, with ALL buttons.
  if row["telegram_method"]=="link":
   send(c,uid,"🔗 "+row["source_url"],buttons)
@@ -674,6 +711,19 @@ def callback(c,uid,cmd):
   return send(c,uid,"🔎 نام، خواننده یا بخشی از متن را بنویسید.",
           [[("↩️ بازگشت","med:"+x)]])
  if op=="play":return play(c,uid,int(x))
+ if op=="filmfile":
+  vid=int(x)
+  v=c.execute("""SELECT v.*,m.id AS media_id,m.title AS media_title
+    FROM film_variants v JOIN film_import_jobs j ON j.variant_id=v.id
+    JOIN media_items m ON m.kind='film' AND m.file_id IN
+     (SELECT file_id FROM film_variants WHERE title_id=v.title_id
+      AND season=v.season AND episode=v.episode AND uploaded>0)
+    WHERE v.id=? AND j.state='done' AND v.uploaded>0
+      AND m.status='published' LIMIT 1""",(vid,)).fetchone()
+  if not v or not v["file_id"]:raise ValueError("نسخه انتخاب‌شده موجود نیست")
+  return _queue_file(c,uid,v["send_method"],v["file_id"],
+       v["media_title"][:75]+" | "+v["quality"],
+       [[("↩️ بازگشت به کیفیت‌ها","med:play:"+str(v["media_id"]))]])
  if op=="like":
   liked=_like(c,uid,"media",int(x))
   import social
