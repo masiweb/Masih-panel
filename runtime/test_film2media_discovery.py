@@ -54,8 +54,9 @@ class SourceTests(unittest.TestCase):
     def test_rights_explicit_not_inferred_from_page(self):
         with patch.object(d, "probe", return_value=550_000_000):
             item, _ = d.manifest_for_page(PAGE, HOSTS, False, True, self.doc)
+            approved, _ = d.manifest_for_page(PAGE, HOSTS, True, True, self.doc)
         self.assertFalse(item["rights_ok"])
-        self.assertTrue(d.manifest_for_page(PAGE, HOSTS, True, True, self.doc)[0]["rights_ok"])
+        self.assertTrue(approved["rights_ok"])
 
     def test_filename_ignores_unrelated_assets(self):
         self.assertIsNone(d.video_info("https://media.example.com/movie.Dubbed.Audio.mka"))
