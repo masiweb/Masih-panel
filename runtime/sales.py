@@ -300,16 +300,24 @@ class _TelegramNoRedirect(urllib.request.HTTPRedirectHandler):
 _TELEGRAM_OPENER=urllib.request.build_opener(
  urllib.request.ProxyHandler({}),_TelegramHTTPSHandler(),_TelegramNoRedirect())
 
+TELEGRAM_LOCAL_FLAG="/etc/masiha-vpn-extension/sales/telegram_local.enabled"
+def telegram_local_enabled():
+ return os.path.isfile(TELEGRAM_LOCAL_FLAG)
+def telegram_endpoint(s,method):
+ base="http://127.0.0.1:8081" if telegram_local_enabled() else "https://api.telegram.org"
+ return base+"/bot"+s["token"]+"/"+method
+
 def telegram_open(req,timeout=35):
  """Open only genuine TLS Telegram Bot API requests with IPv4-first fallback."""
  target=urllib.parse.urlsplit(req.full_url)
- if target.scheme!="https" or target.hostname!="api.telegram.org" or target.port not in (None,443):
+ if not ((target.scheme=="https" and target.hostname=="api.telegram.org" and target.port in (None,443))
+          or (target.scheme=="http" and target.hostname=="127.0.0.1" and target.port==8081)):
   raise ValueError("Invalid Telegram API endpoint")
  return _TELEGRAM_OPENER.open(req,timeout=timeout)
 
 def tg(s,method,payload):
  try:
-  req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+"/"+method,data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
+  req=urllib.request.Request(telegram_endpoint(s,method),data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
   with telegram_open(req,timeout=35) as r:obj=json.load(r)
   if not obj.get("ok"):raise ValueError()
   return obj["result"]
@@ -337,7 +345,7 @@ def telegram_channel_member(s,channel,uid):
  whose user ID is not known in that chat. This is NOT a bot token failure.
  """
  payload={"chat_id":normalize_channel(channel),"user_id":integer(uid,1,2**52)}
- req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+"/getChatMember",
+ req=urllib.request.Request(telegram_endpoint(s,"getChatMember"),
      data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"})
  try:
   with telegram_open(req,timeout=20) as response:

@@ -1,0 +1,27 @@
+[Unit]
+Description=Official Telegram Local Bot API for Masiha
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/local/bin/telegram-bot-api
+ConditionPathExists=/etc/default/telegram-bot-api
+
+[Service]
+Type=simple
+User=tgbotapi
+Group=tgbotapi
+EnvironmentFile=/etc/default/telegram-bot-api
+WorkingDirectory=/var/lib/telegram-bot-api
+ExecStart=/usr/local/bin/telegram-bot-api --local --http-ip-address=127.0.0.1 --http-port=8081 --dir=/var/lib/telegram-bot-api
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/telegram-bot-api
+UMask=0077
+LimitNOFILE=65536
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

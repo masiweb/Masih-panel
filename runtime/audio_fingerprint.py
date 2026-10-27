@@ -93,6 +93,28 @@ def download_telegram(c,file_id,dest,limit):
         raise ValueError("توکن ربات تنظیم نشده است")
     info=sales.tg(settings,"getFile",{"file_id":file_id})
     path=info.get("file_path")
+    if sales.telegram_local_enabled():
+        if not isinstance(path,str) or not path.startswith("/var/lib/telegram-bot-api/"):
+            raise ValueError("مسیر فایل تلگرام نامعتبر است")
+        allowed=Path("/var/lib/telegram-bot-api").resolve()
+        resolved=Path(path).resolve()
+        if not resolved.is_relative_to(allowed) or not resolved.is_file():
+            raise ValueError("مسیر فایل تلگرام نامعتبر است")
+        if resolved.stat().st_size>limit:raise ValueError("فایل صوتی بیش از حد بزرگ است")
+        try:
+            with resolved.open("rb") as source,open(dest,"xb") as output:
+                length=0
+                while True:
+                    data=source.read(65536)
+                    if not data:break
+                    length+=len(data)
+                    if length>limit:raise ValueError("فایل صوتی بیش از حد بزرگ است")
+                    output.write(data)
+            if length<1200:raise ValueError("نمونه صوتی معتبر نیست")
+            return length
+        except Exception:
+            Path(dest).unlink(missing_ok=True)
+            raise
     if not isinstance(path,str) or not re.fullmatch(r"[a-zA-Z0-9_./-]{1,240}",path) or ".." in path or path.startswith("/"):
         raise ValueError("مسیر فایل تلگرام نامعتبر است")
     filesize=info.get("file_size",0)

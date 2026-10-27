@@ -200,7 +200,7 @@ def _send_file(c,uid,kind,raw):
  "\r\n--"+boundary+"\r\nContent-Disposition: form-data; name=\""+name+
  "\"; filename=\""+filename+"\"\r\nContent-Type: "+content_type+"\r\n\r\n").encode() + raw + (
  "\r\n--"+boundary+"--\r\n").encode()
- req=urllib.request.Request("https://api.telegram.org/bot"+token+"/"+method,data=data,
+ req=urllib.request.Request(sales.telegram_endpoint({"token":token},method),data=data,
  headers={"Content-Type":"multipart/form-data; boundary="+boundary},method="POST")
  with sales.telegram_open(req,timeout=45) as response:
   payload=json.loads(response.read(6000))

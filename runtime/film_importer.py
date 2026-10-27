@@ -312,7 +312,10 @@ def upload_cover(url, hosts, cfg, storage_chat):
            f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"poster.jpg\"\r\n"
            f"Content-Type: image/jpeg\r\n\r\n").encode()
     finish=f"\r\n--{boundary}--\r\n".encode()
-    conn=http.client.HTTPSConnection("api.telegram.org",context=ssl.create_default_context(),timeout=45)
+    import sales
+    conn=(http.client.HTTPConnection("127.0.0.1",8081,timeout=45)
+          if sales.telegram_local_enabled()
+          else http.client.HTTPSConnection("api.telegram.org",context=ssl.create_default_context(),timeout=45))
     try:
         conn.putrequest("POST","/bot"+token+"/sendPhoto")
         conn.putheader("Content-Type","multipart/form-data; boundary="+boundary)

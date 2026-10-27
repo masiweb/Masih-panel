@@ -609,7 +609,7 @@ def deliver_outbox_message(s,row,p):
 def upload(s,chat,filename,content,photo=False):
  boundary="Masiha"+secrets.token_hex(12);field="photo" if photo else "document"
  body=("--"+boundary+'\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n'+str(chat)+"\r\n--"+boundary+'\r\nContent-Disposition: form-data; name="'+field+'"; filename="'+filename+'"\r\nContent-Type: application/octet-stream\r\n\r\n').encode()+content+("\r\n--"+boundary+"--\r\n").encode()
- req=urllib.request.Request("https://api.telegram.org/bot"+s["token"]+("/sendPhoto" if photo else "/sendDocument"),data=body,headers={"Content-Type":"multipart/form-data; boundary="+boundary})
+ req=urllib.request.Request(telegram_endpoint(s,"sendPhoto" if photo else "sendDocument"),data=body,headers={"Content-Type":"multipart/form-data; boundary="+boundary})
  with telegram_open(req,timeout=35) as r:
   if not json.load(r).get("ok"):raise ValueError("upload failed")
 def report_start_error(c,up,temporary=False):

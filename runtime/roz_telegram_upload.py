@@ -116,8 +116,11 @@ def upload_to_telegram(path, artist, title, token, chat_id):
          "disable_notification": "true"},
         boundary)
     # Python http.client handles HTTPS certificate verification.
-    conn = http.client.HTTPSConnection("api.telegram.org", timeout=120,
-                                      context=ssl.create_default_context())
+    import sales
+    conn=(http.client.HTTPConnection("127.0.0.1",8081,timeout=120)
+          if sales.telegram_local_enabled()
+          else http.client.HTTPSConnection("api.telegram.org",timeout=120,
+                                           context=ssl.create_default_context()))
     try:
         storage_send_pace()
         conn.putrequest("POST", "/bot" + token + "/sendAudio", skip_accept_encoding=True)
@@ -237,7 +240,10 @@ def upload_cover(url, settings):
     # only: photo is a distinct Telegram method and never confuses file IDs.
     front = front.replace(b'name="audio"; filename="track.mp3"',b'name="photo"; filename="cover.jpg"')
     front = front.replace(b"Content-Type: audio/mpeg",b"Content-Type: image/jpeg")
-    conn=http.client.HTTPSConnection("api.telegram.org",timeout=35,context=ssl.create_default_context())
+    import sales
+    conn=(http.client.HTTPConnection("127.0.0.1",8081,timeout=35)
+          if sales.telegram_local_enabled()
+          else http.client.HTTPSConnection("api.telegram.org",timeout=35,context=ssl.create_default_context()))
     try:
         storage_send_pace()
         conn.putrequest("POST","/bot"+settings["token"]+"/sendPhoto",skip_accept_encoding=True)
