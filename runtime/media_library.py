@@ -159,10 +159,22 @@ def broadcast_new_media(c,mid):
  recipients=c.execute("SELECT id FROM users WHERE id>0 AND blocked=0 ORDER BY id").fetchall()
  for (recipient,) in recipients:
   if row["kind"]=="film":
-   # Notify about each newly published movie or series episode; do not push
-   # multi-GB files to users who have not chosen to watch them.
-   method="sendMessage"
-   payload={"chat_id":recipient,"text":caption[:1000],"reply_markup":button}
+   # Publish the poster with quality buttons, never push multi-GB files.
+   quality_rows,_=_film_quality_buttons(c,row)
+   quality_rows=quality_rows+[
+      [("❤️ لایک","med:like:"+str(mid)),("👎 دیسلایک","med:dislike:"+str(mid))],
+      [("💬 نظرات","med:comments:"+str(mid)),("✍️ نظر جدید","med:comment:"+str(mid))],
+      [("▶️ جزئیات فیلم","med:play:"+str(mid))]]
+   keyboard={"inline_keyboard":[[{"text":label,"callback_data":action}
+             for label,action in group] for group in quality_rows]}
+   info=(caption.split("\\n")[0]+"\\n"+_preview(c,recipient,row))[:1000]
+   if row["cover_id"]:
+    method="sendPhoto"
+    payload={"chat_id":recipient,"photo":row["cover_id"],
+             "caption":info,"reply_markup":keyboard}
+   else:
+    method="sendMessage"
+    payload={"chat_id":recipient,"text":info,"reply_markup":keyboard}
   else:
    method=row["telegram_method"]
    payload={"chat_id":recipient,field:row["file_id"],"reply_markup":button}
