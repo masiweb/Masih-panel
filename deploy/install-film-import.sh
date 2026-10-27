@@ -11,7 +11,7 @@ BACKUP="/var/backups/masiha-film-import-$STAMP"
 install -d -m 0700 "$BACKUP"
 [[ -f "$DB" && -f "$DEST/media_library.py" ]] || { echo "Existing Masiha installation not found" >&2; exit 1; }
 cp -a "$DEST/media_library.py" "$BACKUP/media_library.py"
-for item in film_importer.py film2media_discovery.py test_film_importer.py; do
+for item in film_importer.py film2media_discovery.py test_film_importer.py test_film2media_discovery.py; do
   [[ ! -f "$DEST/$item" ]] || cp -a "$DEST/$item" "$BACKUP/$item"
 done
 # Copy a consistent online snapshot, never a raw SQLite file mid-transaction.
@@ -26,12 +26,20 @@ install -m 0644 "$ROOT/runtime/film_importer.py" "$DEST/film_importer.py"
 install -m 0644 "$ROOT/runtime/film2media_discovery.py" "$DEST/film2media_discovery.py"
 install -m 0644 "$ROOT/runtime/media_library.py" "$DEST/media_library.py"
 install -m 0644 "$ROOT/runtime/test_film_importer.py" "$DEST/test_film_importer.py"
+install -m 0644 "$ROOT/runtime/test_film2media_discovery.py" "$DEST/test_film2media_discovery.py"
 if [[ ! -e "$CFG" ]];then
   install -m 0600 "$ROOT/runtime/film_import.example.json" "$CFG"
 fi
 chmod 0600 "$CFG"
+APPROVALS=/etc/masiha-vpn-extension/sales/film_approved_ids.json
+if [[ ! -e "$APPROVALS" ]]; then
+  printf '[]\n' > "$APPROVALS"
+fi
+chmod 0600 "$APPROVALS"
 install -m 0644 "$ROOT/deploy/masiha-film-import.service" /etc/systemd/system/masiha-film-import.service
 install -m 0644 "$ROOT/deploy/masiha-film-import.timer" /etc/systemd/system/masiha-film-import.timer
+install -m 0644 "$ROOT/deploy/masiha-film-discover.service" /etc/systemd/system/masiha-film-discover.service
+install -m 0644 "$ROOT/deploy/masiha-film-discover.timer" /etc/systemd/system/masiha-film-discover.timer
 python3 -m py_compile "$DEST/media_library.py" "$DEST/film_importer.py" "$DEST/film2media_discovery.py"
 # No Telegram messages emitted by setup/setting toggle; notifications only
 # when a NEW authorized video actually publishes.
@@ -47,8 +55,10 @@ print("FILM_SCHEMA_OK, MOVIE_AND_SERIES_NOTICES_ENABLED")
 PY
 systemctl daemon-reload
 systemctl enable --now masiha-film-import.timer
+systemctl enable --now masiha-film-discover.timer
 systemctl restart masiha-vpn-extension.service
 systemctl is-active --quiet masiha-vpn-extension.service
 systemctl is-active --quiet masiha-film-import.timer
+systemctl is-active --quiet masiha-film-discover.timer
 echo "DEPLOY_FILM_PIPELINE_OK. BACKUP=$BACKUP"
 echo "FILM_IMPORT_CONFIGURATION=$CFG"
