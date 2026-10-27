@@ -380,7 +380,7 @@ def process_one(c, config):
     TEMP.mkdir(mode=0o700,parents=True,exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix="job-",dir=TEMP) as d:
-            path=Path(d)/"media.mp4"
+            extension=Path(urlsplit(job["source_url"]).path).suffix.lower()\n            if extension not in (".mp4",".mkv",".m4v",".mov"):\n                raise ValueError("Unsupported video extension")\n            path=Path(d)/("media"+extension)
             download(job["source_url"],path,config["hosts"])
             # ffprobe only inspects the downloaded licensed file, never trusts HTTP MIME alone.
             import subprocess
