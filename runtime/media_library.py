@@ -517,9 +517,12 @@ def play(c,uid,mid):
       (variants[0]["title_id"],row["season"],row["episode"])).fetchall()
   if variants:
    quality_buttons=[[(
-     "🎞 "+v["quality"]+" | "+
-     ("دوبله" if v["dubbed"]=="yes" else "اصلی" if v["dubbed"]=="no" else "زبان نامشخص")+
-     (" | زیرنویس" if v["subtitles"] not in ("none","unknown") else ""),
+     "🎞 "+v["quality"]+
+     (" | "+v["version"] if v["version"] else "")+
+     (" | دوبله فارسی" if v["dubbed"]=="yes" else
+      " | زیرنویس فارسی چسبیده" if v["subtitles"]=="hardsub" else
+      " | زیرنویس" if v["subtitles"] not in ("none","unknown") else
+      " | زبان اصلی" if v["dubbed"]=="no" else " | زبان نامشخص"),
      "med:filmfile:"+str(v["id"]))] for v in variants]
    return send(c,uid,"🎬 کیفیت و نسخه موردنظر را انتخاب کنید.",quality_buttons+buttons)
  # Message two is the Telegram-hosted music/video itself, with ALL buttons.
