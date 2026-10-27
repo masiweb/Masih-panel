@@ -167,7 +167,7 @@ def broadcast_new_media(c,mid):
       [("▶️ جزئیات فیلم","med:play:"+str(mid))]]
    keyboard={"inline_keyboard":[[{"text":label,"callback_data":action}
              for label,action in group] for group in quality_rows]}
-   info=(caption.split("\\n")[0]+"\\n"+_preview(c,recipient,row))[:1000]
+   info=(caption.split("\n")[0]+"\n"+_preview(c,recipient,row))[:1000]
    if row["cover_id"]:
     method="sendPhoto"
     payload={"chat_id":recipient,"photo":row["cover_id"],
