@@ -77,6 +77,29 @@ class FilmImporterTests(unittest.TestCase):
         self.assertEqual(last[0],"sendDocument")
         self.assertIn("1080p",last[1])
         self.assertIn("FILE_ID_111111111111111",last[1])
+    def test_movie_poster_contains_quality_reactions_and_comments(self):
+        film.stage(self.c,ENTRY,{"videos.example.com"})
+        self.c.execute("UPDATE film_titles SET cover_id='COVER_SAMPLE_FILE_ID'")
+        vids=[r[0] for r in self.c.execute("SELECT id FROM film_variants ORDER BY id")]
+        for i,vid in enumerate(vids):
+            self.c.execute("UPDATE film_variants SET file_id=?,file_unique_id=?,uploaded=1 WHERE id=?",
+                           ("FILE_ID_"+str(i)*15,"UNIQUE_ID_"+str(i)*15,vid))
+        mid=film.publish(self.c,vids[0])
+        broadcast=self.c.execute(
+            "SELECT method,payload FROM outbox WHERE dedupe LIKE 'media-broadcast:%' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(broadcast["method"],"sendPhoto")
+        notice=json.loads(broadcast["payload"])
+        self.assertEqual(notice["photo"],"COVER_SAMPLE_FILE_ID")
+        self.assertIn("med:filmfile:"+str(vids[0]),broadcast["payload"])
+        self.assertIn("med:like:"+str(mid),broadcast["payload"])
+        lib.play(self.c,991,mid)
+        card=self.c.execute("SELECT method,payload FROM outbox ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(card["method"],"sendPhoto")
+        self.assertIn("med:filmfile:"+str(vids[1]),card["payload"])
+        self.assertIn("med:comments:"+str(mid),card["payload"])
+        self.assertIn("med:dislike:"+str(mid),card["payload"])
+
     def test_uploader_refuses_when_local_api_unconfigured(self):
         with self.assertRaises(RuntimeError):
             film.upload(Path("/does/not/exist"),"sendDocument",
