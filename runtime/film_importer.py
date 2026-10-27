@@ -251,7 +251,7 @@ def upload(path,method,config,cfg,storage_chat):
     boundary="MasihaFilm_"+os.urandom(12).hex()
     fields=(f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{storage_chat}\r\n"
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"disable_notification\"\r\n\r\ntrue\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{part}\"; filename=\"movie.mp4\"\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{part}\"; filename=\"{path.name}\"\r\n"
             f"Content-Type: application/octet-stream\r\n\r\n").encode()
     end=f"\r\n--{boundary}--\r\n".encode()
     conn=http.client.HTTPConnection(LOCAL_API,LOCAL_API_PORT,timeout=850)
