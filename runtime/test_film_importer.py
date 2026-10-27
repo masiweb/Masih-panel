@@ -14,7 +14,7 @@ import film_importer as film
 
 URL="https://videos.example.com/"
 ENTRY={
-    "source":"hexdl","external_key":"sample-film-2026","rights_ok":True,
+    "source":"film2media","external_key":"sample-film-2026","rights_ok":True,
     "media_type":"movie","title":"فیلم مجاز تست","year":2026,
     "director":"Test Director","actors":"Actor A, Actor B",
     "description":"Test synopsis","genre":"drama","rating":8.2,

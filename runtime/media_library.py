@@ -506,7 +506,7 @@ def play(c,uid,mid):
        "SELECT 1 FROM sqlite_master WHERE name='film_variants'").fetchone():
   import film_importer
   variants=c.execute("""SELECT v.* FROM film_variants v JOIN film_titles t
-      ON t.id=v.title_id WHERE t.source='hexdl'
+      ON t.id=v.title_id WHERE t.source='film2media'
       AND v.file_id=? AND v.uploaded>0 LIMIT 1""",(row["file_id"],)).fetchall()
   if variants:
    variants=c.execute("""SELECT v.* FROM film_variants v

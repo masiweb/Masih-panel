@@ -2,7 +2,7 @@
 """Masiha film pipeline: per-title metadata, per-episode quality, bot-scoped file IDs.
 
 Input is an operator-reviewed JSON manifest with licensed direct HTTPS file URLs.
-HexDL's CAPTCHA is not bypassed; crawler discovery is intentionally separate.
+Film2Media access is checked directly; download only approved video versions.
 """
 import argparse
 import hashlib
@@ -25,7 +25,7 @@ from urllib.error import HTTPError, URLError
 MAX_FILE = 1_950_000_000
 RESERVE = 3 * 1024 * 1024 * 1024
 CHUNK = 256 * 1024
-SOURCE = "hexdl"
+SOURCE = "film2media"
 USER_AGENT = "MasihaLicensedFilmTransfer/1.0"
 LOCAL_API = "127.0.0.1"
 LOCAL_API_PORT = 8081
@@ -172,7 +172,7 @@ def stage(c, entry, hosts):
     if entry.get("cover_url"):
         valid_url(entry["cover_url"],hosts)
     if entry.get("source_page"):
-        valid_url(entry["source_page"],hosts|{"hexdl.com","www.hexdl.com"})
+        valid_url(entry["source_page"],hosts|{"f2mgo.top","www.f2mgo.top"})
     c.execute("""INSERT OR IGNORE INTO film_titles
       (source,external_key,media_type,title,original_title,genre,year,director,
       actors,description,rating,rating_source,cover_url,source_page,created,rights_ok)
