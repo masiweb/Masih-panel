@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Film2Media metadata discovery (reviewed posts only queued)
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10m
+Persistent=true
+Unit=masiha-film-discover.service
+
+[Install]
+WantedBy=timers.target
