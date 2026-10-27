@@ -264,7 +264,7 @@ def main():
     if args.approved_ids_file:
         data = json.loads(Path(args.approved_ids_file).read_text(encoding="utf-8"))
         if not isinstance(data, list) or len(data) > 10000 or any(
-            not isinstance(v, str) or not re.fullmatch(r"\\d{3,}", v) for v in data
+            not isinstance(v, str) or not re.fullmatch(r"\d{3,}", v) for v in data
         ):
             raise ValueError("Approved post IDs must be a JSON list of numeric strings")
         approved_ids = set(data)
