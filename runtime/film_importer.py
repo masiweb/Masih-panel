@@ -251,7 +251,7 @@ def upload(path,method,config,cfg,storage_chat):
     boundary="MasihaFilm_"+os.urandom(12).hex()
     fields=(f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{storage_chat}\r\n"
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"disable_notification\"\r\n\r\ntrue\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{part}\"; filename=\"movie.mp4\"\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{part}\"; filename=\"{path.name}\"\r\n"
             f"Content-Type: application/octet-stream\r\n\r\n").encode()
     end=f"\r\n--{boundary}--\r\n".encode()
     conn=http.client.HTTPConnection(LOCAL_API,LOCAL_API_PORT,timeout=850)
@@ -380,7 +380,10 @@ def process_one(c, config):
     TEMP.mkdir(mode=0o700,parents=True,exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix="job-",dir=TEMP) as d:
-            path=Path(d)/"media.mp4"
+            ext=Path(urlsplit(job["source_url"]).path).suffix.lower()
+            if ext not in (".mkv",".mp4",".webm",".mov"):
+                raise ValueError("Unsupported video extension")
+            path=Path(d)/("media"+ext)
             download(job["source_url"],path,config["hosts"])
             # ffprobe only inspects the downloaded licensed file, never trusts HTTP MIME alone.
             import subprocess
@@ -442,9 +445,26 @@ def stats(c):
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument("action",choices=("setup","import-manifest","run-once","status"))
+    parser.add_argument("action",choices=("setup","import-manifest","run-once","status","preview-page","stage-page"))
     parser.add_argument("path",nargs="?")
+    parser.add_argument("--rights-ok",action="store_true",
+                        help="Operator confirms distribution rights before staging")
     args=parser.parse_args()
+    if args.action in ("preview-page","stage-page"):
+        if not args.path:parser.error("Film2Media post URL required")
+        from film2media_discovery import discover
+        entry=discover(args.path)
+        if args.action=="preview-page":
+            print(json.dumps(entry,ensure_ascii=False,indent=2))
+            return
+        if not args.rights_ok:
+            parser.error("stage-page requires explicit --rights-ok confirmation")
+        conf=settings()
+        with connect() as c:
+            added=stage(c,{**entry,"rights_ok":True},conf["hosts"])
+            c.commit()
+        print("STAGED_VARIANTS",added)
+        return
     if args.action=="import-manifest":
         if not args.path:parser.error("manifest path required")
         print("STAGED_VARIANTS",import_manifest(args.path))
