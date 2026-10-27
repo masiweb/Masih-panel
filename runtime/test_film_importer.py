@@ -93,6 +93,7 @@ class FilmImporterTests(unittest.TestCase):
         self.assertEqual(notice["photo"],"COVER_SAMPLE_FILE_ID")
         self.assertIn("med:filmfile:"+str(vids[0]),broadcast["payload"])
         self.assertIn("med:like:"+str(mid),broadcast["payload"])
+        film.publish(self.c,vids[1])
         lib.play(self.c,991,mid)
         card=self.c.execute("SELECT method,payload FROM outbox ORDER BY id DESC LIMIT 1").fetchone()
         self.assertEqual(card["method"],"sendPhoto")
