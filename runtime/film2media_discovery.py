@@ -249,20 +249,33 @@ def main():
     parser.add_argument("--output", help="Write manifest as JSON for review")
     parser.add_argument("--stage", action="store_true", help="Put authorized, verified versions into DB queue")
     parser.add_argument("--rights-approved", action="store_true",
-                        help="Operator confirms the right to redistribute EVERY asset")
+                        help="Operator confirms redistribution rights for a SINGLE page")
+    parser.add_argument("--approved-ids-file",
+                        help="JSON array of approved Film2Media post IDs for automated feed import")
     parser.add_argument("--no-head", action="store_true", help="Metadata preview only: do not probe sizes")
     args = parser.parse_args()
     if not 1 <= args.limit <= 10:
         parser.error("--limit must be between 1 and 10")
-    if args.stage and (not args.rights_approved or args.no_head):
-        parser.error("Staging requires --rights-approved and HEAD size verification")
+    if args.feed and args.rights_approved:
+        parser.error("Automated feed must use reviewed --approved-ids-file, not blanket rights")
+    if args.stage and (args.no_head or not (args.rights_approved or args.approved_ids_file)):
+        parser.error("Staging requires verified sizes and explicit approved posts")
+    approved_ids = set()
+    if args.approved_ids_file:
+        data = json.loads(Path(args.approved_ids_file).read_text(encoding="utf-8"))
+        if not isinstance(data, list) or len(data) > 10000 or any(
+            not isinstance(v, str) or not re.fullmatch(r"\\d{3,}", v) for v in data
+        ):
+            raise ValueError("Approved post IDs must be a JSON list of numeric strings")
+        approved_ids = set(data)
     hosts = importer.settings()["hosts"]
     pages = [args.page] if args.page else feed_urls("https://www.f2mgo.top/", args.limit)
     manifest, errors, skipped = [], [], []
     for url in pages:
         try:
-            item, exclusions = manifest_for_page(url, hosts, args.rights_approved,
-                                                  not args.no_head)
+            match = POST_PATH.fullmatch(urlsplit(url).path)
+            approved = args.rights_approved or bool(match and match.group(1) in approved_ids)
+            item, exclusions = manifest_for_page(url, hosts, approved, not args.no_head)
             skipped.extend({"page": url, **s} for s in exclusions)
             manifest.append(item)
         except (ValueError, OSError) as e:
@@ -277,7 +290,8 @@ def main():
         with importer.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
-                queued = sum(importer.stage(c, item, hosts) for item in manifest)
+                queued = sum(importer.stage(c, item, hosts)
+                             for item in manifest if item["rights_ok"])
             except Exception:
                 c.rollback()
                 raise
