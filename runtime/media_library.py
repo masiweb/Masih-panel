@@ -475,7 +475,47 @@ def _preview(c,uid,row):
     if extra["original_title"]:caption+="\nنام اصلی: "+extra["original_title"][:160]
  return caption
 
-def play(c,uid,mid):
+def _film_quality_buttons(c, row, page=0):
+ # Only versions that finished uploading to Telegram can be offered.
+ if row["kind"]!="film" or not c.execute(
+       "SELECT 1 FROM sqlite_master WHERE name='film_variants'").fetchone():
+  return [],False
+ parent=c.execute("""SELECT title_id FROM film_variants WHERE file_id=?
+    AND uploaded>0 LIMIT 1""",(row["file_id"],)).fetchone()
+ if not parent:return [],False
+ variants=c.execute("""SELECT v.* FROM film_variants v
+    JOIN film_import_jobs j ON j.variant_id=v.id
+    WHERE v.title_id=? AND v.season=? AND v.episode=?
+      AND j.state='done' AND v.uploaded>0 AND LENGTH(v.file_id)>0
+    ORDER BY CAST(REPLACE(v.quality,'p','') AS INTEGER),
+      CASE v.dubbed WHEN 'yes' THEN 0 WHEN 'no' THEN 2 ELSE 1 END,
+      v.subtitles,v.id""",
+    (parent["title_id"],row["season"],row["episode"])).fetchall()
+ if not variants:return [],False
+ pages=max(1,(len(variants)+9)//10)
+ page=max(0,min(page,pages-1))
+ buttons=[]
+ for v in variants[page*10:(page+1)*10]:
+  if v["dubbed"]=="yes":
+   label="🎙 دوبله"
+  elif v["subtitles"] not in ("none","unknown"):
+   label="🔤 زیرنویس"
+  elif v["dubbed"]=="no":
+   label="🌐 زبان اصلی"
+  else:
+   label="🎬 نسخه"
+  codec=(" | "+v["version"][:26]) if v["version"] else ""
+  buttons.append([("⬇️ "+v["quality"]+" | "+label+codec,"med:filmfile:"+str(v["id"]))])
+ if pages>1:
+  nav=[]
+  if page>0:nav.append(("◀️ قبلی","med:filmq:"+str(row["id"])+":"+str(page-1)))
+  nav.append((str(page+1)+"/"+str(pages),"med:filmq:"+str(row["id"])+":"+str(page)))
+  if page+1<pages:nav.append(("بعدی ▶️","med:filmq:"+str(row["id"])+":"+str(page+1)))
+  buttons.append(nav)
+ return buttons,True
+
+
+def play(c,uid,mid,page=0):
  row=_media(c,mid)
  buttons=[
   [("❤️ لایک","med:like:"+str(mid)),("👎 دیسلایک","med:dislike:"+str(mid))],
@@ -490,43 +530,29 @@ def play(c,uid,mid):
  if uid==row["owner_id"] and uid>0:
   buttons.append([("🗑 حذف فایل من","med:remove:"+str(mid))])
  buttons.append([("↩️ "+GENRE_LABEL[row["kind"]],"med:"+row["kind"])])
- # Telegram renders a photo's caption BELOW the photo. Enqueue the cover
- # and full information as the first message, without action buttons.
+ qualities,has_versions=_film_quality_buttons(c,row,page)
+ buttons=qualities+buttons
+ markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in group]
+                             for group in buttons]}
+ # Telegram puts the caption below the poster. Put ALL buttons on that
+ # SAME message, rather than sending a separate quality-selection message.
  description=_preview(c,uid,row)
  if row["cover_id"]:
   method="sendPhoto"
-  payload={"chat_id":uid,"photo":row["cover_id"],"caption":description[:1000]}
+  payload={"chat_id":uid,"photo":row["cover_id"],"caption":description[:1000],
+           "reply_markup":markup}
  else:
   method="sendMessage"
-  payload={"chat_id":uid,"text":description[:4000]}
+  payload={"chat_id":uid,"text":description[:4000],"reply_markup":markup}
  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
       (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
- # Imported movies and series allow selecting each available quality/version.
- if row["kind"]=="film" and c.execute(
-       "SELECT 1 FROM sqlite_master WHERE name='film_variants'").fetchone():
-  import film_importer
-  variants=c.execute("""SELECT v.* FROM film_variants v JOIN film_titles t
-      ON t.id=v.title_id WHERE t.source='film2media'
-      AND v.file_id=? AND v.uploaded>0 LIMIT 1""",(row["file_id"],)).fetchall()
-  if variants:
-   variants=c.execute("""SELECT v.* FROM film_variants v
-      JOIN film_import_jobs j ON j.variant_id=v.id
-      WHERE v.title_id=? AND v.season=? AND v.episode=?
-        AND j.state='done' AND v.uploaded>0
-      ORDER BY CAST(REPLACE(v.quality,'p','') AS INTEGER),v.id""",
-      (variants[0]["title_id"],row["season"],row["episode"])).fetchall()
-  if variants:
-   quality_buttons=[[(
-     "🎞 "+v["quality"]+" | "+
-     ("دوبله" if v["dubbed"]=="yes" else "اصلی" if v["dubbed"]=="no" else "زبان نامشخص")+
-     (" | زیرنویس" if v["subtitles"] not in ("none","unknown") else ""),
-     "med:filmfile:"+str(v["id"]))] for v in variants]
-   return send(c,uid,"🎬 کیفیت و نسخه موردنظر را انتخاب کنید.",quality_buttons+buttons)
- # Message two is the Telegram-hosted music/video itself, with ALL buttons.
+ if has_versions:return
+ # Legacy uploaded items without a version catalog still deliver the media.
  if row["telegram_method"]=="link":
   send(c,uid,"🔗 "+row["source_url"],buttons)
  else:
   _queue_file(c,uid,row["telegram_method"],row["file_id"],row["title"][:100],buttons)
+
 
 def playlists(c,uid,kind,scope):
  if scope=="mine":
@@ -711,6 +737,7 @@ def callback(c,uid,cmd):
   return send(c,uid,"🔎 نام، خواننده یا بخشی از متن را بنویسید.",
           [[("↩️ بازگشت","med:"+x)]])
  if op=="play":return play(c,uid,int(x))
+ if op=="filmq" and len(parts)==4:return play(c,uid,int(x),int(parts[3]))
  if op=="filmfile":
   vid=int(x)
   v=c.execute("""SELECT v.*,m.id AS media_id,m.title AS media_title
