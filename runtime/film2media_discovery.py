@@ -205,6 +205,9 @@ def manifest_for_page(url, hosts, approved=False, verify_sizes=True, page_doc=No
                             "reason": str(e)})
     if not variants:
         raise ValueError("No safe and uploadable video variants on the page")
+    genres = list(dict.fromkeys(text.strip() for href, text in doc.anchors
+                  if "/genres/" in urlsplit(urljoin(url, href)).path
+                  and text.strip()))[:12]
     entry = {
         "source": importer.SOURCE,
         "external_key": "post-" + match.group(1),
@@ -213,7 +216,7 @@ def manifest_for_page(url, hosts, approved=False, verify_sizes=True, page_doc=No
         "title": title[:240],
         "original_title": original[:240],
         "year": year,
-        "genre": "",
+        "genre": "، ".join(genres)[:350],
         "director": "",
         "actors": "",
         "description": doc.meta.get("og:description", "")[:3500],
