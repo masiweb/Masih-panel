@@ -11,7 +11,7 @@ BACKUP="/var/backups/masiha-film-import-$STAMP"
 install -d -m 0700 "$BACKUP"
 [[ -f "$DB" && -f "$DEST/media_library.py" ]] || { echo "Existing Masiha installation not found" >&2; exit 1; }
 cp -a "$DEST/media_library.py" "$BACKUP/media_library.py"
-for item in film_importer.py test_film_importer.py; do
+for item in film_importer.py film2media_discovery.py test_film_importer.py; do
   [[ ! -f "$DEST/$item" ]] || cp -a "$DEST/$item" "$BACKUP/$item"
 done
 # Copy a consistent online snapshot, never a raw SQLite file mid-transaction.
@@ -23,6 +23,7 @@ with sqlite3.connect(sys.argv[1],timeout=35) as src:
 PY
 install -d -m 0700 /var/tmp/masiha-films
 install -m 0644 "$ROOT/runtime/film_importer.py" "$DEST/film_importer.py"
+install -m 0644 "$ROOT/runtime/film2media_discovery.py" "$DEST/film2media_discovery.py"
 install -m 0644 "$ROOT/runtime/media_library.py" "$DEST/media_library.py"
 install -m 0644 "$ROOT/runtime/test_film_importer.py" "$DEST/test_film_importer.py"
 if [[ ! -e "$CFG" ]];then
@@ -31,7 +32,7 @@ fi
 chmod 0600 "$CFG"
 install -m 0644 "$ROOT/deploy/masiha-film-import.service" /etc/systemd/system/masiha-film-import.service
 install -m 0644 "$ROOT/deploy/masiha-film-import.timer" /etc/systemd/system/masiha-film-import.timer
-python3 -m py_compile "$DEST/media_library.py" "$DEST/film_importer.py"
+python3 -m py_compile "$DEST/media_library.py" "$DEST/film_importer.py" "$DEST/film2media_discovery.py"
 # No Telegram messages emitted by setup/setting toggle; notifications only
 # when a NEW authorized video actually publishes.
 python3 - <<'PY'
