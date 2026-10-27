@@ -1,0 +1,23 @@
+[Unit]
+Description=Masiha Film2Media public catalog scan (only approved posts queued)
+After=network-online.target masiha-vpn-extension.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/masiha-vpn-extension
+ExecStart=/usr/bin/python3 /opt/masiha-vpn-extension/film2media_feed.py --limit 10 --approved-ids-file /etc/masiha-vpn-extension/sales/film_approved_ids.json --output /var/tmp/masiha-films/latest.json
+TimeoutStartSec=600
+Nice=15
+CPUWeight=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/masiha-vpn-extension /var/tmp/masiha-films
+StandardOutput=journal
+StandardError=journal
