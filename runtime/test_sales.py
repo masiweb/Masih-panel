@@ -1343,4 +1343,71 @@ class Commerce(unittest.TestCase):
       "message":{"chat":{"id":101,"type":"private"}},"data":"plans"}})
    self.assertEqual(c.execute("SELECT state FROM users WHERE id=101").fetchone()[0],"coupon:SALE10")
 
+ def test_admin_vpn_orders_full_reference_and_search(self):
+  import sales_bot_admin as admin
+  with s.conn() as c:
+   s.put(c,"admins",[102])
+   c.execute("UPDATE users SET phone='09121234567' WHERE id=101")
+   ref="quote:test-orders-with-colons:0"
+   s.order(c,101,1,ref,card=True,label="سرویس تست")
+   admin.callback(c,102,"a:orders")
+   menu=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:orders:vpn",json.dumps(menu))
+   self.assertIn("a:orders:ai",json.dumps(menu))
+   admin.callback(c,102,"a:orders:vpn")
+   listing=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:vpnorder:"+ref,json.dumps(listing))
+   admin.callback(c,102,"a:order:"+ref)
+   detail=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   for expected in (ref,"موبایل: 09121234567","حجم خرید","مدت خرید","تاریخ خرید/ثبت","تاریخ پایان"):
+    self.assertIn(expected,detail["text"])
+   self.assertIn("a:cancelask:"+ref,json.dumps(detail))
+   admin.callback(c,102,"a:findorder:vpn")
+   self.assertEqual(c.execute("SELECT state FROM users WHERE id=102").fetchone()[0],"a:findorder:vpn")
+   admin.input_text(c,102,"a:findorder:vpn","۰۹۱۲۱۲۳۴۵۶۷",991)
+   match=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:vpnorder:"+ref,json.dumps(match))
+   admin.callback(c,102,"a:findorder:vpn")
+   admin.input_text(c,102,"a:findorder:vpn",ref,992)
+   match=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:vpnorder:"+ref,json.dumps(match))
+   with self.assertRaises(ValueError):admin.callback(c,101,"a:orders:vpn")
+
+ def test_admin_ai_orders_independent_and_20_latest(self):
+  import sales_bot_admin as admin
+  with s.conn() as c:
+   s.put(c,"admins",[102])
+   snapshot=json.dumps({"name":"اشتراک نمونه AI","kind":"bot","model_name":"نمونه",
+    "price":200000,"days":30,"credits_text":100,"credits_image":10,"credits_video":1})
+   oid="ai-test-admin-order"
+   c.execute("""INSERT INTO ai_sale_orders
+    (id,user_id,plan_id,plan_snapshot,status,created,updated,fulfilled)
+    VALUES(?,?,?,?,?,?,?,?)""",(oid,101,1,snapshot,"fulfilled",100,120,1))
+   c.execute("""INSERT INTO ai_sale_subscriptions
+    (order_id,user_id,expires,remaining_text,remaining_image,remaining_video,created)
+    VALUES(?,?,?,?,?,?,?)""",(oid,101,1900000000,80,6,1,100))
+   for i in range(25):
+    c.execute("""INSERT INTO orders(id,user_id,plan,price,status,service_id,created)
+      VALUES(?,101,?,10000,'fulfilled','',?)""",
+      ("quote:bulk-admin-"+str(i)+":0",json.dumps({"name":"test","gb":12,"days":30}),200+i))
+   admin.callback(c,102,"a:orders:vpn")
+   listing=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   order_buttons=[b for line in listing["reply_markup"]["inline_keyboard"] for b in line
+                  if b["callback_data"].startswith("a:vpnorder:")]
+   self.assertEqual(len(order_buttons),20)
+   admin.callback(c,102,"a:orders:ai")
+   ailist=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:aiorder:"+oid,json.dumps(ailist))
+   admin.callback(c,102,"a:aiorder:"+oid)
+   detail=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   for expected in (oid,"مدت خرید: 30","سهمیه باقی‌مانده: متن 80","تاریخ پایان","آخرین تغییر"):
+    self.assertIn(expected,detail["text"])
+   admin.callback(c,102,"a:findorder:ai")
+   admin.input_text(c,102,"a:findorder:ai","101",994)
+   matches=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertIn("a:aiorder:"+oid,json.dumps(matches))
+   c.execute("DELETE FROM ai_sale_subscriptions WHERE order_id=?",(oid,))
+   c.execute("DELETE FROM ai_sale_orders WHERE id=?",(oid,))
+
+
 if __name__=="__main__":unittest.main()
