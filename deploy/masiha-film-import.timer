@@ -2,7 +2,7 @@
 Description=Masiha film upload periodic queue
 [Timer]
 OnBootSec=4min
-OnUnitInactiveSec=3min
+OnUnitInactiveSec=45sec
 RandomizedDelaySec=20sec
 AccuracySec=10sec
 Unit=masiha-film-import.service
