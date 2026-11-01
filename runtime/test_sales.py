@@ -1213,8 +1213,8 @@ class Commerce(unittest.TestCase):
    self.assertIn("approve:1",str(rows[1]["payload"]))
  def test_new_home_menu_exact_order_and_admin_only(self):
   expected=[
-    ["buynew","services"],["fun:ai"],["fun:music","fun:film"],
-    ["soc:home"],["points_discount"],["fun","support"],["wallet"]
+    ["buynew","my_subs"],["fun:ai","fun:film"],
+    ["fun:music","soc:home"],["wallet_points","support"],["fun"]
   ]
   with s.conn() as c:
    s.put(c,"admins",[101])
