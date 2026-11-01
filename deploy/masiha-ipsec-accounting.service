@@ -11,4 +11,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
+RuntimeDirectory=masiha-ipsec
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 ReadWritePaths=/etc/x-ui /etc/masiha-vpn-extension /run/masiha-ipsec
