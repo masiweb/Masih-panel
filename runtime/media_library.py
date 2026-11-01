@@ -504,6 +504,18 @@ def _film_quality_buttons(c, row, page=0):
       v.subtitles,v.id""",
     (parent["title_id"],row["season"],row["episode"])).fetchall()
  if not variants:return [],False
+ # Keep one Original and one Dubbed file per quality. Older imports may
+ # contain multiple encodes or subtitle variants for the same user option.
+ unique_variants=[]
+ seen_quality_versions=set()
+ for variant in variants:
+  version_type="dubbed" if variant["dubbed"]=="yes" else "original"
+  identity=(variant["quality"],version_type)
+  if identity in seen_quality_versions:
+   continue
+  seen_quality_versions.add(identity)
+  unique_variants.append(variant)
+ variants=unique_variants
  pages=max(1,(len(variants)+9)//10)
  page=max(0,min(page,pages-1))
  buttons=[]
