@@ -131,7 +131,16 @@ def group_message(c,up):
   return False
  if chat.get("id")!=cfg["discussion_id"]:return False
  sender=m.get("from") or {}
- if not sender.get("id") or sender.get("is_bot") or m.get("sender_chat"):return False
+ sender_chat=m.get("sender_chat") or {}
+ # Telegram represents anonymous group-admin messages with sender_chat equal
+ # to the group and may attach the synthetic GroupAnonymousBot sender.
+ # Accept those only when explicitly addressed to this bot; reject channel
+ # posts and all other sender_chat identities.
+ anonymous_group_sender=bool(sender_chat and sender_chat.get("id")==chat.get("id"))
+ if (not sender.get("id") and not anonymous_group_sender) or (sender.get("is_bot") and not anonymous_group_sender):
+  return False
+ if sender_chat and not anonymous_group_sender:return False
+ sender_id=int(sender.get("id") or chat["id"])
  question=(m.get("text") or "").strip()
  if not 3<=len(question)<=900:return False
  username=cfg["bot_username"]
@@ -156,13 +165,13 @@ def group_message(c,up):
  if c.execute("""SELECT COUNT(*) FROM channel_manager_replies
     WHERE created>=?""",(timestamp-86400,)).fetchone()[0]>=MAX_DAILY_GROUP_REPLIES:return False
  if c.execute("""SELECT COUNT(*) FROM channel_manager_replies
-    WHERE user_id=? AND created>=?""",(sender["id"],timestamp-86400)).fetchone()[0]>=5:return False
+    WHERE user_id=? AND created>=?""",(sender_id,timestamp-86400)).fetchone()[0]>=5:return False
  last=c.execute("SELECT MAX(created) FROM channel_manager_replies WHERE user_id=?",
-                 (sender["id"],)).fetchone()[0] or 0
+                 (sender_id,)).fetchone()[0] or 0
  if timestamp-last<120:return False
  c.execute("""INSERT OR IGNORE INTO channel_manager_replies
   (chat_id,message_id,user_id,question,status,created) VALUES(?,?,?,?,'pending',?)""",
-  (chat["id"],m["message_id"],sender["id"],cleaned,timestamp))
+  (chat["id"],m["message_id"],sender_id,cleaned,timestamp))
  return True
 
 def _content_prompt(topic):
