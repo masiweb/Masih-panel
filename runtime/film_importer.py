@@ -149,6 +149,7 @@ def stage(c, entry, hosts):
             _str(entry,"rating_source",80),_str(entry,"cover_url",1800),
             _str(entry,"source_page",1800),now())
     prepared=[]
+    seen_quality_versions=set()
     for var in variants:
         if not isinstance(var,dict):raise ValueError("Invalid film variant")
         quality=var.get("quality")
@@ -161,6 +162,11 @@ def stage(c, entry, hosts):
             raise ValueError("Season and episode must match film type")
         dubbed=var.get("dubbed","unknown")
         if dubbed not in ("yes","no","unknown"):raise ValueError("Invalid dubbed")
+        version_type="dubbed" if dubbed=="yes" else "original"
+        identity=(season,episode,quality,version_type)
+        if identity in seen_quality_versions:
+            continue
+        seen_quality_versions.add(identity)
         subs=var.get("subtitles","unknown")
         if subs not in ("none","hardsub","softsub","external","unknown"):
             raise ValueError("Invalid subtitle")
@@ -181,6 +187,13 @@ def stage(c, entry, hosts):
                      (SOURCE,key)).fetchone()[0]
     added=0
     for v in prepared:
+        version_type="dubbed" if v[4]=="yes" else "original"
+        existing=c.execute("""SELECT 1 FROM film_variants
+          WHERE title_id=? AND season=? AND episode=? AND quality=?
+            AND CASE WHEN dubbed='yes' THEN 'dubbed' ELSE 'original' END=?
+          LIMIT 1""",(parent,v[0],v[1],v[2],version_type)).fetchone()
+        if existing:
+            continue
         cur=c.execute("""INSERT OR IGNORE INTO film_variants
           (title_id,season,episode,quality,version,dubbed,subtitles,language,
            source_url,send_method,created) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
