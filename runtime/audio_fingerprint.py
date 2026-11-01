@@ -153,7 +153,9 @@ def _command(args,timeout=60):
                           check=False,capture_output=True,text=True,timeout=timeout,
                           env={**os.environ,"OMP_NUM_THREADS":"1","OPENBLAS_NUM_THREADS":"1"})
     if result.returncode:
-        raise RuntimeError("Audio fingerprint engine failed ("+str(result.returncode)+")")
+        reason=(result.stderr or result.stdout or "").replace("\n"," ").strip()[-220:]
+        reason=re.sub(r"https?://\S+","[url]",reason)
+        raise RuntimeError("Audio fingerprint engine failed ("+str(result.returncode)+"): "+reason)
     return (result.stdout+"\n"+result.stderr)[-12000:]
 
 def index_audio(audio_path,marker):
@@ -350,7 +352,7 @@ def run_once():
             c.execute("""INSERT INTO audio_fp_index(media_id,state,error,attempts,updated)
                  VALUES(?,'error',?,?,?) ON CONFLICT(media_id) DO UPDATE SET
                  state='error',error=excluded.error,attempts=excluded.attempts,updated=excluded.updated""",
-                 (media["id"],type(ex).__name__,attempts,int(time.time())))
+                 (media["id"],(type(ex).__name__+":"+str(ex))[:240],attempts,int(time.time())))
             return "index_failed:"+str(media["id"])+":"+type(ex).__name__
 
 if __name__=="__main__":
