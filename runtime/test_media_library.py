@@ -13,16 +13,19 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 import sales as s
 import sales_worker as worker
 import media_library as lib
+import film_importer as films
 import gamification as points
 
 ALL_MEDIA=("media_reports","playlist_comments","playlist_likes","playlist_members",
            "playlist_entries","playlists","media_comments","media_likes",
            "media_metadata_reward","media_items","loyalty_points","ai_usage",
+           "film_import_jobs","film_variants","film_titles",
            "outbox","updates","users")
 
 class MediaQA(unittest.TestCase):
  def setUp(self):
   with s.conn() as c:
+   films.setup(c)
    for table in ALL_MEDIA:c.execute("DELETE FROM "+table)
    for uid in (101,102,103):
     c.execute("INSERT INTO users(id,name,created) VALUES(?,?,?)",(uid,"Tester"+str(uid),s.now()))
@@ -321,13 +324,14 @@ class MediaQA(unittest.TestCase):
  def test_play_without_cover_is_info_message_then_movie_with_buttons(self):
   with s.conn() as c:
    mid=self.upload(c,kind="film")
+   c.execute("UPDATE media_items SET media_type='movie' WHERE id=?",(mid,))
    self.publish(c,101,mid)
    lib.play(c,102,mid)
    rows=c.execute("SELECT method,payload FROM outbox WHERE chat=? ORDER BY id",(102,)).fetchall()
    self.assertEqual([r["method"] for r in rows],["sendMessage","sendVideo"])
    info,video=[json.loads(r["payload"]) for r in rows]
    self.assertIn("سینمایی",info["text"])
-   self.assertNotIn("reply_markup",info)
+   self.assertIn("reply_markup",info)
    self.assertEqual(video["video"],"movieId")
    self.assertIn("reply_markup",video)
 
@@ -347,6 +351,7 @@ class MediaQA(unittest.TestCase):
   with s.conn() as c:
    mid=self.upload(c,kind="film",message={"video_note":{
     "file_id":"note_id","file_unique_id":"note_unique"}})
+   c.execute("UPDATE media_items SET media_type='movie' WHERE id=?",(mid,))
    self.publish(c,101,mid)
    lib.play(c,102,mid)
    rows=c.execute("SELECT method,payload FROM outbox WHERE chat=? ORDER BY id",(102,)).fetchall()
@@ -355,6 +360,50 @@ class MediaQA(unittest.TestCase):
    self.assertNotIn("caption",note)
    self.assertEqual(note["video_note"],"note_id")
    self.assertIn("reply_markup",note)
+
+ def test_film2media_quality_buttons_live_under_cover_and_video_has_bot_link(self):
+  with s.conn() as c:
+   mid=self.upload(c,kind="film")
+   c.execute("UPDATE media_items SET media_type='movie' WHERE id=?",(mid,))
+   self.publish(c,101,mid)
+   c.execute("""INSERT INTO film_titles
+    (id,source,external_key,media_type,title,original_title,genre,year,director,actors,
+     description,rating,rating_source,country,certification,created)
+    VALUES(1,'test','test-film-1','movie','Test Movie','Test Original','Action',2026,
+     'Test Director','Test Actor','Test synopsis',8.1,'IMDb','Japan','PG-13',?)""",(s.now(),))
+   c.execute("UPDATE media_items SET film_title_id=1,cover_id='FILM_COVER',title='Test Movie' WHERE id=?",(mid,))
+   variants=[
+    (901,'720p','WEB-DL','yes','none','فارسی','film720dub'),
+    (902,'1080p','WEB-DL','no','softsub','English','film1080sub')]
+   for vid,quality,version,dubbed,subtitles,language,file_id in variants:
+    c.execute("""INSERT INTO film_variants
+     (id,title_id,season,episode,quality,version,dubbed,subtitles,language,source_url,
+      send_method,file_id,file_unique_id,file_bytes,duration,width,height,stream_ready,uploaded,created)
+     VALUES(?,1,0,0,?,?,?,?,?,'https://example.com/video.mp4','sendVideo',?,?,900000000,
+      3600,1920,1080,1,1,?)""",
+      (vid,quality,version,dubbed,subtitles,language,file_id,file_id+'-unique',s.now()))
+    c.execute("INSERT INTO film_import_jobs(variant_id,state,attempts,last_error,updated) VALUES(?,'done',0,'',?)",
+              (vid,s.now()))
+   s.put(c,"bot_username","MasihaV2ray_bot")
+   lib.play(c,102,mid)
+   rows=c.execute("SELECT method,payload FROM outbox WHERE chat=102 ORDER BY id").fetchall()
+   self.assertEqual(len(rows),1)
+   self.assertEqual(rows[0]["method"],"sendPhoto")
+   cover=json.loads(rows[0]["payload"])
+   self.assertEqual(cover["photo"],"FILM_COVER")
+   self.assertIn("Test Original",cover["caption"])
+   buttons={b["callback_data"] for group in cover["reply_markup"]["inline_keyboard"] for b in group}
+   self.assertTrue({"med:filmfile:901","med:filmfile:902",
+                    "med:like:"+str(mid),"med:comments:"+str(mid),
+                    "med:addmenu:"+str(mid),"med:report:"+str(mid)}<=buttons)
+   self.assertFalse(any("کیفیت موردنظر" in json.loads(r[0]) for r in
+       c.execute("SELECT payload FROM outbox WHERE chat=102")))
+   lib.callback(c,102,"med:filmfile:901")
+   video=json.loads(c.execute("SELECT payload FROM outbox WHERE chat=102 AND method='sendVideo' ORDER BY id DESC LIMIT 1").fetchone()[0])
+   self.assertEqual(video["video"],"film720dub")
+   self.assertIn("720p",video["caption"])
+   self.assertIn("IMDb",video["caption"])
+   self.assertTrue(video["caption"].endswith("https://t.me/MasihaV2ray_bot"))
 
  def test_no_arbitrary_documents_accepted(self):
   with s.conn() as c:
