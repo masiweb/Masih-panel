@@ -571,7 +571,7 @@ def process_one(c, config):
     job=c.execute("""SELECT j.variant_id,v.source_url,v.send_method,j.attempts
        FROM film_import_jobs j JOIN film_variants v ON v.id=j.variant_id
        WHERE j.state='pending' OR (j.state='failed' AND j.attempts<3)
-       ORDER BY CASE WHEN j.state='pending' THEN 0 ELSE 1 END,j.variant_id LIMIT 1""").fetchone()
+       ORDER BY CASE WHEN j.state='failed' THEN 0 ELSE 1 END,j.updated,j.variant_id LIMIT 1""").fetchone()
     if not job:return "queue_empty"
     vid=job["variant_id"]
     c.execute("UPDATE film_import_jobs SET state='processing',updated=? WHERE variant_id=?",(now(),vid));c.commit()
