@@ -139,7 +139,17 @@ class ChannelManagerTests(unittest.TestCase):
   self.assertTrue(cm.group_message(self.c,msg("@MasihaV2ray_bot راهنمای خرید چیست؟",2)))
   self.assertFalse(cm.group_message(self.c,msg("@MasihaV2ray_bot دوباره لطفاً",3)))
   self.assertTrue(cm.group_message(self.c,msg("چطور وصل شوم؟",4,reply=999,uid=203)))
-  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM channel_manager_replies").fetchone()[0],2)
+  anonymous={"message":{"chat":{"id":-1009999999999,"type":"supergroup"},
+    "from":{"id":1087968824,"is_bot":True,"username":"GroupAnonymousBot"},
+    "sender_chat":{"id":-1009999999999,"type":"supergroup"},
+    "message_id":5,"text":"@MasihaV2ray_bot چطور اشتراک بخرم؟"}}
+  self.assertTrue(cm.group_message(self.c,anonymous))
+  channel_post={"message":{"chat":{"id":-1009999999999,"type":"supergroup"},
+    "from":{"id":1087968824,"is_bot":True},
+    "sender_chat":{"id":-1001234567890,"type":"channel"},
+    "message_id":6,"text":"@MasihaV2ray_bot باید نادیده گرفته شود"}}
+  self.assertFalse(cm.group_message(self.c,channel_post))
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM channel_manager_replies").fetchone()[0],3)
   cm._reply_once(self.c)
   output=json.loads(self.c.execute("SELECT payload FROM outbox LIMIT 1").fetchone()[0])
   self.assertEqual(output["reply_parameters"]["message_id"],2)
