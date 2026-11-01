@@ -156,7 +156,7 @@ def broadcast_new_media(c,mid):
 
  caption=("🎵 موزیک جدید" if media_kind=="music" else
           "📺 قسمت جدید سریال" if media_kind=="series" else "🎬 فیلم سینمایی جدید")
- caption+="\\n"+_media_summary(row)[:600]
+ caption+="\n"+_media_summary(row)[:600]
  button={"inline_keyboard":[[{"text":"▶️ جزئیات و پخش","callback_data":"med:play:"+str(mid)}]]}
  sent=0
  recipients=c.execute("SELECT id FROM users WHERE id>0 AND blocked=0 ORDER BY id").fetchall()
@@ -172,7 +172,7 @@ def broadcast_new_media(c,mid):
    keyboard={"inline_keyboard":[[{"text":label,"callback_data":action}
              for label,action in group] for group in quality_rows]}
    info=(("📺 قسمت جدید سریال" if media_kind=="series" else "🎬 فیلم سینمایی جدید")
-         +"\\n"+_preview(c,recipient,row))[:1000]
+         +"\n"+_preview(c,recipient,row))[:1000]
    if row["cover_id"]:
     method="sendPhoto"
     payload={"chat_id":recipient,"photo":row["cover_id"],
@@ -235,7 +235,31 @@ def _queue_file(c,uid,method,file_id,caption,buttons,extra=None):
  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
            (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
 
+def film_hub(c,uid):
+ return send(c,uid,"🎬 فیلم و سریال\nموردنظر خود را انتخاب کنید:",[
+  [("🎞 فیلم‌های سینمایی","med:filmtype:movie")],
+  [("📺 سریال‌ها و قسمت‌ها","med:filmtype:series")],
+  [("🆕 ۲۰ رسانه جدید","med:latest:film"),("🔎 جستجو","med:search:film")],
+  [("📚 پلی‌لیست‌های فیلم","med:lists:film"),("➕ ارسال ویدیو","med:upload:film")],
+  [("🏠 منوی اصلی","home")]
+ ])
+
+def film_category(c,uid,kind):
+ if kind not in ("movie","series"):raise ValueError("نوع رسانه نامعتبر است")
+ rows=c.execute("""SELECT * FROM media_items WHERE kind='film' AND
+        media_type=? AND status='published' ORDER BY id DESC LIMIT 20""",(kind,)).fetchall()
+ name="🎞 فیلم‌های سینمایی" if kind=="movie" else "📺 سریال‌ها و قسمت‌ها"
+ buttons=[[(_media_summary(row)[:55],"med:play:"+str(row["id"]))] for row in rows]
+ buttons.extend([
+  [("🔎 جستجو در فیلم و سریال","med:search:film")],
+  [("↩️ فیلم و سریال","med:film"),("🏠 منوی اصلی","home")]
+ ])
+ return send(c,uid,name+" | ۲۰ عنوان/قسمت آخر"+
+     ("\nهنوز مورد منتشرشده‌ای وجود ندارد." if not rows else ""),buttons)
+
+
 def kind_menu(c,uid,kind):
+ if kind=='film':return film_hub(c,uid)
  send(c,uid,GENRE_LABEL[kind]+" | فایل را بفرستید یا فوروارد کنید.",
   [[("➕ ارسال رسانه","med:upload:"+kind),("🆕 آخرین ۲۰ مورد","med:latest:"+kind)],
    [("📂 رسانه‌های من","med:mine:"+kind),("📚 پلی‌لیست‌ها","med:lists:"+kind)],
@@ -777,10 +801,11 @@ def callback(c,uid,cmd):
  parts=cmd.split(":")
  if len(parts)<2 or parts[0]!="med":raise ValueError("فرمان رسانه نامعتبر است")
  op=parts[1];x=parts[2] if len(parts)>2 else ""
- if op in ("music","film","latest","mine","top","lists","plfeed","plmine","pltop",
+ if op in ("music","film","filmtype","latest","mine","top","lists","plfeed","plmine","pltop",
            "leaders","play","filmq","comments","plcomments","pl","plpage","addmenu"):
   _state(c,uid,"")
  if op in ("music","film"):return kind_menu(c,uid,op)
+ if op=="filmtype":return film_category(c,uid,x)
  if op=="type":
   if len(parts)!=4 or parts[3] not in ("movie","series"):
    raise ValueError("نوع ویدیو نامعتبر است")
