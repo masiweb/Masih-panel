@@ -69,6 +69,9 @@ class AIAdminAuditTests(unittest.TestCase):
 
  def test_admin_can_open_conversation_detail(self):
   audit.route(self.c,900,"aimonitordetail",["101"])
+  self.assertTrue(any("گفتگوهای متنی ثبت‌شده" in item["text"] for item in self.sent))
+  self.sent.clear()
+  audit.route(self.c,900,"aidetail",["101","1"])
   self.assertTrue(any("question 1" in item["text"] for item in self.sent))
 
 if __name__=="__main__":
