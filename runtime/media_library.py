@@ -115,6 +115,11 @@ def setup(c):
   ('broadcast_music',0),('broadcast_movie',0),('broadcast_series',0);
  """)
 
+ cols={r[1] for r in c.execute("PRAGMA table_info(media_items)")}
+ if "film_title_id" not in cols:
+  c.execute("ALTER TABLE media_items ADD COLUMN film_title_id INTEGER NOT NULL DEFAULT 0")
+ c.commit()
+
 def _sales():
  import sales
  return sales
@@ -216,16 +221,18 @@ def _playlist(c,uid,pid):
   raise ValueError("این پلی‌لیست خصوصی است؛ ابتدا دعوت‌نامه معتبر را باز کنید")
  return p
 
-def _queue_file(c,uid,method,file_id,caption,buttons):
+def _queue_file(c,uid,method,file_id,caption,buttons,extra=None):
  if method=="link":
   raise AssertionError("use send for external URLs")
  field={"sendAudio":"audio","sendVoice":"voice","sendVideo":"video","sendVideoNote":"video_note","sendDocument":"document"}[method]
  markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in row] for row in buttons]}
  payload={"chat_id":uid,field:file_id,"reply_markup":markup}
- if method!="sendVideoNote":
-  # Telegram video_note does not support captions; the information card
-  # has already been queued as the preceding message.
-  payload["caption"]=caption[:950]
+ if method!="sendVideoNote":payload["caption"]=caption[:950]
+ if method=="sendVideo":payload["supports_streaming"]=True
+ if extra:
+  for key in ("duration","width","height"):
+   value=extra.get(key)
+   if value:payload[key]=int(value)
  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
            (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
 
@@ -477,59 +484,91 @@ def _preview(c,uid,row):
   if row["director"]:caption+="\nکارگردان: "+row["director"]
   if row["description"]:caption+="\n"+row["description"][:120]
   if c.execute("SELECT 1 FROM sqlite_master WHERE name='film_titles'").fetchone():
-   extra=c.execute("""SELECT rating,rating_source,original_title FROM film_titles
-      WHERE id=(SELECT title_id FROM film_variants
-                WHERE file_id=? LIMIT 1)""",(row["file_id"],)).fetchone()
+   extra=c.execute("""SELECT rating,rating_source,original_title,country,certification
+      FROM film_titles WHERE id=?""",(row["film_title_id"],)).fetchone() if row["film_title_id"] else None
    if extra:
     if extra["rating"] is not None:
      caption+="\n⭐ امتیاز: "+str(extra["rating"])+"/10"+(
          " ("+extra["rating_source"]+")" if extra["rating_source"] else "")
     if extra["original_title"]:caption+="\nنام اصلی: "+extra["original_title"][:160]
+    if extra["country"]:caption+="\nکشور: "+extra["country"][:100]
+    if extra["certification"]:caption+="\nرده سنی: "+extra["certification"][:30]
  return caption
 
+def _film_variant_caption(v,bot_username=""):
+ title=v["film_title"] or "فیلم";year=v["film_year"] or 0
+ original=v["original_title"] or ""
+ if year and re.search(r"(?:19|20)\\d{2}$",title):title=re.sub(r"\\s*(?:19|20)\\d{2}$","",title).strip()
+ lines=["🎬 "+title+(" ("+str(year)+")" if year else "")]
+ if original and original.casefold()!=title.casefold():lines.append("نام اصلی: "+original[:150])
+ lines.append("🎞 کیفیت: "+v["quality"]+(" | "+v["version"][:75] if v["version"] else ""))
+ if v["duration"]:
+  secs=int(v["duration"]);lines.append("⏱ مدت: %02d:%02d:%02d"%(secs//3600,(secs%3600)//60,secs%60))
+ if v["file_bytes"]:lines.append("💾 حجم: "+str(round(v["file_bytes"]/1024**2))+" MB")
+ if v["film_genre"]:lines.append("🎭 ژانر: "+v["film_genre"][:130])
+ if v["country"]:lines.append("🌍 کشور: "+v["country"][:90])
+ if v["rating"] is not None:lines.append("⭐ IMDb: "+str(v["rating"])+"/10"+(" ("+v["rating_source"]+")" if v["rating_source"] else ""))
+ if v["certification"]:lines.append("🔞 رده سنی: "+v["certification"][:30])
+ if v["language"]:lines.append("🗣 زبان: "+v["language"][:90])
+ if v["dubbed"]=="yes":lines.append("🎙 دوبله")
+ elif v["dubbed"]=="no":lines.append("🎙 زبان اصلی")
+ if v["subtitles"] not in ("none","unknown"):lines.append("💬 زیرنویس: "+{"hardsub":"چسبیده","softsub":"داخلی / انتخابی","external":"جدا"}.get(v["subtitles"],v["subtitles"]))
+ if v["director"]:lines.append("🎬 کارگردان: "+v["director"][:100])
+ if v["actors"]:lines.append("👥 بازیگران: "+v["actors"][:120])
+ if v["description"]:lines.append("📝 "+v["description"][:280])
+ body="\\n".join(lines)
+ username=re.sub(r"[^A-Za-z0-9_]","",str(bot_username or "").lstrip("@"))
+ credit="\\n\\n🤖 ربات: https://t.me/"+username if username else ""
+ limit=950
+ if len(body)+len(credit)>limit:
+  available=max(1,limit-len(credit)-2)
+  body=body[:available]
+  if "\\n" in body:body=body.rsplit("\\n",1)[0]
+  body=body.rstrip()+"…"
+ return (body+credit)[:limit]
+
+
 def _film_quality_buttons(c, row, page=0):
- # Only versions that finished uploading to Telegram can be offered.
+ # Only uploaded, streamable sendVideo variants can be offered.
  if row["kind"]!="film" or not c.execute(
-       "SELECT 1 FROM sqlite_master WHERE name='film_variants'").fetchone():
+       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='film_variants'").fetchone():
   return [],False
- parent=c.execute("""SELECT title_id FROM film_variants WHERE file_id=?
-    AND uploaded>0 LIMIT 1""",(row["file_id"],)).fetchone()
- if not parent:return [],False
+ title_id=int(row["film_title_id"] or 0)
+ if not title_id and row["file_id"]:
+  parent=c.execute("SELECT title_id FROM film_variants WHERE file_id=? AND uploaded>0 LIMIT 1",
+                   (row["file_id"],)).fetchone()
+  if parent:title_id=int(parent["title_id"])
+ if not title_id:return [],False
  variants=c.execute("""SELECT v.* FROM film_variants v
     JOIN film_import_jobs j ON j.variant_id=v.id
     WHERE v.title_id=? AND v.season=? AND v.episode=?
-      AND j.state='done' AND v.uploaded>0 AND LENGTH(v.file_id)>0
+      AND j.state='done' AND v.uploaded>0 AND v.stream_ready=1
+      AND v.send_method='sendVideo' AND LENGTH(v.file_id)>0
     ORDER BY CAST(REPLACE(v.quality,'p','') AS INTEGER),
       CASE v.dubbed WHEN 'yes' THEN 0 WHEN 'no' THEN 2 ELSE 1 END,
       v.subtitles,v.id""",
-    (parent["title_id"],row["season"],row["episode"])).fetchall()
+    (title_id,row["season"],row["episode"])).fetchall()
  if not variants:return [],False
- # Keep one Original and one Dubbed file per quality. Older imports may
- # contain multiple encodes or subtitle variants for the same user option.
  unique_variants=[]
  seen_quality_versions=set()
  for variant in variants:
   version_type="dubbed" if variant["dubbed"]=="yes" else "original"
   identity=(variant["quality"],version_type)
-  if identity in seen_quality_versions:
-   continue
+  if identity in seen_quality_versions:continue
   seen_quality_versions.add(identity)
   unique_variants.append(variant)
  variants=unique_variants
  pages=max(1,(len(variants)+9)//10)
- page=max(0,min(page,pages-1))
+ page=max(0,min(int(page),pages-1))
  buttons=[]
  for v in variants[page*10:(page+1)*10]:
-  if v["dubbed"]=="yes":
-   label="🎙 دوبله"
-  elif v["subtitles"] not in ("none","unknown"):
-   label="🔤 زیرنویس"
-  elif v["dubbed"]=="no":
-   label="🌐 زبان اصلی"
-  else:
-   label="🎬 نسخه"
+  if v["dubbed"]=="yes":label="🎙 دوبله"
+  elif v["subtitles"] not in ("none","unknown"):label="🔤 زیرنویس"
+  elif v["dubbed"]=="no":label="🌐 زبان اصلی"
+  else:label="🎬 نسخه"
   codec=(" | "+v["version"][:26]) if v["version"] else ""
-  buttons.append([("⬇️ "+v["quality"]+" | "+label+codec,"med:filmfile:"+str(v["id"]))])
+  buttons.append([("⬇️ "+v["quality"]+" | "+label+codec,
+                  "med:filmfile:"+str(v["id"]))])
  if pages>1:
   nav=[]
   if page>0:nav.append(("◀️ قبلی","med:filmq:"+str(row["id"])+":"+str(page-1)))
@@ -537,7 +576,6 @@ def _film_quality_buttons(c, row, page=0):
   if page+1<pages:nav.append(("بعدی ▶️","med:filmq:"+str(row["id"])+":"+str(page+1)))
   buttons.append(nav)
  return buttons,True
-
 
 def play(c,uid,mid,page=0):
  row=_media(c,mid)
@@ -764,17 +802,21 @@ def callback(c,uid,cmd):
  if op=="filmq" and len(parts)==4:return play(c,uid,int(x),int(parts[3]))
  if op=="filmfile":
   vid=int(x)
-  v=c.execute("""SELECT v.*,m.id AS media_id,m.title AS media_title
+  v=c.execute("""SELECT v.*,m.id AS media_id,t.title AS film_title,
+      t.original_title,t.genre AS film_genre,t.year AS film_year,t.country,
+      t.certification,t.rating,t.rating_source,t.director,t.actors,t.description
     FROM film_variants v JOIN film_import_jobs j ON j.variant_id=v.id
-    JOIN media_items m ON m.kind='film' AND m.file_id IN
-     (SELECT file_id FROM film_variants WHERE title_id=v.title_id
-      AND season=v.season AND episode=v.episode AND uploaded>0)
-    WHERE v.id=? AND j.state='done' AND v.uploaded>0
-      AND m.status='published' LIMIT 1""",(vid,)).fetchone()
-  if not v or not v["file_id"]:raise ValueError("نسخه انتخاب‌شده موجود نیست")
-  return _queue_file(c,uid,v["send_method"],v["file_id"],
-       v["media_title"][:75]+" | "+v["quality"],
-       [[("↩️ بازگشت به کیفیت‌ها","med:play:"+str(v["media_id"]))]])
+    JOIN film_titles t ON t.id=v.title_id
+    JOIN media_items m ON m.kind='film' AND m.film_title_id=v.title_id
+      AND m.season=v.season AND m.episode=v.episode AND m.status='published'
+    WHERE v.id=? AND j.state='done' AND v.uploaded>0 AND v.stream_ready=1
+      AND v.send_method='sendVideo' AND v.file_id<>'' LIMIT 1""",(vid,)).fetchone()
+  if not v or not v["file_id"]:raise ValueError("نسخه پخش آنلاین هنوز آماده نیست")
+  bot_username=_sales().settings(c).get("bot_username","")
+  return _queue_file(c,uid,"sendVideo",v["file_id"],_film_variant_caption(v,bot_username),
+       [[("↩️ بازگشت به کیفیت‌ها","med:play:"+str(v["media_id"]))]],
+       {"duration":v["duration"],"width":v["width"],"height":v["height"]})
+
  if op=="like":
   liked=_like(c,uid,"media",int(x))
   import social
