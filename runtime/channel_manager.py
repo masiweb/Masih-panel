@@ -345,8 +345,12 @@ def admin_callback(c,uid,cmd):
     +[[("↩️ مرکز کانال","ch:home")]])
  if op=="draft":
   if not _posting_ready(c):raise ValueError("ابتدا کانال را تأیید و انتشار را فعال کنید")
-  if not _make_one_draft(c):return enqueue(c,uid,"سه نوبت امروز از قبل ساخته شده‌اند.")
-  return menu(c,uid)
+  # Never call the slow external AI API from the Telegram polling thread.
+  filled=c.execute("SELECT COUNT(*) FROM channel_manager_posts WHERE day=?",
+                   (local_day(),)).fetchone()[0]
+  return enqueue(c,uid,("هر ۳ نوبت امروز ساخته شده‌اند." if filled>=MAX_POSTS else
+   "✅ درخواست بررسی ثبت شد. زمان‌بند مستقل، پیش‌نویس‌های باقی‌مانده را ایجاد می‌کند."),
+   [[("📋 پیش‌نویس‌ها","ch:pending"),("↩️ مرکز کانال","ch:home")]])
  post=c.execute("SELECT * FROM channel_manager_posts WHERE id=?",(ident,)).fetchone()
  if not post:raise ValueError("پست یافت نشد")
  if op=="view":
