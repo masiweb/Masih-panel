@@ -47,14 +47,11 @@ def main(c,uid):
  # Discard any half-completed input workflow on return to the admin home.
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  send(c,uid,bot_message(c,"welcome_admin"),[
-  [("تنظیم امکانات","a:settings"),("پلن‌های فروش","a:plans")],
-  [("کاربران و نمایندگان","a:users"),("سفارش‌ها","a:orders")],
-  [("رسیدهای در انتظار","a:receipts"),("کدهای تخفیف","a:coupons")],
-  [("🤖 فروش هوش مصنوعی","aisadmin:pending")],
-  [("تیکت پشتیبانی","a:tickets"),("پیام همگانی","a:broadcast")],
-  [("پیام‌های ارسال‌نشده","a:outbox"),("گزارش مالی","a:finance")],
-  [("🚩 گزارش‌های موزیک و فیلم","medadmin:reports")],
-  [("آدرس پنل وب","a:web")]])
+  [("📊 داشبورد","a:dashboard"),("👥 کاربران","a:users")],
+  [("📦 سفارش‌ها","a:orders"),("🛍 پلن‌ها و تخفیف","a:catalog")],
+  [("🤖 مدیریت هوش مصنوعی","a:aihub"),("🎬 مدیریت رسانه","a:mediahub")],
+  [("💰 امور مالی","a:financehub"),("🛟 پشتیبانی و پیام‌ها","a:supporthub")],
+  [("⚙️ تنظیمات","a:settingshub"),("🏠 منوی اصلی","home")]])
 def _order_time(timestamp):
  if not timestamp:return "ثبت نشده"
  return datetime.fromtimestamp(int(timestamp),ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d %H:%M")+" (تهران)"
@@ -335,6 +332,9 @@ def callback(c,uid,cmd):
   c.execute("DELETE FROM quotes WHERE plan_id=?",(pid,))
   if not c.execute("DELETE FROM plans WHERE id=?",(pid,)).rowcount:raise ValueError("پلن پیدا نشد")
   return callback(c,uid,"a:plans")
+ if op in ("aiuse","aitext","aidetail","aimedia","aijob","aifile"):
+  import ai_admin_audit
+  return ai_admin_audit.route(c,uid,op,parts[2:])
  if op=="users":
   rows=[[(str(r["id"])+" / "+r["name"][:22],"a:user:"+str(r["id"]))] for r in c.execute(
    "SELECT id,name FROM users ORDER BY created DESC LIMIT 30")]
@@ -394,6 +394,7 @@ def callback(c,uid,cmd):
     ("💬 گفتگوها و گزارش‌ها","a:clubchats:"+ident)],
    [("📜 تراکنش‌ها و تغییرات","a:clubhistory:"+ident),
     ("📱 درخواست مجدد شماره","a:phoneprompt:"+ident)],
+   [("🤖 استفاده از هوش مصنوعی","a:aiuse:"+ident)],
    [("تغییر اعتبار (قدیمی)","a:credit:"+ident)],
    [("↩️ فهرست کاربران","a:users")]]+back())
  if op in ("clubprofile","clubgallery","clubmedia","clubchats","clubhistory","phoneprompt","clubchat"):
@@ -496,7 +497,7 @@ def callback(c,uid,cmd):
   return send(c,uid,"📦 اشتراک "+str(d.get("label") or rec["username"])+
     "\nنوع: "+rec["protocol"]+"\nپلن: "+str(p.get("name",""))+
     "\nنام سیستمی: "+rec["username"]+
-    "\nانقضا (Unix): "+str(rec["expires"])+
+    "\n🗓 انقضا: "+_order_time(rec["expires"])+
     "\nوضعیت: "+("حذف‌شده" if rec["deleted"] else "فعال یا منقضی‌شده"),
     [[("↩️ اشتراک‌های همین کاربر","a:usubs:"+str(rec["user_id"]))]]+back())
  if op in ("block","reseller"):
@@ -507,6 +508,60 @@ def callback(c,uid,cmd):
  if op=="credit":
   c.execute("UPDATE users SET state=? WHERE id=?",("a:credit:"+str(integer(int(ident),1)),uid))
   return send(c,uid,"مبلغ تغییر موجودی را با علامت مثبت یا منفی و توضیح وارد کنید:\n15000 | افزایش دستی")
+ if op=="dashboard":
+  rows={
+   "users":c.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+   "vpn_orders":c.execute("SELECT COUNT(*) FROM orders").fetchone()[0],
+   "ai_orders":c.execute("SELECT COUNT(*) FROM ai_sale_orders").fetchone()[0],
+   "vpn_services":c.execute("SELECT COUNT(*) FROM services WHERE deleted=0").fetchone()[0],
+   "pending_receipts":c.execute("SELECT COUNT(*) FROM topups WHERE status='pending'").fetchone()[0],
+   "outbox_failed":c.execute("SELECT COUNT(*) FROM outbox WHERE done=-1").fetchone()[0]
+  }
+  return send(c,uid,"📊 وضعیت فعلی\n"+
+     "👥 کاربران: "+str(rows["users"])+
+     "\n🌐 سفارش VPN: "+str(rows["vpn_orders"])+
+     "\n🤖 سفارش AI: "+str(rows["ai_orders"])+
+     "\n🔐 سرویس VPN فعال در سیستم: "+str(rows["vpn_services"])+
+     "\n🧾 رسید در انتظار: "+str(rows["pending_receipts"])+
+     "\n⚠️ پیام ارسال‌نشده نهایی: "+str(rows["outbox_failed"]),[
+      [("📦 سفارش‌ها","a:orders"),("💰 مالی","a:financehub")],
+      [("🏠 مدیریت","a:home")]])
+ if op=="catalog":
+  return send(c,uid,"🛍 محصولات، پلن‌ها و تخفیف‌ها",[
+   [("🌐 پلن‌های VPN","a:plans")],
+   [("🎟 کدهای تخفیف","a:coupons")],
+   [("🤖 سفارش‌های AI","a:orders:ai")],
+   [("↩️ مدیریت","a:home")]])
+ if op=="aihub":
+  return send(c,uid,"🤖 مدیریت هوش مصنوعی",[
+   [("📦 همه سفارش‌های AI","a:orders:ai")],
+   [("🧾 سفارش‌های در انتظار تأیید","aisadmin:pending")],
+   [("⚙️ تنظیمات AI در وب‌پنل","a:web")],
+   [("↩️ مدیریت","a:home")]])
+ if op=="mediahub":
+  return send(c,uid,"🎬 مدیریت فیلم و موزیک",[
+   [("🎬 آرشیو فیلم و سریال","med:film")],
+   [("🎵 آرشیو موزیک","med:music")],
+   [("🚩 گزارش‌های رسانه","medadmin:reports")],
+   [("⚙️ مدیریت پیشرفته در وب‌پنل","a:web")],
+   [("↩️ مدیریت","a:home")]])
+ if op=="financehub":
+  return send(c,uid,"💰 امور مالی و پرداخت‌ها",[
+   [("🧾 رسیدهای در انتظار","a:receipts")],
+   [("📊 گزارش مالی","a:finance")],
+   [("📤 ارسال‌های ناموفق تلگرام","a:outbox")],
+   [("↩️ مدیریت","a:home")]])
+ if op=="supporthub":
+  return send(c,uid,"🛟 پشتیبانی و اطلاع‌رسانی",[
+   [("🎫 تیکت‌های کاربران","a:tickets")],
+   [("📣 پیام همگانی","a:broadcast")],
+   [("📤 صف پیام‌های ناموفق","a:outbox")],
+   [("↩️ مدیریت","a:home")]])
+ if op=="settingshub":
+  return send(c,uid,"⚙️ تنظیمات و ابزارهای مدیریت",[
+   [("🧩 امکانات ربات","a:settings")],
+   [("🌐 پنل مدیریت وب","a:web")],
+   [("↩️ مدیریت","a:home")]])
  if op=="orders":
   if ident in ("vpn","ai"):return _order_list(c,uid,ident)
   return send(c,uid,"📦 مدیریت سفارش‌ها\nنوع سفارش را انتخاب کنید:",[
