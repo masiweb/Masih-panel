@@ -174,6 +174,9 @@ def _make_one_draft(c):
  content=ai_models.text_response(c,_model(c),_content_prompt(TOPICS[next_slot]),expanded=False)
  if not isinstance(content,str) or not 40<=len(content.strip())<=3200:
   raise ValueError("پاسخ مدل برای پست کانال معتبر نیست")
+ bot_name=re.sub(r"[^A-Za-z0-9_]","",str(config(c)["bot_username"] or ""))
+ if bot_name:
+  content=content.strip()+"\n\n🤖 ربات: https://t.me/"+bot_name
  stamp=now()
  c.execute("""INSERT OR IGNORE INTO channel_manager_posts
   (day,slot,topic,body,status,created,updated) VALUES(?,?,?,?,'review',?,?)""",
