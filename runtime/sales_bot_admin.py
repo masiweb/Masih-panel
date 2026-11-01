@@ -7,6 +7,8 @@ changes reuse the exact same validated commerce helpers as the web UI.
 """
 import json
 import secrets
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import gamification as loyalty
 from sales import (
  DEFAULT, settings, save_settings, save_plan, plan_overview, enqueue, bot_message, integer,
@@ -53,6 +55,135 @@ def main(c,uid):
   [("پیام‌های ارسال‌نشده","a:outbox"),("گزارش مالی","a:finance")],
   [("🚩 گزارش‌های موزیک و فیلم","medadmin:reports")],
   [("آدرس پنل وب","a:web")]])
+def _order_time(timestamp):
+ if not timestamp:return "ثبت نشده"
+ return datetime.fromtimestamp(int(timestamp),ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d %H:%M")+" (تهران)"
+
+def _order_snapshot(data):
+ try:return json.loads(data or "{}")
+ except (ValueError,TypeError):return {}
+
+ORDER_STATUS={
+ "awaiting_receipt":"در انتظار رسید","receipt_review":"در انتظار بررسی رسید",
+ "paid":"پرداخت شده / در صف ساخت","review":"نیازمند بررسی",
+ "fulfilled":"تحویل شده","cancelled":"لغو شده",
+ "preview":"در انتظار تأیید خریدار","activating":"در حال فعال‌سازی",
+ "rejected":"رد شده"
+}
+
+def _order_search_sql(kind,query):
+ # For phone, numeric Telegram ID, or full/partial order reference.
+ # Never interpolate a customer-supplied string into SQL.
+ term=str(query or "").strip().translate(str.maketrans(
+  "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩","01234567890123456789"))
+ if not 2<=len(term)<=100:raise ValueError("عبارت جستجو باید بین ۲ تا ۱۰۰ کاراکتر باشد")
+ if any(ord(ch)<32 for ch in term):raise ValueError("عبارت جستجو معتبر نیست")
+ term=term.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")
+ pattern="%"+term+"%"
+ digits="".join(x for x in term if x.isdigit())
+ phone=("%"+digits[-10:]+"%") if len(digits)>=10 else pattern
+ return "(o.id LIKE ? ESCAPE '\\' OR CAST(o.user_id AS TEXT)=? OR u.phone LIKE ? OR u.phone LIKE ?)",(pattern,term,pattern,phone)
+
+def _order_list(c,uid,kind,query=None):
+ if kind not in ("vpn","ai"):raise ValueError("نوع سفارش نامعتبر است")
+ table="orders" if kind=="vpn" else "ai_sale_orders"
+ where=""
+ args=()
+ if query is not None:
+  clause,args=_order_search_sql(kind,query)
+  where=" WHERE "+clause
+ rows=c.execute("""SELECT o.id,o.user_id,o.status,o.created,u.name AS buyer,u.phone
+   FROM """+table+""" o LEFT JOIN users u ON u.id=o.user_id
+   """+where+" ORDER BY o.created DESC,o.rowid DESC LIMIT 20",args).fetchall()
+ heading=("🌐 سفارش‌های VPN" if kind=="vpn" else "🤖 سفارش‌های هوش مصنوعی")
+ heading+=("\n🔎 نتیجه جستجو: "+str(query) if query is not None else "\n۲۰ سفارش آخر")
+ buttons=[[((("🌐 " if kind=="vpn" else "🤖 ")+str(r["id"])[:42]+" | "+ORDER_STATUS.get(r["status"],r["status"]))[:60],
+           "a:"+kind+"order:"+r["id"])] for r in rows]
+ buttons.extend([
+  [("🔎 جستجو با شماره موبایل / آیدی عددی / شماره سفارش","a:findorder:"+kind)],
+  [("↩️ دسته‌بندی سفارش‌ها","a:orders")]
+ ])
+ return send(c,uid,heading+"\nتعداد نمایش‌داده‌شده: "+str(len(rows))+
+       ("\nموردی پیدا نشد." if not rows else ""),buttons)
+
+def _order_detail(c,uid,kind,ident):
+ if kind not in ("vpn","ai"):raise ValueError("نوع سفارش نامعتبر است")
+ table="orders" if kind=="vpn" else "ai_sale_orders"
+ row=c.execute("""SELECT o.*,u.name AS buyer,u.phone AS buyer_phone,
+    u.telegram_username AS buyer_username
+    FROM """+table+""" o LEFT JOIN users u ON u.id=o.user_id WHERE o.id=?""",
+    (ident,)).fetchone()
+ if not row:raise ValueError("سفارش یافت نشد")
+ order_id=row["id"]
+ lines=[
+  ("🌐 سفارش VPN" if kind=="vpn" else "🤖 سفارش هوش مصنوعی"),
+  "🧾 شماره سفارش: "+order_id,
+  "👤 خریدار: "+str(row["buyer"] or "نامشخص"),
+  "📱 موبایل: "+str(row["buyer_phone"] or "ثبت نشده"),
+  "🆔 آیدی عددی: "+str(row["user_id"]),
+  "🔗 تلگرام: "+("@"+str(row["buyer_username"]).lstrip("@") if row["buyer_username"] else "ثبت نشده"),
+  "📍 وضعیت: "+ORDER_STATUS.get(row["status"],row["status"]),
+  "🕒 تاریخ خرید/ثبت: "+_order_time(row["created"])
+ ]
+ actions=[]
+ if kind=="vpn":
+  plan=_order_snapshot(row["plan"])
+  lines.extend([
+   "📦 پلن: "+str(plan.get("_display_name") or plan.get("name") or "نامشخص")[:100],
+   "🔌 پروتکل: "+str(plan.get("protocol") or "نامشخص"),
+   "💾 حجم خرید: "+(str(plan.get("gb"))+" گیگابایت" if plan.get("gb") else "نامحدود"),
+   "⏳ مدت خرید: "+str(plan.get("days") or 0)+" روز",
+   "💰 مبلغ: "+format(row["price"],",")+" تومان",
+   "🔁 نوع خرید: "+("تمدید" if row["renew_id"] else "اشتراک جدید")
+  ])
+  service=c.execute("SELECT * FROM services WHERE id=? AND user_id=?",
+                    (row["service_id"],row["user_id"])).fetchone() if row["service_id"] else None
+  if service:
+   info=_order_snapshot(service["data"])
+   lines.extend([
+    "📛 نام اشتراک: "+str(info.get("label") or service["username"])[:100],
+    "🗓 تاریخ پایان: "+_order_time(service["expires"]),
+    "📊 حجم کل اختصاص‌یافته: "+(("%.2f"%(int(info["totalGB"])/1024**3))+" گیگابایت" if info.get("totalGB") else "نامحدود / ثبت نشده"),
+    "🟢 وضعیت سرویس: "+("حذف شده" if service["deleted"] else "فعال / منقضی بر اساس تاریخ")
+   ])
+  else:
+   lines.append("🗓 تاریخ پایان: سرویس هنوز تحویل نشده است")
+  if row["status"]=="review":actions.append([("🔄 تلاش مجدد تحویل","a:retry:"+order_id)])
+  if row["status"] in ("awaiting_receipt","receipt_review"):
+   actions.append([("❌ لغو سفارش در انتظار","a:cancelask:"+order_id)])
+ else:
+  plan=_order_snapshot(row["plan_snapshot"])
+  import ai_commerce
+  subscription=c.execute("SELECT * FROM ai_sale_subscriptions WHERE order_id=?",
+                         (order_id,)).fetchone()
+  lines.extend([
+   "📦 پلن: "+str(plan.get("name") or "نامشخص")[:100],
+   "🤖 مدل: "+str(plan.get("model_name") or "نامشخص")[:100],
+   "🧩 نوع: "+ai_commerce.TYPES.get(plan.get("kind"),str(plan.get("kind") or "نامشخص")),
+   "⏳ مدت خرید: "+str(plan.get("days") or 0)+" روز",
+   "💰 مبلغ: "+format(int(plan.get("price") or 0),",")+" تومان",
+   "🗓 تاریخ پایان: "+(_order_time(subscription["expires"]) if subscription else "پس از فعال‌سازی مشخص می‌شود"),
+  ])
+  if subscription:
+   lines.append("📊 سهمیه باقی‌مانده: متن "+str(subscription["remaining_text"])+
+                " | تصویر "+str(subscription["remaining_image"])+
+                " | ویدیو "+str(subscription["remaining_video"]))
+  elif plan.get("kind")=="bot":
+   lines.append("📊 سهمیه خریداری‌شده: متن "+str(plan.get("credits_text") or 0)+
+                " | تصویر "+str(plan.get("credits_image") or 0)+
+                " | ویدیو "+str(plan.get("credits_video") or 0))
+  if row["email"]:lines.append("📧 ایمیل: "+str(row["email"])[:200])
+  if row["reason"]:lines.append("📝 علت رد: "+str(row["reason"])[:250])
+  lines.append("🕒 آخرین تغییر: "+_order_time(row["updated"]))
+  if row["status"]=="review":
+   actions.extend([[("✅ تأیید رسید","aisadmin:approve:"+order_id),
+                    ("❌ رد با علت","aisadmin:reject:"+order_id)]])
+  elif row["status"]=="activating":
+   actions.append([("✅ تکمیل فعال‌سازی","aisadmin:complete:"+order_id)])
+ actions.append([("↩️ لیست سفارش‌های این بخش","a:orders:"+kind)])
+ return send(c,uid,"\n".join(lines),actions)
+
+
 def queue_receipt_review(c,admin_id,receipt_id):
  """Queue receipt proof FIRST, then account/service details with approval keys.
 
@@ -136,7 +267,7 @@ def callback(c,uid,cmd):
  s=settings(c)
  parts=cmd.split(":")
  op=parts[1] if len(parts)>1 else "home"
- ident=parts[2] if len(parts)>2 else ""
+ ident=cmd.split(":",2)[2] if len(parts)>2 else ""
  if op=="home":return main(c,uid)
  if op=="web":
   from runtime_config import PUBLIC_PANEL_URL
@@ -377,16 +508,17 @@ def callback(c,uid,cmd):
   c.execute("UPDATE users SET state=? WHERE id=?",("a:credit:"+str(integer(int(ident),1)),uid))
   return send(c,uid,"مبلغ تغییر موجودی را با علامت مثبت یا منفی و توضیح وارد کنید:\n15000 | افزایش دستی")
  if op=="orders":
-  rows=[[(str(o["id"])[:18]+" / "+str(o["status"]),"a:order:"+str(o["id"]))] for o in c.execute(
-    "SELECT id,status FROM orders ORDER BY created DESC LIMIT 25")]
-  return send(c,uid,"آخرین سفارش‌ها",rows+back())
- if op=="order":
-  order=c.execute("SELECT * FROM orders WHERE id=?",(ident,)).fetchone()
-  if not order:raise ValueError("سفارش یافت نشد")
-  rows=[]
-  if order["status"]=="review":rows.append([("تلاش مجدد تحویل","a:retry:"+ident)])
-  if order["status"] in ("awaiting_receipt","receipt_review"):rows.append([("لغو سفارش","a:cancelask:"+ident)])
-  return send(c,uid,"سفارش: "+ident+"\nکاربر: "+str(order["user_id"])+"\nمبلغ: "+str(order["price"])+"\nوضعیت: "+order["status"],rows+back())
+  if ident in ("vpn","ai"):return _order_list(c,uid,ident)
+  return send(c,uid,"📦 مدیریت سفارش‌ها\nنوع سفارش را انتخاب کنید:",[
+   [("🌐 سفارش‌های VPN","a:orders:vpn")],
+   [("🤖 سفارش‌های هوش مصنوعی","a:orders:ai")]
+  ]+back())
+ if op=="findorder" and ident in ("vpn","ai"):
+  c.execute("UPDATE users SET state=? WHERE id=?",("a:findorder:"+ident,uid))
+  return send(c,uid,"🔎 شماره موبایل، آیدی عددی تلگرام یا شماره کامل/بخشی از شماره سفارش را ارسال کنید.",
+              [[("↩️ سفارش‌های این بخش","a:orders:"+ident)]])
+ if op in ("vpnorder","aiorder","order"):
+  return _order_detail(c,uid,"ai" if op=="aiorder" else "vpn",ident)
  if op=="retry":
   if not c.execute("UPDATE orders SET status='paid' WHERE id=? AND status='review'",(ident,)).rowcount:raise ValueError("سفارش در انتظار تحویل مجدد نیست")
   return callback(c,uid,"a:order:"+ident)
@@ -462,6 +594,10 @@ def input_text(c,uid,state,body,update_id):
  parts=state.split(":")
  op=parts[1] if len(parts)>1 else ""
  data=body.strip()
+ if op=="findorder":
+  kind=parts[2] if len(parts)>2 else ""
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  return _order_list(c,uid,kind,data)
  if op=="cfg":
   key=parts[2] if len(parts)>2 else ""
   if key not in SETTINGS_EDIT:raise ValueError("این گزینه قابل تغییر نیست")
