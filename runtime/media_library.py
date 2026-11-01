@@ -114,11 +114,9 @@ def setup(c):
   ('field_points',2),('like_points',1),('max_media_mb',0),
   ('broadcast_music',0),('broadcast_movie',0),('broadcast_series',0);
  """)
-
  cols={r[1] for r in c.execute("PRAGMA table_info(media_items)")}
  if "film_title_id" not in cols:
   c.execute("ALTER TABLE media_items ADD COLUMN film_title_id INTEGER NOT NULL DEFAULT 0")
- c.commit()
 
 def _sales():
  import sales
@@ -140,11 +138,11 @@ BROADCAST_KEYS = {
 }
 
 def broadcast_new_media(c,mid):
- """Broadcast a NEWLY PUBLISHED Telegram file, once per user via durable outbox.
+ """Send one complete poster card per new movie/episode after all qualities finish.
 
- No URL-based media, no unpaid/draft items, no system or blocked users.
- This is triggered only at the first publication, not on old catalog entries
- or after changing the switch. All messages go through Telegram's retry queue.
+ Film notifications are a single photo card: poster, metadata caption, quality
+ choices and the existing social/library actions. Video files are never pushed
+ automatically. The durable outbox key makes retries idempotent.
  """
  row=c.execute("SELECT * FROM media_items WHERE id=? AND status='published'",(mid,)).fetchone()
  if not row:return 0
@@ -155,24 +153,26 @@ def broadcast_new_media(c,mid):
           "sendVoice":"voice","sendVideoNote":"video_note"}
  field=methods.get(row["telegram_method"])
  if not field or not row["file_id"]:return 0
- # Never upload/send arbitrary source URLs in auto-notifications.
+
  caption=("🎵 موزیک جدید" if media_kind=="music" else
           "📺 قسمت جدید سریال" if media_kind=="series" else "🎬 فیلم سینمایی جدید")
- caption+="\n"+_media_summary(row)[:600]
+ caption+="\\n"+_media_summary(row)[:600]
  button={"inline_keyboard":[[{"text":"▶️ جزئیات و پخش","callback_data":"med:play:"+str(mid)}]]}
  sent=0
  recipients=c.execute("SELECT id FROM users WHERE id>0 AND blocked=0 ORDER BY id").fetchall()
  for (recipient,) in recipients:
   if row["kind"]=="film":
-   # Publish the poster with quality buttons, never push multi-GB files.
    quality_rows,_=_film_quality_buttons(c,row)
    quality_rows=quality_rows+[
       [("❤️ لایک","med:like:"+str(mid)),("👎 دیسلایک","med:dislike:"+str(mid))],
       [("💬 نظرات","med:comments:"+str(mid)),("✍️ نظر جدید","med:comment:"+str(mid))],
-      [("▶️ جزئیات فیلم","med:play:"+str(mid))]]
+      [("➕ به پلی‌لیست من","med:addmenu:"+str(mid)),("🚩 گزارش","med:report:"+str(mid))],
+      [("▶️ جزئیات فیلم","med:play:"+str(mid))]
+   ]
    keyboard={"inline_keyboard":[[{"text":label,"callback_data":action}
              for label,action in group] for group in quality_rows]}
-   info=(caption.split("\n")[0]+"\n"+_preview(c,recipient,row))[:1000]
+   info=(("📺 قسمت جدید سریال" if media_kind=="series" else "🎬 فیلم سینمایی جدید")
+         +"\\n"+_preview(c,recipient,row))[:1000]
    if row["cover_id"]:
     method="sendPhoto"
     payload={"chat_id":recipient,"photo":row["cover_id"],
@@ -184,13 +184,13 @@ def broadcast_new_media(c,mid):
    method=row["telegram_method"]
    payload={"chat_id":recipient,field:row["file_id"],"reply_markup":button}
    if method!="sendVideoNote":payload["caption"]=caption[:950]
-  # Prefixed stable idempotency key survives retries, restarts, and duplicate
-  # publication callbacks. Never modifies messages already delivered.
+
   key="media-broadcast:"+media_kind+":"+str(mid)+":"+str(recipient)
   c.execute("INSERT OR IGNORE INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
             (key,recipient,method,json.dumps(payload,ensure_ascii=False)))
   sent+=c.execute("SELECT changes()").fetchone()[0]
  return sent
+
 
 def _buttons(c,uid,items):
  # Retain same Telegram inline-button format as existing bot.
@@ -222,8 +222,7 @@ def _playlist(c,uid,pid):
  return p
 
 def _queue_file(c,uid,method,file_id,caption,buttons,extra=None):
- if method=="link":
-  raise AssertionError("use send for external URLs")
+ if method=="link":raise AssertionError("use send for external URLs")
  field={"sendAudio":"audio","sendVoice":"voice","sendVideo":"video","sendVideoNote":"video_note","sendDocument":"document"}[method]
  markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in row] for row in buttons]}
  payload={"chat_id":uid,field:file_id,"reply_markup":markup}
@@ -493,6 +492,7 @@ def _preview(c,uid,row):
     if extra["original_title"]:caption+="\nنام اصلی: "+extra["original_title"][:160]
     if extra["country"]:caption+="\nکشور: "+extra["country"][:100]
     if extra["certification"]:caption+="\nرده سنی: "+extra["certification"][:30]
+
  return caption
 
 def _film_variant_caption(v,bot_username=""):
@@ -528,17 +528,19 @@ def _film_variant_caption(v,bot_username=""):
  return (body+credit)[:limit]
 
 
-def _film_quality_buttons(c, row, page=0):
- # Only uploaded, streamable sendVideo variants can be offered.
- if row["kind"]!="film" or not c.execute(
-       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='film_variants'").fetchone():
+def _film_quality_buttons(c,row,page=0):
+ # Offer only files that were uploaded to Telegram and verified as streamable.
+ if row["kind"]!="film":
+  return [],False
+ if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='film_variants'").fetchone():
   return [],False
  title_id=int(row["film_title_id"] or 0)
  if not title_id and row["file_id"]:
   parent=c.execute("SELECT title_id FROM film_variants WHERE file_id=? AND uploaded>0 LIMIT 1",
                    (row["file_id"],)).fetchone()
   if parent:title_id=int(parent["title_id"])
- if not title_id:return [],False
+ if not title_id:
+  return [],False
  variants=c.execute("""SELECT v.* FROM film_variants v
     JOIN film_import_jobs j ON j.variant_id=v.id
     WHERE v.title_id=? AND v.season=? AND v.episode=?
@@ -548,15 +550,15 @@ def _film_quality_buttons(c, row, page=0):
       CASE v.dubbed WHEN 'yes' THEN 0 WHEN 'no' THEN 2 ELSE 1 END,
       v.subtitles,v.id""",
     (title_id,row["season"],row["episode"])).fetchall()
- if not variants:return [],False
+ if not variants:
+  return [],False
+ # One Original and one Dubbed option per quality; hide duplicate encodes.
  unique_variants=[]
- seen_quality_versions=set()
+ seen=set()
  for variant in variants:
-  version_type="dubbed" if variant["dubbed"]=="yes" else "original"
-  identity=(variant["quality"],version_type)
-  if identity in seen_quality_versions:continue
-  seen_quality_versions.add(identity)
-  unique_variants.append(variant)
+  identity=(variant["quality"],"dubbed" if variant["dubbed"]=="yes" else "original")
+  if identity in seen:continue
+  seen.add(identity);unique_variants.append(variant)
  variants=unique_variants
  pages=max(1,(len(variants)+9)//10)
  page=max(0,min(int(page),pages-1))
@@ -592,29 +594,48 @@ def play(c,uid,mid,page=0):
  if uid==row["owner_id"] and uid>0:
   buttons.append([("🗑 حذف فایل من","med:remove:"+str(mid))])
  buttons.append([("↩️ "+GENRE_LABEL[row["kind"]],"med:"+row["kind"])])
- qualities,has_versions=_film_quality_buttons(c,row,page)
- buttons=qualities+buttons
- markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in group]
-                             for group in buttons]}
- # Telegram puts the caption below the poster. Put ALL buttons on that
- # SAME message, rather than sending a separate quality-selection message.
  description=_preview(c,uid,row)
+
+ if row["kind"]=="film":
+  quality_buttons,has_versions=_film_quality_buttons(c,row,page)
+  film_buttons=quality_buttons+buttons
+  markup={"inline_keyboard":[[{"text":label,"callback_data":cmd} for label,cmd in group]
+                            for group in film_buttons]}
+  if row["film_title_id"] and not has_versions:
+   description+="\n\n⏳ نسخه‌های پخش آنلاین این فیلم در حال آماده‌سازی هستند."
+  # Telegram renders the caption below the cover; all quality and action
+  # buttons belong to this same message, not to a separate prompt.
+  if row["cover_id"]:
+   method="sendPhoto"
+   payload={"chat_id":uid,"photo":row["cover_id"],"caption":description[:1000],
+            "reply_markup":markup}
+  else:
+   method="sendMessage"
+   payload={"chat_id":uid,"text":description[:4000],"reply_markup":markup}
+  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
+       (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
+  if has_versions or row["film_title_id"]:
+   return
+  # Legacy films without Film2Media variants still play after the info card.
+  if row["telegram_method"]=="link":
+   send(c,uid,"🔗 "+row["source_url"],film_buttons)
+  else:
+   _queue_file(c,uid,row["telegram_method"],row["file_id"],row["title"][:100],film_buttons)
+  return
+
+ # Keep the established two-message playback flow for music unchanged.
  if row["cover_id"]:
   method="sendPhoto"
-  payload={"chat_id":uid,"photo":row["cover_id"],"caption":description[:1000],
-           "reply_markup":markup}
+  payload={"chat_id":uid,"photo":row["cover_id"],"caption":description[:1000]}
  else:
   method="sendMessage"
-  payload={"chat_id":uid,"text":description[:4000],"reply_markup":markup}
+  payload={"chat_id":uid,"text":description[:4000]}
  c.execute("INSERT INTO outbox(dedupe,chat,method,payload) VALUES(?,?,?,?)",
       (secrets.token_hex(12),uid,method,json.dumps(payload,ensure_ascii=False)))
- if has_versions:return
- # Legacy uploaded items without a version catalog still deliver the media.
  if row["telegram_method"]=="link":
   send(c,uid,"🔗 "+row["source_url"],buttons)
  else:
   _queue_file(c,uid,row["telegram_method"],row["file_id"],row["title"][:100],buttons)
-
 
 def playlists(c,uid,kind,scope):
  if scope=="mine":
@@ -757,7 +778,7 @@ def callback(c,uid,cmd):
  if len(parts)<2 or parts[0]!="med":raise ValueError("فرمان رسانه نامعتبر است")
  op=parts[1];x=parts[2] if len(parts)>2 else ""
  if op in ("music","film","latest","mine","top","lists","plfeed","plmine","pltop",
-           "leaders","play","comments","plcomments","pl","plpage","addmenu"):
+           "leaders","play","filmq","comments","plcomments","pl","plpage","addmenu"):
   _state(c,uid,"")
  if op in ("music","film"):return kind_menu(c,uid,op)
  if op=="type":
@@ -799,7 +820,9 @@ def callback(c,uid,cmd):
   return send(c,uid,"🔎 نام، خواننده یا بخشی از متن را بنویسید.",
           [[("↩️ بازگشت","med:"+x)]])
  if op=="play":return play(c,uid,int(x))
- if op=="filmq" and len(parts)==4:return play(c,uid,int(x),int(parts[3]))
+ if op=="filmq":
+  if len(parts)!=4:raise ValueError("صفحه کیفیت نامعتبر است")
+  return play(c,uid,int(x),int(parts[3]))
  if op=="filmfile":
   vid=int(x)
   v=c.execute("""SELECT v.*,m.id AS media_id,t.title AS film_title,
@@ -816,7 +839,6 @@ def callback(c,uid,cmd):
   return _queue_file(c,uid,"sendVideo",v["file_id"],_film_variant_caption(v,bot_username),
        [[("↩️ بازگشت به کیفیت‌ها","med:play:"+str(v["media_id"]))]],
        {"duration":v["duration"],"width":v["width"],"height":v["height"]})
-
  if op=="like":
   liked=_like(c,uid,"media",int(x))
   import social
