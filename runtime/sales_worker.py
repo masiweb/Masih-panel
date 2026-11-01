@@ -225,6 +225,9 @@ def _handle(c,up):
     with contextlib.suppress(ValueError):
      if social.invite_start(c,uid,"/start soc_"+pending.split(":",2)[2]):
       return
+   if body.startswith("/start private_ai"):
+    entertainment.callback(c,uid,"fun:ai:text")
+    return
    home(c,uid)
    return
   # A forged/shared contact, normal message, deep link, and every callback
@@ -388,6 +391,9 @@ def _handle(c,up):
   import ai_conversation
   question,original_update_id,wants_file=ai_conversation.consume_offer(c,uid,cmd)
   return entertainment.ai_answer(c,uid,question,original_update_id,long_choice=wants_file)
+ if body.startswith("/start private_ai"):
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  return entertainment.callback(c,uid,"fun:ai:text")
  if cmd.startswith("/start") or cmd=="home":
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   home(c,uid)
