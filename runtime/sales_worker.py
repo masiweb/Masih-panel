@@ -5,6 +5,7 @@ from sales_bot_admin import main as admin_menu, callback as admin_callback, inpu
 import entertainment
 import media_library
 import social
+import channel_manager
 from bot_texts import rewrite_payload
 def quote(c,uid,pid,renew="",quantity=1,label=None):
  p=c.execute("SELECT * FROM plans WHERE id=? AND active=1",(pid,)).fetchone()
@@ -143,6 +144,8 @@ def deliver(c,uid,sid):
 def _handle(c,up):
  s=settings(c);q=up.get("callback_query");m=q.get("message",{}) if q else up.get("message",{})
  who=q.get("from",{}) if q else m.get("from",{});uid=who.get("id")
+ if m.get("chat",{}).get("type") in ("group","supergroup"):
+  return channel_manager.group_message(c,up)
  if not uid or m.get("chat",{}).get("type")!="private":return
  body=m.get("text","");cmd=q.get("data","") if q else body
  new=not c.execute("SELECT 1 FROM users WHERE id=?",(uid,)).fetchone()
@@ -284,6 +287,9 @@ def _handle(c,up):
    import ai_media
    ai_media.input_message(c,uid,state,m,up["update_id"])
    return
+  if state.startswith("ch:"):
+   channel_manager.admin_input(c,uid,state,body)
+   return
   if state.startswith("a:"):
    admin_text(c,uid,state,body,up["update_id"])
    return
@@ -422,6 +428,8 @@ def _handle(c,up):
   media_library.callback(c,uid,cmd)
  elif cmd.startswith("medadmin:"):
   media_library.admin_action(c,uid,cmd)
+ elif cmd.startswith("ch:"):
+  channel_manager.admin_callback(c,uid,cmd)
  elif cmd.startswith("a:"):
   admin_callback(c,uid,cmd)
  elif cmd=="plans":
@@ -771,7 +779,9 @@ def tick():
        (?=0 OR (u.id>0 AND TRIM(COALESCE(u.phone,''))<>'')
         OR o.dedupe LIKE 'phone-gate:%'
         OR o.dedupe LIKE 'channel-gate:%'
-        OR o.dedupe LIKE 'new-user:%')
+        OR o.dedupe LIKE 'new-user:%'
+        OR o.dedupe LIKE 'channel-post:%'
+        OR o.dedupe LIKE 'channel-reply:%')
     ORDER BY o.id LIMIT 15""",(now(),int(bool(s["require_contact"])))).fetchall():
    try:
     p=json.loads(row["payload"])
