@@ -148,7 +148,6 @@ def group_message(c,up):
     "کجا","چه ","میشه","می‌شه","میتونم","می‌تونم","how ","what ","why ")))
  direct=(replied.get("id")==cfg["bot_id"] and cfg["bot_id"]>0 and is_question)
  if not (mentioned or ask_command or direct):return False
- from sales import now
  payload={
   "chat_id":chat["id"],
   "text":("🔐 برای حفظ حریم خصوصی، گفت‌وگوی هوش مصنوعی فقط در چت خصوصی ربات انجام می‌شود.\n"
