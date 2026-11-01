@@ -310,10 +310,42 @@ def callback(c,uid,cmd):
   rows=c.execute("SELECT id,status FROM ai_sale_orders WHERE user_id=? ORDER BY created DESC LIMIT 15",(uid,)).fetchall()
   ent=c.execute("""SELECT SUM(remaining_text),SUM(remaining_image),SUM(remaining_video) FROM ai_sale_subscriptions
    WHERE user_id=? AND expires>?""",(uid,now())).fetchone()
-  return enqueue(c,uid,"📦 سفارش‌های من\n"+
-    ("\n".join(x["id"][-10:]+" : "+x["status"] for x in rows) or "سفارشی ندارید")+
-    "\n\nسهمیه فعال: متن "+str(ent[0] or 0)+" | تصویر "+str(ent[1] or 0)+" | ویدیو "+str(ent[2] or 0),
-    [[("↩️ خرید هوش مصنوعی","ais:home")]])
+  labels={"awaiting_receipt":"در انتظار رسید","preview":"تأیید خریدار","review":"بررسی رسید",
+          "activating":"در حال فعال‌سازی","fulfilled":"فعال شده",
+          "rejected":"رد شده","cancelled":"لغو شده"}
+  buttons=[[("📦 "+str(r["id"])[-14:]+" | "+labels.get(r["status"],r["status"]),
+             "ais:myorder:"+r["id"])] for r in rows]
+  buttons.extend([[("🛒 خرید اشتراک AI","ais:home")],[("🏠 منوی اصلی","home")]])
+  return enqueue(c,uid,"📦 سفارش‌ها و اشتراک‌های هوش مصنوعی"+
+    "\n\nسهمیه فعال: متن "+str(ent[0] or 0)+" | تصویر "+str(ent[1] or 0)+" | ویدیو "+str(ent[2] or 0)+
+    ("\nبرای مشاهده جزئیات روی هر سفارش بزنید." if rows else "\nهنوز سفارشی ندارید."),
+    buttons)
+ if op=="myorder":
+  oid=cmd.split(":",2)[2]
+  row=owned(c,uid,oid)
+  plan=json.loads(row["plan_snapshot"])
+  subscription=c.execute("SELECT expires,remaining_text,remaining_image,remaining_video FROM ai_sale_subscriptions WHERE order_id=? AND user_id=?",
+                         (oid,uid)).fetchone()
+  import datetime
+  date=lambda ts: datetime.datetime.fromtimestamp(ts,datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if ts else "ثبت نشده"
+  info=["🤖 جزئیات اشتراک هوش مصنوعی",
+        "🧾 شماره سفارش: "+oid,
+        "📍 وضعیت: "+{"awaiting_receipt":"در انتظار رسید","preview":"در انتظار تأیید","review":"در انتظار بررسی","activating":"در حال فعال‌سازی","fulfilled":"تحویل شده","rejected":"رد شده","cancelled":"لغو شده"}.get(row["status"],row["status"]),
+        "📦 پلن: "+str(plan.get("name","نامشخص"))[:95],
+        "🧠 مدل: "+str(plan.get("model_name","نامشخص"))[:90],
+        "⏳ مدت: "+str(plan.get("days",0))+" روز",
+        "💰 مبلغ: "+format(int(plan.get("price",0)),",")+" تومان",
+        "🕒 زمان سفارش: "+date(row["created"]),
+        "🗓 پایان: "+(date(subscription["expires"]) if subscription else "بعد از فعال‌سازی")]
+  if subscription:
+   info.append("📊 سهمیه باقیمانده: متن "+str(subscription["remaining_text"])+
+     " | تصویر "+str(subscription["remaining_image"])+
+     " | ویدیو "+str(subscription["remaining_video"]))
+  if row["reason"]:info.append("📝 توضیح وضعیت: "+str(row["reason"])[:200])
+  return enqueue(c,uid,"\n".join(info),[
+   [("↩️ همه سفارش‌های AI","ais:mine")],
+   [("🏠 منوی اصلی","home")]
+  ])
  raise ValueError("گزینه خرید هوش مصنوعی نامعتبر است")
 
 def input_message(c,uid,state,message):
