@@ -196,6 +196,10 @@ def _stage_approved(c):
   count=c.execute("""SELECT COUNT(*) FROM channel_manager_posts WHERE day=?
    AND status IN ('queued','published')""",(day,)).fetchone()[0]
   if count>=MAX_POSTS:break
+  # Don't flood followers with three posts at once if admins approve late.
+  last=c.execute("""SELECT MAX(updated) FROM channel_manager_posts WHERE day=?
+   AND status IN ('queued','published')""",(day,)).fetchone()[0] or 0
+  if last and now()-last<2*3600:break
   body=post["body"]
   key="channel-post:"+str(post["id"])
   c.execute("""INSERT OR IGNORE INTO outbox
