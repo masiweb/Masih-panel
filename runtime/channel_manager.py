@@ -246,6 +246,11 @@ def _reply_once(c):
 
 def tick(c):
  """One draft and one reply at most per run; posts remain approval-gated."""
+ # No stale replies to customers; keep a short bounded moderation history.
+ c.execute("""UPDATE channel_manager_replies SET status='failed'
+  WHERE status='pending' AND created<?""",(now()-3600,))
+ c.execute("""DELETE FROM channel_manager_replies
+  WHERE status IN ('sent','failed') AND created<?""",(now()-30*86400,))
  _complete_outbox(c)
  cfg=config(c)
  # Recheck Telegram privileges at least twice a day. A network outage pauses
@@ -320,6 +325,13 @@ def admin_callback(c,uid,cmd):
   return menu(c,uid)
  if op=="pause":
   c.execute("UPDATE channel_manager_config SET enabled=0 WHERE id=1")
+  # Cancel not-yet-delivered channel publications. Deleting a pending outbox
+  # record permits a fresh deduplicated enqueue after the admin resumes.
+  c.execute("""DELETE FROM outbox WHERE done=0
+   AND dedupe IN (SELECT 'channel-post:'||id FROM channel_manager_posts WHERE status='queued')""")
+  c.execute("""UPDATE channel_manager_posts SET status='approved',outbox_id=0
+   WHERE status='queued' AND NOT EXISTS(
+    SELECT 1 FROM outbox o WHERE o.id=channel_manager_posts.outbox_id)""")
   return menu(c,uid)
  if op=="pending":
   rows=c.execute("""SELECT id,day,slot FROM channel_manager_posts
