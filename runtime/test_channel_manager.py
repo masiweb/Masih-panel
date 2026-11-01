@@ -23,7 +23,7 @@ class ChannelManagerTests(unittest.TestCase):
   self.c.executemany("INSERT INTO users(id,state) VALUES(?,'')",[(101,),(102,)])
   cm.setup(self.c)
   self.day="2026-11-02"
-  self.t=int(dt.datetime(2026,11,2,22,0,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
+  self.t=int(dt.datetime(2026,11,2,9,0,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
   self.c.execute("""UPDATE channel_manager_config SET
     channel_id='-1001234567890',discussion_id=-1009999999999,
     bot_id=999,bot_username='MasihaV2ray_bot',
@@ -53,7 +53,7 @@ class ChannelManagerTests(unittest.TestCase):
   self.patch_modules=patch.dict(sys.modules,{"sales":self.fake_sales,"ai_models":self.fake_ai})
   self.patch_modules.start()
   self.clock=patch.object(cm,"now",return_value=self.t)
-  self.clock.start()
+  self.now_mock=self.clock.start()
  def tearDown(self):
   self.clock.stop()
   self.patch_modules.stop()
@@ -69,16 +69,24 @@ class ChannelManagerTests(unittest.TestCase):
   self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],0)
   for post in self.posts()[:2]:
    cm.admin_callback(self.c,101,"ch:approve:"+str(post["id"]))
+  # Approved posts wait for their slot; no burst of messages at 09:00.
   cm._stage_approved(self.c)
-  queued=self.c.execute("SELECT dedupe,chat FROM outbox").fetchall()
-  self.assertEqual(len(queued),2)
-  self.assertTrue(all(r["dedupe"].startswith("channel-post:") for r in queued))
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],0)
+  self.now_mock.return_value=int(dt.datetime(2026,11,2,10,1,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
+  cm._stage_approved(self.c)
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],1)
   self.assertEqual(self.posts()[2]["status"],"review")
+  self.now_mock.return_value=int(dt.datetime(2026,11,2,15,1,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
   cm._stage_approved(self.c)
   self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],2)
   cm.admin_callback(self.c,101,"ch:approve:"+str(self.posts()[2]["id"]))
   cm._stage_approved(self.c)
-  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],3)
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],2)
+  self.now_mock.return_value=int(dt.datetime(2026,11,2,20,31,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
+  cm._stage_approved(self.c)
+  queued=self.c.execute("SELECT dedupe,chat FROM outbox").fetchall()
+  self.assertEqual(len(queued),3)
+  self.assertTrue(all(r["dedupe"].startswith("channel-post:") for r in queued))
   for r in self.c.execute("SELECT id FROM outbox"):
    self.c.execute("UPDATE outbox SET done=1 WHERE id=?",(r["id"],))
   cm._complete_outbox(self.c)
