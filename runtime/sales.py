@@ -103,6 +103,8 @@ def conn():
  ai_media.setup(c)
  import ai_conversation
  ai_conversation.setup(c)
+ import ai_admin_audit
+ ai_admin_audit.setup(c)
  import channel_manager
  channel_manager.setup(c)
  # Backward-compatible additive migration; existing plans and orders survive.
