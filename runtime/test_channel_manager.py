@@ -137,7 +137,7 @@ class ChannelManagerTests(unittest.TestCase):
    return {"message":m}
   self.assertFalse(cm.group_message(self.c,msg("What is VPN?",1)))
   self.assertTrue(cm.group_message(self.c,msg("@MasihaV2ray_bot راهنمای خرید چیست؟",2)))
-  self.assertFalse(cm.group_message(self.c,msg("@MasihaV2ray_bot دوباره لطفاً",3)))
+  self.assertTrue(cm.group_message(self.c,msg("@MasihaV2ray_bot دوباره لطفاً",3)))
   self.assertTrue(cm.group_message(self.c,msg("چطور وصل شوم؟",4,reply=999,uid=203)))
   anonymous={"message":{"chat":{"id":-1009999999999,"type":"supergroup"},
     "from":{"id":1087968824,"is_bot":True,"username":"GroupAnonymousBot"},
@@ -149,11 +149,21 @@ class ChannelManagerTests(unittest.TestCase):
     "sender_chat":{"id":-1001234567890,"type":"channel"},
     "message_id":6,"text":"@MasihaV2ray_bot باید نادیده گرفته شود"}}
   self.assertFalse(cm.group_message(self.c,channel_post))
-  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM channel_manager_replies").fetchone()[0],3)
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM channel_manager_replies").fetchone()[0],0)
+  prompts=self.c.execute("SELECT * FROM outbox ORDER BY id").fetchall()
+  self.assertEqual(len(prompts),4)
+  payload=json.loads(prompts[0]["payload"])
+  self.assertEqual(payload["chat_id"],-1009999999999)
+  self.assertIn("https://t.me/MasihaV2ray_bot?start=private_ai",
+                payload["reply_markup"]["inline_keyboard"][0][0]["url"])
+  self.assertNotIn("راهنمای خرید",payload["text"])
+  self.assertEqual(payload["reply_parameters"]["message_id"],2)
+  self.c.execute("""INSERT INTO channel_manager_replies
+    (chat_id,message_id,user_id,question,status,created)
+    VALUES(-1009999999999,77,203,'legacy','pending',?)""",(self.t,))
   cm._reply_once(self.c)
-  output=json.loads(self.c.execute("SELECT payload FROM outbox LIMIT 1").fetchone()[0])
-  self.assertEqual(output["reply_parameters"]["message_id"],2)
-  self.assertEqual(output["chat_id"],-1009999999999)
+  self.assertEqual(self.c.execute("SELECT status FROM channel_manager_replies").fetchone()[0],"failed")
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],4)
 
  def test_pause_cancels_unsent_post_without_losing_admin_approval(self):
   cm._make_one_draft(self.c)
