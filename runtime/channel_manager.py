@@ -171,7 +171,8 @@ def _make_one_draft(c):
  day=local_day()
  rows=c.execute("SELECT slot FROM channel_manager_posts WHERE day=?",(day,)).fetchall()
  used={r["slot"] for r in rows}
- next_slot=next((slot for slot in range(MAX_POSTS) if slot not in used),None)
+ next_slot=next((slot for slot in range(MAX_POSTS)
+   if slot not in used and slot_timestamp(day,slot)>now()),None)
  if next_slot is None:return False
  import ai_models
  content=ai_models.text_response(c,_model(c),_content_prompt(TOPICS[next_slot]),expanded=False)
