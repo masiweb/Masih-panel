@@ -42,13 +42,11 @@ def home(c,uid):
  s=settings(c)
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  buttons=[
-  [("🛒 خرید جدید","buynew"),("📦 اشتراک‌های من","services")],
-  [("🤖 هوش مصنوعی","fun:ai")],
-  [("🎵 موزیک","fun:music"),("🎬 فیلم","fun:film")],
-  [("💬 کلاب چت ناشناس","soc:home")],
-  [("⭐ امتیاز و تخفیف","points_discount")],
-  [("🎮 سرگرمی","fun"),("🛟 پشتیبانی","support")],
-  [("💳 کیف پول","wallet")]
+  [("🛒 خرید اشتراک","buynew"),("📦 اشتراک‌های من","my_subs")],
+  [("🤖 هوش مصنوعی","fun:ai"),("🎬 فیلم و سریال","fun:film")],
+  [("🎵 موزیک","fun:music"),("💬 کلاب","soc:home")],
+  [("💳 کیف پول و امتیاز","wallet_points"),("🛟 پشتیبانی","support")],
+  [("🎮 بازی و امکانات بیشتر","fun")]
  ]
  if uid in s["admins"]:buttons.append([("⚙️ منوی مدیریت","admin")])
  welcome=(bot_message(c,"home") if c.execute(
@@ -394,9 +392,23 @@ def _handle(c,up):
   entertainment.callback(c,uid,cmd)
  elif cmd=="buynew":
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
-  enqueue(c,uid,"🛍 خرید اشتراک جدید",[
-   [("🤖 خرید اشتراک هوش مصنوعی","ais:home")],
-   [("🌐 خرید اشتراک VPN","plans")],
+  enqueue(c,uid,"🛒 خرید اشتراک\nنوع اشتراک موردنظر را انتخاب کنید:",[
+   [("🌐 خرید VPN","plans")],
+   [("🤖 خرید اشتراک AI","ais:home")],
+   [("🏠 منوی اصلی","home")]])
+ elif cmd=="my_subs":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  total_vpn=c.execute("SELECT COUNT(*) FROM services WHERE user_id=? AND deleted=0",(uid,)).fetchone()[0]
+  total_ai=c.execute("SELECT COUNT(*) FROM ai_sale_orders WHERE user_id=? AND status!='cancelled'",(uid,)).fetchone()[0]
+  enqueue(c,uid,"📦 اشتراک‌ها و سفارش‌های من\n🌐 VPN: "+str(total_vpn)+" سرویس\n🤖 AI: "+str(total_ai)+" سفارش",[
+   [("🌐 اشتراک‌های VPN","services")],
+   [("🤖 سفارش‌ها و اشتراک‌های هوش مصنوعی","ais:mine")],
+   [("🏠 منوی اصلی","home")]])
+ elif cmd=="wallet_points":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  enqueue(c,uid,"💳 کیف پول و امتیاز\nکدام بخش را می‌خواهید؟",[
+   [("💳 موجودی و افزایش اعتبار","wallet")],
+   [("⭐ امتیاز، تخفیف و دعوت دوستان","points_discount")],
    [("🏠 منوی اصلی","home")]])
  elif cmd.startswith("aisadmin:"):
   import ai_commerce
@@ -668,6 +680,22 @@ def tick():
   s=settings(c);put(c,"heartbeat",now());c.commit()
   if not s["enabled"]:
    put(c,"last_error","");c.commit();return
+  # Only administrators receive a daily low-disk warning. Never expose
+  # infrastructure diagnostics to customers or flood their notifications.
+  if now()-int(s.get("disk_alert_checked",0) or 0)>21600:
+   import shutil
+   try:
+    free=shutil.disk_usage("/var/lib/telegram-bot-api").free
+    if free<4*1024**3:
+     for admin_id in s["admins"]:
+      enqueue(c,admin_id,"⚠️ فضای ذخیره‌سازی سرور VPN کم است: "+
+          str(round(free/1024**3,2))+" گیگابایت آزاد. "+
+          "پیش از افزایش آپلود فیلم، فضای دیسک را بررسی کنید.",
+          key="disk-warning:"+str(admin_id)+":"+str(now()//86400),quick_nav=False)
+   except OSError:
+    pass
+   put(c,"disk_alert_checked",now())
+   c.commit()
   if now()-s.get("social_cleanup_checked",0)>86400:
    # Drop private chat message bodies after the configured retention period.
    retention=c.execute("SELECT v FROM media_settings WHERE k='social_chat_retention_days'").fetchone()
@@ -675,6 +703,11 @@ def tick():
    c.execute("DELETE FROM social_chat_messages WHERE created<?",(now()-max(30,min(365,days))*86400,))
    c.execute("DELETE FROM social_geo WHERE updated<?",(now()-30*86400,))
    put(c,"social_cleanup_checked",now())
+   c.commit()
+  if now()-s.get("ai_audit_cleanup_checked",0)>86400:
+   import ai_admin_audit
+   ai_admin_audit.prune(c)
+   put(c,"ai_audit_cleanup_checked",now())
    c.commit()
   if s["require_contact"] and not s.get("contact_onboarding_rollout_v2"):
    request_missing_phones(c)
