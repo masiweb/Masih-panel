@@ -1,0 +1,28 @@
+name: Channel manager tests
+
+on:
+  push:
+    paths:
+      - 'runtime/channel_manager.py'
+      - 'runtime/channel_manager_worker.py'
+      - 'runtime/test_channel_manager.py'
+      - '.github/workflows/channel-manager.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify syntax and approval-flow tests
+        working-directory: runtime
+        run: |
+          python -m py_compile channel_manager.py channel_manager_worker.py sales_worker.py sales_bot_admin.py sales.py
+          python -m unittest -v test_channel_manager
