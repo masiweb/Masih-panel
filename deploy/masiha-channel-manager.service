@@ -1,0 +1,19 @@
+[Unit]
+Description=Masiha Telegram AI channel editorial queue
+After=network-online.target masiha-vpn-extension.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/masiha-vpn-extension
+RuntimeDirectory=masiha-channel
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/python3 /opt/masiha-vpn-extension/channel_manager_worker.py
+TimeoutStartSec=180
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
