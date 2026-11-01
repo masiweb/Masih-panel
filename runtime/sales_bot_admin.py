@@ -333,7 +333,10 @@ def callback(c,uid,cmd):
   c.execute("DELETE FROM quotes WHERE plan_id=?",(pid,))
   if not c.execute("DELETE FROM plans WHERE id=?",(pid,)).rowcount:raise ValueError("پلن پیدا نشد")
   return callback(c,uid,"a:plans")
- if op in ("aiuse","aitext","aidetail","aimedia","aijob","aifile"):
+ if op=="aimonitorsearch":
+  c.execute("UPDATE users SET state='a:aimonitorsearch' WHERE id=?",(uid,))
+  return send(c,uid,"🔎 شماره موبایل، شناسه عددی تلگرام یا نام کاربری را ارسال کنید.\nفقط مکالمات کاربران دارای سابقه AI نمایش داده می‌شود.",[[("↩️ بازگشت به مدیریت AI","a:aihub")]])
+ if op in ("aimonitor","aimonitordetail","aiuse","aitext","aidetail","aimedia","aijob","aifile"):
   import ai_admin_audit
   return ai_admin_audit.route(c,uid,op,parts[2:])
  if op=="users":
@@ -537,6 +540,7 @@ def callback(c,uid,cmd):
   return send(c,uid,"🤖 مدیریت هوش مصنوعی",[
    [("📦 همه سفارش‌های AI","a:orders:ai")],
    [("🧾 سفارش‌های در انتظار تأیید","aisadmin:pending")],
+   [("📜 نظارت بر گفتگوهای کاربران","a:aimonitor:0")],
    [("⚙️ تنظیمات AI در وب‌پنل","a:web")],
    [("↩️ مدیریت","a:home")]])
  if op=="mediahub":
@@ -655,6 +659,10 @@ def input_text(c,uid,state,body,update_id):
   kind=parts[2] if len(parts)>2 else ""
   c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
   return _order_list(c,uid,kind,data)
+ if op=="aimonitorsearch":
+  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
+  import ai_admin_audit
+  return ai_admin_audit.monitor_search(c,uid,data)
  if op=="cfg":
   key=parts[2] if len(parts)>2 else ""
   if key not in SETTINGS_EDIT:raise ValueError("این گزینه قابل تغییر نیست")
