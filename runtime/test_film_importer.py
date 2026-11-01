@@ -42,6 +42,69 @@ class FilmImporterTests(unittest.TestCase):
         self.assertEqual(film.stage(self.c,ENTRY,{"videos.example.com"}),0)
         self.assertEqual(self.c.execute("SELECT count(*) FROM film_variants").fetchone()[0],2)
         self.assertEqual(film.stats(self.c),{"pending":2})
+    def test_stage_allows_one_original_and_one_dubbed_per_quality(self):
+        entry={**ENTRY,"external_key":"quality-dedupe-sample","variants":[
+            {"quality":"720p","url":URL+"original-webdl.mp4","dubbed":"no",
+             "subtitles":"softsub","version":"WEB-DL"},
+            {"quality":"720p","url":URL+"original-webrip.mp4","dubbed":"no",
+             "subtitles":"none","version":"WEBRip"},
+            {"quality":"720p","url":URL+"dubbed.mp4","dubbed":"yes",
+             "subtitles":"none","version":"WEB-DL"},
+            {"quality":"1080p","url":URL+"original-1080.mp4","dubbed":"unknown",
+             "subtitles":"softsub","version":"WEB-DL"}
+        ]}
+        self.assertEqual(film.stage(self.c,entry,{"videos.example.com"}),3)
+        rows=self.c.execute("""SELECT quality,
+            CASE WHEN dubbed='yes' THEN 'dubbed' ELSE 'original' END AS kind,
+            COUNT(*) AS n FROM film_variants GROUP BY quality,kind
+            ORDER BY quality,kind""").fetchall()
+        self.assertEqual([(r["quality"],r["kind"],r["n"]) for r in rows],
+                         [("1080p","original",1),("720p","dubbed",1),("720p","original",1)])
+        self.assertEqual(film.stage(self.c,{**entry,"variants":[
+            {"quality":"720p","url":URL+"another-original.mp4","dubbed":"no",
+             "subtitles":"softsub","version":"another encode"}
+        ]},{"videos.example.com"}),0)
+
+    def test_playback_deduplicates_quality_but_keeps_dubbed(self):
+        self.assertEqual(film.stage(self.c,ENTRY,{"videos.example.com"}),2)
+        base=self.c.execute("SELECT id,title_id FROM film_variants ORDER BY id").fetchall()
+        for i,v in enumerate(base):
+            self.c.execute("UPDATE film_variants SET file_id=?,file_unique_id=?,uploaded=1 WHERE id=?",
+                           ("BASE_FILE_"+str(i)*15,"BASE_UNIQUE_"+str(i)*15,v["id"]))
+            self.c.execute("UPDATE film_import_jobs SET state='done',updated=? WHERE variant_id=?",
+                           (film.now(),v["id"]))
+        title_id=base[0]["title_id"]
+        duplicate=self.c.execute("""INSERT INTO film_variants
+            (title_id,season,episode,quality,version,dubbed,subtitles,language,source_url,
+             send_method,file_id,file_unique_id,uploaded,created)
+            VALUES(?,0,0,'720p','WEBRip','no','softsub','',?,'sendDocument',
+             'DUP_FILE_ID_333333333333','DUP_UNIQUE_333333333333',1,?)""",
+             (title_id,URL+"duplicate-original.mp4",film.now())).lastrowid
+        self.c.execute("INSERT INTO film_import_jobs(variant_id,state,updated) VALUES(?,'done',?)",
+                       (duplicate,film.now()))
+        dubbed=self.c.execute("""INSERT INTO film_variants
+            (title_id,season,episode,quality,version,dubbed,subtitles,language,source_url,
+             send_method,file_id,file_unique_id,uploaded,created)
+            VALUES(?,0,0,'720p','WEB-DL','yes','none','Persian',?,'sendDocument',
+             'DUB_FILE_ID_444444444444','DUB_UNIQUE_444444444444',1,?)""",
+             (title_id,URL+"dubbed.mp4",film.now())).lastrowid
+        self.c.execute("INSERT INTO film_import_jobs(variant_id,state,updated) VALUES(?,'done',?)",
+                       (dubbed,film.now()))
+        self.c.commit()
+        mid=film.publish(self.c,base[0]["id"])
+        lib.play(self.c,991,mid)
+        card=self.c.execute("SELECT method,payload FROM outbox WHERE chat=991 ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(card["method"],"sendMessage")
+        payload=json.loads(card["payload"])
+        buttons=[b for group in payload["reply_markup"]["inline_keyboard"] for b in group]
+        quality=[b for b in buttons if b["callback_data"].startswith("med:filmfile:")]
+        callbacks={b["callback_data"] for b in quality}
+        self.assertEqual(sum("720p" in b["text"] for b in quality),2)
+        self.assertIn("med:filmfile:"+str(dubbed),callbacks)
+        self.assertNotIn("med:filmfile:"+str(duplicate),callbacks)
+        self.assertEqual(sum("720p" in b["text"] and "دوبله" in b["text"] for b in quality),1)
+        self.assertEqual(sum("720p" in b["text"] and "زبان اصلی" in b["text"] for b in quality),1)
+
     def test_bad_hosts_private_ip_rights_and_series(self):
         with self.assertRaises(ValueError):
             film.valid_url("http://videos.example.com/media.mp4",{"videos.example.com"})
