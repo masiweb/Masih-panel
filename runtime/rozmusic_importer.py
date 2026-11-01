@@ -222,10 +222,11 @@ def rollback_legacy_links(c):
  n=c.execute("""UPDATE roz_catalog_queue SET state='pending',attempts=0,last_error=''
     WHERE url IN (
       SELECT s.article_url FROM roz_catalog_sources s JOIN media_items m
-      ON m.id=s.media_id WHERE m.owner_id=0 AND
+      ON m.id=s.media_id WHERE m.owner_id=0 AND m.kind='music' AND
         (m.telegram_method!='sendAudio' OR m.file_id=''))""").rowcount
  c.execute("""UPDATE media_items SET status='draft',source_url=''
-              WHERE owner_id=0 AND (telegram_method!='sendAudio' OR file_id='')""")
+              WHERE owner_id=0 AND kind='music'
+                AND (telegram_method!='sendAudio' OR file_id='')""")
  c.commit()
  return n
 
