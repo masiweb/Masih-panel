@@ -1227,7 +1227,7 @@ class Commerce(unittest.TestCase):
    admin_layout=[[b["callback_data"] for b in row] for row in second["reply_markup"]["inline_keyboard"]]
    self.assertEqual(admin_layout,expected+[["admin"]])
    self.assertNotIn("admin",str(first))
-   self.assertIn("🛒 خرید جدید",first["reply_markup"]["inline_keyboard"][0][0]["text"])
+   self.assertIn("🛒 خرید اشتراک",first["reply_markup"]["inline_keyboard"][0][0]["text"])
 
  def test_points_discounts_only_current_unredeemed_and_methods(self):
   import gamification
