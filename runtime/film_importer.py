@@ -34,6 +34,7 @@ CONFIG = Path("/etc/masiha-vpn-extension/sales/film_import.json")
 QUALITY = re.compile(r"^(?:480|720|1080|1440|2160)p$")
 SAFE_KEY = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,159}$")
 VIDEO_TYPES = {"sendVideo": "video", "sendDocument": "document"}
+_DNS_CACHE = {}
 
 def now():
     return int(time.time())
@@ -54,7 +55,9 @@ def setup(c):
         director TEXT NOT NULL DEFAULT '', actors TEXT NOT NULL DEFAULT '',
         description TEXT NOT NULL DEFAULT '', rating REAL,
         rating_source TEXT NOT NULL DEFAULT '', cover_url TEXT NOT NULL DEFAULT '',
-        cover_id TEXT NOT NULL DEFAULT '', rights_ok INTEGER NOT NULL DEFAULT 0,
+        cover_id TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '',
+        certification TEXT NOT NULL DEFAULT '', silent_import INTEGER NOT NULL DEFAULT 0,
+        rights_ok INTEGER NOT NULL DEFAULT 0,
         source_page TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
         UNIQUE(source,external_key)
     );
@@ -67,7 +70,10 @@ def setup(c):
         send_method TEXT NOT NULL DEFAULT 'sendDocument'
           CHECK(send_method IN ('sendDocument','sendVideo')),
         file_id TEXT NOT NULL DEFAULT '', file_unique_id TEXT NOT NULL DEFAULT '',
-        file_bytes INTEGER NOT NULL DEFAULT 0, uploaded INTEGER NOT NULL DEFAULT 0,
+        file_bytes INTEGER NOT NULL DEFAULT 0, duration REAL NOT NULL DEFAULT 0,
+        width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,
+        video_codec TEXT NOT NULL DEFAULT '', audio_codec TEXT NOT NULL DEFAULT '',
+        stream_ready INTEGER NOT NULL DEFAULT 0, uploaded INTEGER NOT NULL DEFAULT 0,
         created INTEGER NOT NULL,
         UNIQUE(title_id,season,episode,quality,version,dubbed,subtitles,language)
     );
@@ -79,7 +85,39 @@ def setup(c):
     );
     CREATE INDEX IF NOT EXISTS film_jobs_state ON film_import_jobs(state,updated);
     CREATE INDEX IF NOT EXISTS film_variant_title ON film_variants(title_id,season,episode);
+    CREATE TABLE IF NOT EXISTS film_scan_runs(
+        id TEXT PRIMARY KEY, scope TEXT NOT NULL, item_limit INTEGER NOT NULL DEFAULT 100,
+        status TEXT NOT NULL DEFAULT 'queued', total INTEGER NOT NULL DEFAULT 0,
+        processed INTEGER NOT NULL DEFAULT 0, discovered INTEGER NOT NULL DEFAULT 0,
+        skipped INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+        started INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0,
+        add_status TEXT NOT NULL DEFAULT 'idle', add_total INTEGER NOT NULL DEFAULT 0,
+        add_processed INTEGER NOT NULL DEFAULT 0, add_variants INTEGER NOT NULL DEFAULT 0,
+        add_errors INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS film_scan_items(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, scan_id TEXT NOT NULL,
+        external_key TEXT NOT NULL, title TEXT NOT NULL, media_type TEXT NOT NULL,
+        variant_count INTEGER NOT NULL DEFAULT 0, entry_json TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'discovered', error TEXT NOT NULL DEFAULT '',
+        UNIQUE(scan_id,external_key)
+    );
+    CREATE INDEX IF NOT EXISTS film_scan_items_run ON film_scan_items(scan_id,state,id);
     """)
+    # Online additive migrations for databases created by earlier releases.
+    migrations={
+      'film_titles': {'country':"TEXT NOT NULL DEFAULT ''",'certification':"TEXT NOT NULL DEFAULT ''",'silent_import':'INTEGER NOT NULL DEFAULT 0'},
+      'film_variants': {'duration':'REAL NOT NULL DEFAULT 0','width':'INTEGER NOT NULL DEFAULT 0',
+        'height':'INTEGER NOT NULL DEFAULT 0','video_codec':"TEXT NOT NULL DEFAULT ''",
+        'audio_codec':"TEXT NOT NULL DEFAULT ''",'stream_ready':'INTEGER NOT NULL DEFAULT 0'},
+    }
+    for table, columns in migrations.items():
+        existing={r[1] for r in c.execute('PRAGMA table_info('+table+')')}
+        for name, ddl in columns.items():
+            if name not in existing:c.execute('ALTER TABLE '+table+' ADD COLUMN '+name+' '+ddl)
+    media_cols={r[1] for r in c.execute('PRAGMA table_info(media_items)')}
+    if media_cols and 'film_title_id' not in media_cols:
+        c.execute("ALTER TABLE media_items ADD COLUMN film_title_id INTEGER NOT NULL DEFAULT 0")
     c.commit()
 
 def settings():
@@ -91,7 +129,8 @@ def settings():
     if not isinstance(hosts, list) or len(hosts) > 30:
         raise ValueError("Configure exact permitted download_hosts first")
     for host in hosts:
-        if not isinstance(host,str) or not re.fullmatch(r"[a-zA-Z0-9.-]{3,253}",host) or ".." in host:
+        candidate=host[2:] if isinstance(host,str) and host.startswith("*.") else host
+        if not isinstance(candidate,str) or not re.fullmatch(r"[a-zA-Z0-9.-]{3,253}",candidate) or ".." in candidate:
             raise ValueError("Unsafe permitted host")
     return {"hosts": {h.lower() for h in hosts},
             "local_bot_api": bool(data.get("local_bot_api", False))}
@@ -103,9 +142,14 @@ def valid_url(url, hosts):
     if p.scheme!="https" or p.username or p.password or p.port not in (None,443) or p.fragment:
         raise ValueError("Only HTTPS media URLs supported")
     h=(p.hostname or "").lower()
-    if h not in hosts:
+    allowed=(h in hosts or any(x.startswith("*.") and h.endswith("."+x[2:]) and h!=x[2:] for x in hosts))
+    if not allowed:
         raise ValueError("Source host not authorized in film_import.json")
-    infos=socket.getaddrinfo(h,443,proto=socket.IPPROTO_TCP)
+    cached=_DNS_CACHE.get(h)
+    if cached and cached[0]>time.time():infos=cached[1]
+    else:
+        infos=socket.getaddrinfo(h,443,proto=socket.IPPROTO_TCP)
+        _DNS_CACHE[h]=(time.time()+600,infos)
     if not infos or any(not ipaddress.ip_address(x[4][0]).is_global for x in infos):
         raise ValueError("Private/reserved media destination forbidden")
     return url
@@ -141,13 +185,14 @@ def stage(c, entry, hosts):
     yr=entry.get("year",0)
     if type(yr) is not int or not 0<=yr<=2100:raise ValueError("Invalid year")
     variants=entry.get("variants")
-    if not isinstance(variants,list) or not 1<=len(variants)<=100:
-        raise ValueError("Provide valid film variants")
+    if not isinstance(variants,list) or not 1<=len(variants)<=2000:
+        raise ValueError("Provide 1..2000 film variants")
     titlevals=(SOURCE,key,typ,title,_str(entry,"original_title",240),
             _str(entry,"genre",350),yr,_str(entry,"director",250),
             _str(entry,"actors",600),_str(entry,"description",3500),rating,
             _str(entry,"rating_source",80),_str(entry,"cover_url",1800),
-            _str(entry,"source_page",1800),now())
+            _str(entry,"source_page",1800),now(),_str(entry,"country",120),
+            _str(entry,"certification",40),int(bool(entry.get("silent_import",False))))
     prepared=[]
     seen_quality_versions=set()
     for var in variants:
@@ -170,8 +215,8 @@ def stage(c, entry, hosts):
         subs=var.get("subtitles","unknown")
         if subs not in ("none","hardsub","softsub","external","unknown"):
             raise ValueError("Invalid subtitle")
-        method=var.get("send_method","sendDocument")
-        if method not in VIDEO_TYPES:raise ValueError("Invalid send method")
+        method=var.get("send_method","sendVideo")
+        if method!="sendVideo":raise ValueError("Film2Media files must be queued as streamable sendVideo")
         url=valid_url(var.get("url"),hosts)
         prepared.append((season,episode,quality,_str(var,"version",90),
             dubbed,subs,_str(var,"language",50),url,method,now()))
@@ -181,8 +226,8 @@ def stage(c, entry, hosts):
         valid_url(entry["source_page"],hosts|{"f2mgo.top","www.f2mgo.top"})
     c.execute("""INSERT OR IGNORE INTO film_titles
       (source,external_key,media_type,title,original_title,genre,year,director,
-      actors,description,rating,rating_source,cover_url,source_page,created,rights_ok)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",titlevals)
+      actors,description,rating,rating_source,cover_url,source_page,created,country,certification,silent_import,rights_ok)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",titlevals)
     parent=c.execute("SELECT id FROM film_titles WHERE source=? AND external_key=?",
                      (SOURCE,key)).fetchone()[0]
     added=0
@@ -234,7 +279,7 @@ def download(url,path,hosts):
         valid_url(response.url,hosts)
         if response.status!=200:raise RuntimeError("Video source HTTP "+str(response.status))
         expected=response.headers.get("Content-Length","")
-        if expected.isdigit() and int(expected)>MAX_FILE:raise ValueError("Video exceeds Telegram local API limit")
+        if expected.isdigit() and int(expected)>MAX_FILE:raise ValueError("SKIPPED_SIZE_LIMIT: source exceeds Telegram Local API 1950 MB limit")
         mime=(response.headers.get("Content-Type","").split(";")[0].strip().lower())
         if mime in ("text/html","application/json","text/plain"):
             raise ValueError("Video URL returned webpage, not media")
@@ -243,7 +288,7 @@ def download(url,path,hosts):
                 piece=response.read(CHUNK)
                 if not piece:break
                 total+=len(piece)
-                if total>MAX_FILE:raise ValueError("Video exceeds 1950MB")
+                if total>MAX_FILE:raise ValueError("SKIPPED_SIZE_LIMIT: source exceeds Telegram Local API 1950 MB limit")
                 if total%(24*CHUNK)==0:_remaining_disk(path.parent)
                 dest.write(piece)
             dest.flush()
@@ -252,47 +297,45 @@ def download(url,path,hosts):
     if expected.isdigit() and int(expected)!=total:raise ValueError("Incomplete video download")
     return total
 
-def upload(path,method,config,cfg,storage_chat):
+def upload(path,method,config,cfg,storage_chat,media_info=None):
     if not config["local_bot_api"]:raise RuntimeError("Local Bot API is not configured")
-    if method not in VIDEO_TYPES:raise ValueError("Invalid method")
-    # Intentionally use *local* Telegram API. Cloud multipart is limited to 50 MB.
+    if method!="sendVideo":raise ValueError("Film2Media uploads must use sendVideo")
     token=cfg.get("token")
     if not cfg.get("enabled") or not token:raise RuntimeError("Bot is not configured")
     size=path.stat().st_size
     if not 64*1024<=size<=MAX_FILE:raise ValueError("Invalid upload size")
-    part=VIDEO_TYPES[method]
+    info=media_info or {}
     boundary="MasihaFilm_"+os.urandom(12).hex()
-    fields=(f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{storage_chat}\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"disable_notification\"\r\n\r\ntrue\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{part}\"; filename=\"{path.name}\"\r\n"
-            f"Content-Type: application/octet-stream\r\n\r\n").encode()
-    end=f"\r\n--{boundary}--\r\n".encode()
-    conn=http.client.HTTPConnection(LOCAL_API,LOCAL_API_PORT,timeout=850)
+    def field(name,value):
+        return (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").encode()
+    fields=field("chat_id",storage_chat)+field("disable_notification","true")+field("supports_streaming","true")
+    if info.get("duration"):fields+=field("duration",max(1,int(info["duration"])))
+    if info.get("width"):fields+=field("width",int(info["width"]))
+    if info.get("height"):fields+=field("height",int(info["height"]))
+    fields+=(f"--{boundary}\r\nContent-Disposition: form-data; name=\"video\"; filename=\"masiha-video.mp4\"\r\n"
+            f"Content-Type: video/mp4\r\n\r\n").encode()
+    finish=f"\r\n--{boundary}--\r\n".encode()
+    conn=http.client.HTTPConnection(LOCAL_API,LOCAL_API_PORT,timeout=1200)
     try:
-        conn.putrequest("POST","/bot"+token+"/"+method)
+        conn.putrequest("POST","/bot"+token+"/sendVideo")
         conn.putheader("Content-Type","multipart/form-data; boundary="+boundary)
-        conn.putheader("Content-Length",str(len(fields)+size+len(end)))
-        conn.endheaders()
-        conn.send(fields)
+        conn.putheader("Content-Length",str(len(fields)+size+len(finish)))
+        conn.endheaders();conn.send(fields)
         with path.open("rb") as f:
-            while partdata:=f.read(CHUNK):
-                conn.send(partdata)
-        conn.send(end)
-        resp=conn.getresponse()
-        data=resp.read(100_001)
-        if resp.status!=200 or len(data)>100_000:raise RuntimeError("Telegram video upload HTTP "+str(resp.status))
+            while partdata:=f.read(CHUNK):conn.send(partdata)
+        conn.send(finish)
+        resp=conn.getresponse();data=resp.read(100_001)
+        if resp.status!=200 or len(data)>100_000:raise RuntimeError("Telegram sendVideo HTTP "+str(resp.status))
         result=json.loads(data)
-        if not result.get("ok"):raise RuntimeError("Telegram refused video upload")
-        msg=result.get("result") or {}
-        video=msg.get(part) or {}
-        if method=="sendVideo" and isinstance(video,dict) and not video.get("file_id"):
-            video=msg.get("document") or {}
+        if not result.get("ok"):raise RuntimeError("Telegram rejected streamable video")
+        msg=result.get("result") or {};video=msg.get("video") or {}
         fid=video.get("file_id");uid=video.get("file_unique_id")
         if not isinstance(fid,str) or len(fid)<10 or not isinstance(uid,str) or len(uid)<5:
-            raise RuntimeError("Telegram returned no persistent file IDs")
+            raise RuntimeError("Telegram did not return a video file_id")
+        if not video.get("duration") or not video.get("width") or not video.get("height"):
+            raise RuntimeError("Telegram did not recognize uploaded MP4 as a video")
         return fid,uid,msg.get("message_id")
-    finally:
-        conn.close()
+    finally:conn.close()
 
 def upload_cover(url, hosts, cfg, storage_chat):
     """Store a compact cover in Telegram; raw bytes stay only in memory."""
@@ -347,97 +390,238 @@ def upload_cover(url, hosts, cfg, storage_chat):
     finally:
         conn.close()
 
-def publish(c,variant_id):
+def _episode_upload_state(c,title_id,season,episode):
+    return c.execute("""SELECT COUNT(*) AS total,
+      SUM(CASE WHEN j.state IN ('done','blocked') THEN 1 ELSE 0 END) AS terminal,
+      SUM(CASE WHEN j.state='done' AND v.uploaded>0 AND v.stream_ready=1 AND v.file_id<>''
+        THEN 1 ELSE 0 END) AS ready
+      FROM film_variants v LEFT JOIN film_import_jobs j ON j.variant_id=v.id
+      WHERE v.title_id=? AND v.season=? AND v.episode=?""",
+      (title_id,season,episode)).fetchone()
+
+
+def finalize_episode(c,title_id,season,episode):
+    """Publish one movie/episode only after every staged quality is terminal."""
     import media_library
-    variant=c.execute("SELECT v.*,t.* FROM film_variants v JOIN film_titles t ON t.id=v.title_id WHERE v.id=?",
-                       (variant_id,)).fetchone()
-    if variant is None or not variant["file_id"]:raise ValueError("Not uploaded")
-    if not variant["rights_ok"]:raise ValueError("Rights not granted")
-    # One film row per movie, or per series episode; additional qualities share it.
-    unique=hashlib.sha256(f"film:{variant['title_id']}:{variant['season']}:{variant['episode']}".encode()).hexdigest()
-    r=c.execute("SELECT id,status FROM media_items WHERE kind='film' AND unique_id=?",(unique,)).fetchone()
-    created=False
-    if r:
-        mid=r["id"]
-        if r["status"]=="removed":raise ValueError("Film was removed by operator")
+    state=_episode_upload_state(c,title_id,season,episode)
+    total=int(state["total"] or 0)
+    terminal=int(state["terminal"] or 0)
+    ready=int(state["ready"] or 0)
+    if not total or terminal!=total or not ready:
+        return None
+
+    title=c.execute("SELECT * FROM film_titles WHERE id=?",(title_id,)).fetchone()
+    if title is None or not title["rights_ok"]:
+        return None
+    # If a poster URL exists, wait for its Telegram upload so the announcement
+    # can be a proper poster card. retry_missing_covers() retries this safely.
+    if title["cover_url"] and not title["cover_id"]:
+        return None
+
+    primary=c.execute("""SELECT v.* FROM film_variants v
+      JOIN film_import_jobs j ON j.variant_id=v.id
+      WHERE v.title_id=? AND v.season=? AND v.episode=?
+        AND j.state='done' AND v.uploaded>0 AND v.stream_ready=1 AND v.file_id<>''
+      ORDER BY CAST(REPLACE(v.quality,'p','') AS INTEGER),v.id LIMIT 1""",
+      (title_id,season,episode)).fetchone()
+    if not primary:
+        return None
+
+    unique=hashlib.sha256(f"film:{title_id}:{season}:{episode}".encode()).hexdigest()
+    existing=c.execute("SELECT id,status FROM media_items WHERE kind='film' AND unique_id=?",
+                       (unique,)).fetchone()
+    if existing and existing["status"]=="removed":
+        return None
+
+    values=(primary["file_id"],title["title"],title["genre"],title["media_type"],
+      season,episode,title["actors"],title["year"],primary["language"],
+      primary["dubbed"],primary["subtitles"],title["director"],title["description"],
+      title["cover_id"],title_id)
+    was_published=bool(existing and existing["status"]=="published")
+    if existing:
+        mid=existing["id"]
+        c.execute("""UPDATE media_items SET telegram_method='sendVideo',file_id=?,title=?,genre=?,
+          media_type=?,season=?,episode=?,actors=?,year=?,language=?,dubbed=?,subtitles=?,
+          director=?,description=?,cover_id=?,film_title_id=?,rights_ok=1,status='published'
+          WHERE id=?""",(*values,mid))
     else:
         mid=c.execute("""INSERT INTO media_items
-           (owner_id,kind,telegram_method,file_id,unique_id,source_url,title,genre,
-            media_type,season,episode,actors,year,language,dubbed,subtitles,director,
-            description,cover_id,status,rights_ok,created)
-           VALUES(0,'film',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'published',1,?)""",
-           (variant["send_method"],variant["file_id"],unique,"",
-            variant["title"],variant["genre"],variant["media_type"],
-            variant["season"],variant["episode"],variant["actors"],variant["year"],
-            variant["language"],variant["dubbed"],variant["subtitles"],variant["director"],
-            variant["description"],variant["cover_id"],now())).lastrowid
-        created=True
-    c.execute("UPDATE film_variants SET uploaded=? WHERE id=?",(now(),variant_id))
-    c.execute("UPDATE film_import_jobs SET state='done',last_error='',updated=? WHERE variant_id=?",(now(),variant_id))
-    if created:
+          (owner_id,kind,telegram_method,file_id,unique_id,source_url,title,genre,
+           media_type,season,episode,actors,year,language,dubbed,subtitles,director,
+           description,cover_id,status,rights_ok,created,film_title_id)
+          VALUES(0,'film','sendVideo',?,?, '',?,?,?,?,?,?,?,?,?,?,?,?,?,'published',1,?,?)""",
+          (values[0],unique,*values[1:14],now(),values[14])).lastrowid
+
+    # Exactly one announcement per movie or episode, after its complete quality
+    # set is ready. Existing published items never re-notify for later variants.
+    if not was_published and not title["silent_import"]:
         media_library.broadcast_new_media(c,mid)
     return mid
+
+
+def publish(c,variant_id):
+    variant=c.execute("""SELECT v.*,t.rights_ok AS title_rights_ok
+      FROM film_variants v JOIN film_titles t ON t.id=v.title_id WHERE v.id=?""",
+      (variant_id,)).fetchone()
+    if variant is None or not variant["file_id"] or not variant["stream_ready"]:
+        raise ValueError("Streamable video is not uploaded")
+    if not variant["title_rights_ok"]:
+        raise ValueError("Rights not granted")
+    c.execute("UPDATE film_variants SET uploaded=? WHERE id=?",(now(),variant_id))
+    c.execute("UPDATE film_import_jobs SET state='done',last_error='',updated=? WHERE variant_id=?",
+              (now(),variant_id))
+    return finalize_episode(c,variant["title_id"],variant["season"],variant["episode"])
+
+
+def retry_missing_covers(c,config,cfg,storage):
+    """Retry poster uploads and finalize any now-complete movie/episode."""
+    rows=c.execute("""SELECT DISTINCT t.id,t.cover_url FROM film_titles t
+      JOIN film_variants v ON v.title_id=t.id
+      JOIN film_import_jobs j ON j.variant_id=v.id
+      WHERE t.cover_url<>'' AND t.cover_id=''
+        AND j.state='done' AND v.uploaded>0 AND v.stream_ready=1 AND v.file_id<>''
+      ORDER BY t.id LIMIT 10""").fetchall()
+    for title in rows:
+        try:
+            cover_id=upload_cover(title["cover_url"],config["hosts"],cfg,storage)
+            c.execute("UPDATE film_titles SET cover_id=? WHERE id=? AND cover_id=''",
+                      (cover_id,title["id"]))
+            c.commit()
+            episodes=c.execute("""SELECT DISTINCT season,episode FROM film_variants
+              WHERE title_id=? ORDER BY season,episode""",(title["id"],)).fetchall()
+            for episode in episodes:
+                c.execute("BEGIN IMMEDIATE")
+                try:
+                    finalize_episode(c,title["id"],episode["season"],episode["episode"])
+                    c.commit()
+                except Exception:
+                    c.rollback()
+                    raise
+        except (OSError,ValueError,RuntimeError,HTTPError,URLError,TimeoutError):
+            print("FILM_COVER_DEFERRED",title["id"],flush=True)
+
+
+def probe_media(path):
+    import subprocess
+    result=subprocess.run(["ffprobe","-v","error","-show_entries",
+      "format=duration,format_name,size:stream=codec_type,codec_name,profile,width,height,pix_fmt,channels,sample_rate",
+      "-of","json",str(path)],capture_output=True,text=True,timeout=90)
+    if result.returncode:raise ValueError("ffprobe_rejected_media")
+    try:data=json.loads(result.stdout)
+    except ValueError:raise ValueError("ffprobe_invalid_metadata") from None
+    streams=data.get("streams") or []
+    video=next((x for x in streams if x.get("codec_type")=="video"),None)
+    audio=next((x for x in streams if x.get("codec_type")=="audio"),{})
+    if not video or not video.get("width") or not video.get("height"):
+        raise ValueError("Downloaded asset is not a playable video")
+    try:duration=float((data.get("format") or {}).get("duration") or 0)
+    except (TypeError,ValueError):duration=0
+    if duration<=0 or duration>60*60*24*7:raise ValueError("Invalid video duration")
+    return {"duration":duration,"width":int(video["width"]),"height":int(video["height"]),
+      "video_codec":video.get("codec_name", ""),"audio_codec":audio.get("codec_name", ""),
+      "pix_fmt":video.get("pix_fmt", ""),"format_name":(data.get("format") or {}).get("format_name", "")}
+
+def prepare_streamable(source,output):
+    """Create a fast-start MP4 for Telegram streaming; remux HEVC/H.264 without video re-encode."""
+    import subprocess
+    original=probe_media(source)
+    codec=original["video_codec"]
+    can_remux=codec in ("h264","hevc")
+    base=["ffmpeg","-nostdin","-hide_banner","-loglevel","error","-y","-i",str(source),
+      "-map","0:v:0","-map","0:a:0?","-map_metadata","0","-c:v","copy"]
+    if codec=="hevc":base += ["-tag:v","hvc1"]
+    base += ["-c:a","aac","-b:a","160k","-ac","2"]
+    # Preserve an embedded subtitle as MP4 mov_text when possible.
+    if can_remux:
+      cmd=base+["-map","0:s:0?","-c:s","mov_text","-movflags","+faststart",str(output)]
+      r=subprocess.run(cmd,capture_output=True,text=True,timeout=2400)
+      if r.returncode:
+        output.unlink(missing_ok=True)
+        cmd=base+["-sn","-movflags","+faststart",str(output)]
+        r=subprocess.run(cmd,capture_output=True,text=True,timeout=2400)
+      if r.returncode:can_remux=False;output.unlink(missing_ok=True)
+    if not can_remux:
+      output.unlink(missing_ok=True)
+      cmd=["ffmpeg","-nostdin","-hide_banner","-loglevel","error","-y","-i",str(source),
+        "-map","0:v:0","-map","0:a:0?","-sn","-map_metadata","0",
+        "-vf","format=yuv420p","-c:v","libx264","-preset","ultrafast","-crf","25",
+        "-threads","1","-c:a","aac","-b:a","128k","-ac","2",
+        "-movflags","+faststart",str(output)]
+      r=subprocess.run(cmd,capture_output=True,text=True,timeout=7200)
+      if r.returncode:raise RuntimeError("ffmpeg_mp4_conversion_failed")
+    if not output.exists() or output.stat().st_size<64*1024:
+      raise ValueError("Invalid MP4 output")
+    if output.stat().st_size>MAX_FILE:
+      # Do not re-encode oversized variants just to force an upload.
+      # Skip this quality; other qualities for the same title remain eligible.
+      output.unlink(missing_ok=True)
+      raise ValueError("SKIPPED_SIZE_LIMIT: streamable MP4 exceeds Telegram Local API 1950 MB limit")
+    result=probe_media(output)
+    if "mp4" not in result["format_name"] or result["video_codec"] not in ("h264","hevc"):
+      raise ValueError("MP4 is not compatible with Telegram streaming")
+    return result
 
 def process_one(c, config):
     import sales
     import roz_telegram_upload as audio
     cfg=sales.settings(c)
-    if not config["local_bot_api"]:
-        return "waiting_for_local_bot_api"
+    if not config["local_bot_api"]:return "waiting_for_local_bot_api"
     storage=audio.verified_storage_chat(cfg)
-    job=c.execute("""SELECT j.variant_id,v.source_url,v.send_method
+    retry_missing_covers(c,config,cfg,storage)
+    job=c.execute("""SELECT j.variant_id,v.source_url,v.send_method,j.attempts
        FROM film_import_jobs j JOIN film_variants v ON v.id=j.variant_id
-       WHERE j.state='pending' OR j.state='failed' AND j.attempts<3
-       ORDER BY j.variant_id LIMIT 1""").fetchone()
+       WHERE j.state='pending' OR (j.state='failed' AND j.attempts<3)
+       ORDER BY CASE WHEN j.state='pending' THEN 0 ELSE 1 END,j.variant_id LIMIT 1""").fetchone()
     if not job:return "queue_empty"
     vid=job["variant_id"]
-    c.execute("UPDATE film_import_jobs SET state='processing',updated=? WHERE variant_id=?",(now(),vid))
-    c.commit()
+    c.execute("UPDATE film_import_jobs SET state='processing',updated=? WHERE variant_id=?",(now(),vid));c.commit()
     TEMP.mkdir(mode=0o700,parents=True,exist_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix="job-",dir=TEMP) as d:
-            ext=Path(urlsplit(job["source_url"]).path).suffix.lower()
-            if ext not in (".mkv",".mp4",".webm",".mov"):
-                raise ValueError("Unsupported video extension")
-            path=Path(d)/("media"+ext)
-            download(job["source_url"],path,config["hosts"])
-            # ffprobe only inspects the downloaded licensed file, never trusts HTTP MIME alone.
-            import subprocess
-            result=subprocess.run(["ffprobe","-v","error","-show_entries","stream=codec_type",
-                "-of","default=noprint_wrappers=1",str(path)],
-                capture_output=True,text=True,timeout=35)
-            if result.returncode or "codec_type=video" not in result.stdout:
-                raise ValueError("Downloaded asset is not a video")
-            fid,unique,message_id=upload(path,job["send_method"],config,cfg,storage)
-            # Preserve idempotent ID state first, before touching user notifications.
-            c.execute("""UPDATE film_variants SET file_id=?,file_unique_id=?,file_bytes=?
-               WHERE id=?""",(fid,unique,path.stat().st_size,vid))
-            c.execute("UPDATE film_import_jobs SET state='uploaded',updated=? WHERE variant_id=?",(now(),vid))
-            c.commit()
-            title=c.execute("SELECT t.id,t.cover_url,t.cover_id FROM film_titles t JOIN film_variants v ON v.title_id=t.id WHERE v.id=?",(vid,)).fetchone()
-            if title and title["cover_url"] and not title["cover_id"]:
-                try:
-                    cover_id=upload_cover(title["cover_url"],config["hosts"],cfg,storage)
-                    c.execute("UPDATE film_titles SET cover_id=? WHERE id=? AND cover_id=''",(cover_id,title["id"]))
-                    c.commit()
-                except (OSError,ValueError,RuntimeError,HTTPError,URLError,TimeoutError):
-                    # Film publication is not lost if the optional cover fails.
-                    print("FILM_COVER_DEFERRED",vid,flush=True)
-            # TemporaryDirectory removes source media on both success and failure.
-        c.execute("BEGIN IMMEDIATE")
-        mid=publish(c,vid)
-        c.commit()
-        return "published:"+str(mid)
+      with tempfile.TemporaryDirectory(prefix="job-",dir=TEMP) as d:
+        source=Path(d)/"source.bin";output=Path(d)/"stream.mp4"
+        download(job["source_url"],source,config["hosts"])
+        info=prepare_streamable(source,output)
+        fid,unique,message_id=upload(output,"sendVideo",config,cfg,storage,info)
+        c.execute("""UPDATE film_variants SET send_method='sendVideo',file_id=?,file_unique_id=?,
+          file_bytes=?,duration=?,width=?,height=?,video_codec=?,audio_codec=?,stream_ready=1,uploaded=?
+          WHERE id=?""",(fid,unique,output.stat().st_size,info["duration"],info["width"],
+          info["height"],info["video_codec"],info["audio_codec"],now(),vid))
+        c.execute("UPDATE film_import_jobs SET state='uploaded',updated=? WHERE variant_id=?",(now(),vid));c.commit()
+        title=c.execute("SELECT t.id,t.cover_url,t.cover_id FROM film_titles t JOIN film_variants v ON v.title_id=t.id WHERE v.id=?",(vid,)).fetchone()
+        if title and title["cover_url"] and not title["cover_id"]:
+          try:
+            cover_id=upload_cover(title["cover_url"],config["hosts"],cfg,storage)
+            c.execute("UPDATE film_titles SET cover_id=? WHERE id=? AND cover_id=''",(cover_id,title["id"]));c.commit()
+          except (OSError,ValueError,RuntimeError,HTTPError,URLError,TimeoutError):
+            print("FILM_COVER_DEFERRED",vid,flush=True)
+      c.execute("BEGIN IMMEDIATE");mid=publish(c,vid);c.commit()
+      return "published:"+str(mid) if mid else "uploaded_waiting_for_episode_qualities"
     except Exception as ex:
-        c.rollback()
-        # Never expose secrets or direct URLs in error logs.
-        state="blocked" if isinstance(ex,ValueError) else "failed"
-        error=(f"HTTPError:{ex.code}:source temporarily unavailable"
-               if isinstance(ex,HTTPError) else type(ex).__name__)
-        c.execute("""UPDATE film_import_jobs SET state=?,attempts=attempts+1,
-           last_error=?,updated=? WHERE variant_id=?""",(state,error,now(),vid))
-        c.commit()
-        return state+":"+type(ex).__name__
+      c.rollback();state="blocked" if isinstance(ex,ValueError) else "failed"
+      detail=str(ex) if isinstance(ex,(ValueError,RuntimeError)) else type(ex).__name__
+      detail=re.sub(r"https?://\S+","[source-url]",detail)
+      detail=re.sub(r"/var/tmp/masiha-films/\S+","[temporary-file]",detail)
+      if isinstance(ex,HTTPError):
+        stored_error="HTTPError:"+str(ex.code)+":source temporarily unavailable"
+      else:
+        stored_error=detail if detail.startswith("SKIPPED_SIZE_LIMIT:") else type(ex).__name__+':'+detail
+      previous=c.execute("SELECT attempts FROM film_import_jobs WHERE variant_id=?",(vid,)).fetchone()
+      attempts=(int(previous["attempts"]) if previous else 0)+1
+      if state=="failed" and attempts>=3:
+        state="blocked"
+        stored_error="FAILED_AFTER_RETRIES:"+stored_error
+      context=c.execute("SELECT title_id,season,episode FROM film_variants WHERE id=?",(vid,)).fetchone()
+      c.execute("""UPDATE film_import_jobs SET state=?,attempts=?,last_error=?,updated=?
+        WHERE variant_id=?""",(state,attempts,stored_error[:180],now(),vid));c.commit()
+      if state=="blocked" and context:
+        c.execute("BEGIN IMMEDIATE")
+        try:
+          finalize_episode(c,context["title_id"],context["season"],context["episode"])
+          c.commit()
+        except Exception:
+          c.rollback()
+          raise
+      return state+":"+type(ex).__name__
 
 def recover_uploaded(c):
     # A killed worker leaves the old processing lease, but the scratch file
@@ -445,9 +629,24 @@ def recover_uploaded(c):
     c.execute("""UPDATE film_import_jobs SET state='failed',updated=?,last_error='worker_interrupted',
        attempts=attempts+1 WHERE state='processing' AND updated<?""",
        (now(),now()-3600))
+    exhausted=c.execute("""SELECT DISTINCT v.title_id,v.season,v.episode
+      FROM film_import_jobs j JOIN film_variants v ON v.id=j.variant_id
+      WHERE j.state='failed' AND j.attempts>=3""").fetchall()
+    c.execute("""UPDATE film_import_jobs SET state='blocked',
+      last_error=CASE WHEN last_error='' THEN 'FAILED_AFTER_RETRIES' ELSE 'FAILED_AFTER_RETRIES:'||last_error END,
+      updated=? WHERE state='failed' AND attempts>=3""",(now(),))
     c.commit()
+    for episode in exhausted:
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            finalize_episode(c,episode["title_id"],episode["season"],episode["episode"])
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
     rows=c.execute("""SELECT j.variant_id FROM film_import_jobs j JOIN film_variants v
-      ON v.id=j.variant_id WHERE j.state IN ('uploaded','failed') AND LENGTH(v.file_id)>=10""").fetchall()
+      ON v.id=j.variant_id WHERE j.state IN ('uploaded','failed')
+      AND LENGTH(v.file_id)>=10 AND v.stream_ready=1""").fetchall()
     for row in rows:
         c.execute("BEGIN IMMEDIATE")
         try:
@@ -459,30 +658,19 @@ def recover_uploaded(c):
     return len(rows)
 
 def stats(c):
-    return {r[0]:r[1] for r in c.execute("SELECT state,COUNT(*) FROM film_import_jobs GROUP BY state")}
+    counts={r[0]:r[1] for r in c.execute("SELECT state,COUNT(*) FROM film_import_jobs GROUP BY state")}
+    counts["size_skipped"]=c.execute(
+      "SELECT COUNT(*) FROM film_import_jobs WHERE state='blocked' AND last_error LIKE 'SKIPPED_SIZE_LIMIT:%'"
+    ).fetchone()[0]
+    if "blocked" in counts:
+        counts["blocked"]=max(0,counts["blocked"]-counts["size_skipped"])
+    return counts
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument("action",choices=("setup","import-manifest","run-once","status","preview-page","stage-page"))
+    parser.add_argument("action",choices=("setup","import-manifest","run-once","status"))
     parser.add_argument("path",nargs="?")
-    parser.add_argument("--rights-ok",action="store_true",
-                        help="Operator confirms distribution rights before staging")
     args=parser.parse_args()
-    if args.action in ("preview-page","stage-page"):
-        if not args.path:parser.error("Film2Media post URL required")
-        from film2media_discovery import discover
-        entry=discover(args.path)
-        if args.action=="preview-page":
-            print(json.dumps(entry,ensure_ascii=False,indent=2))
-            return
-        if not args.rights_ok:
-            parser.error("stage-page requires explicit --rights-ok confirmation")
-        conf=settings()
-        with connect() as c:
-            added=stage(c,{**entry,"rights_ok":True},conf["hosts"])
-            c.commit()
-        print("STAGED_VARIANTS",added)
-        return
     if args.action=="import-manifest":
         if not args.path:parser.error("manifest path required")
         print("STAGED_VARIANTS",import_manifest(args.path))
