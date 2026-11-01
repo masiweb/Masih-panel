@@ -1,0 +1,11 @@
+[Unit]
+Description=Check approved Telegram channel posts and AI discussions
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+Unit=masiha-channel-manager.service
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
