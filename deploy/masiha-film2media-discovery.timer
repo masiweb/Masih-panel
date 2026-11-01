@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Film2Media catalogue discovery
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=15min
+Persistent=true
+Unit=masiha-film2media-discovery.service
+
+[Install]
+WantedBy=timers.target
