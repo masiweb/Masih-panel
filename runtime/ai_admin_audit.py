@@ -3,7 +3,7 @@
 No API keys or provider credentials are ever included in responses.
 Existing output media can be replayed only if Telegram returned a file ID.
 """
-import json,datetime,secrets
+import json,datetime,secrets,re
 from sales import enqueue,settings,audit,integer
 
 PAGE_SIZE=6
@@ -55,6 +55,61 @@ def _send(c,admin,text,buttons=None):
 def _back(target):
  return [[("↩️ استفاده از هوش مصنوعی","a:aiuse:"+str(target))],
          [("👤 پرونده کاربر","a:user:"+str(target))]]
+
+def _monitor_admin(c,admin):
+ if admin not in settings(c)["admins"]:
+  raise ValueError("فقط مدیر می‌تواند گزارش هوش مصنوعی کاربران را مشاهده کند")
+
+def _monitor_results(c,admin,entries,title,nav=None):
+ rows=[]
+ for r in entries:
+  name=(r["name"] or "بدون نام")[:20]
+  handle=(" @"+r["telegram_username"][:24]) if r["telegram_username"] else ""
+  label=("👤 "+name+handle+" | "+str(r["id"])+
+         " | "+str(r["total"])+" گفت‌وگو")[:62]
+  rows.append([(label,"a:aimonitordetail:"+str(r["id"]))])
+ if nav:rows.append(nav)
+ rows.append([("🔎 جستجو با موبایل / شناسه / نام کاربری","a:aimonitorsearch")])
+ rows.append([("↻ تازه‌سازی","a:aimonitor:0")])
+ if not entries:
+  title+="\nهیچ گفت‌وگوی متنی ثبت‌شده‌ای پیدا نشد."
+ return _send(c,admin,title,rows)
+
+def monitor(c,admin,page=0):
+ _monitor_admin(c,admin)
+ page=integer(int(page),0,10000)
+ total=c.execute("SELECT COUNT(DISTINCT user_id) FROM ai_text_audit").fetchone()[0]
+ entries=c.execute("""SELECT u.id,u.name,u.phone,u.telegram_username,
+  COUNT(a.id) AS total,MAX(a.created) AS last
+  FROM ai_text_audit a JOIN users u ON u.id=a.user_id
+  GROUP BY u.id ORDER BY last DESC LIMIT 20 OFFSET ?""",(page*20,)).fetchall()
+ nav=[]
+ if page>0:nav.append(("⬅️ جدیدتر","a:aimonitor:"+str(page-1)))
+ if (page+1)*20<total:nav.append(("قدیمی‌تر ➡️","a:aimonitor:"+str(page+1)))
+ return _monitor_results(c,admin,entries,
+  "📜 نظارت بر گفتگوهای هوش مصنوعی\n"+
+  "۲۰ کاربر اخیر با مکالمه ثبت‌شده | صفحه "+str(page+1),nav or None)
+
+def monitor_search(c,admin,query):
+ _monitor_admin(c,admin)
+ query=str(query or "").strip().translate(str.maketrans(
+  "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩","01234567890123456789"))
+ if not 2<=len(query)<=100 or any(ord(ch)<32 for ch in query):
+  raise ValueError("عبارت جستجو باید بین ۲ تا ۱۰۰ کاراکتر باشد")
+ digits="".join(ch for ch in query if ch.isdigit())
+ phone_digits=digits[-10:] if len(digits)>=7 else digits
+ username=query.lstrip("@").lower()
+ entries=c.execute("""SELECT u.id,u.name,u.phone,u.telegram_username,
+  COUNT(a.id) AS total,MAX(a.created) AS last
+  FROM ai_text_audit a JOIN users u ON u.id=a.user_id
+  WHERE CAST(u.id AS TEXT)=?
+   OR (?<>'' AND instr(replace(u.phone,'+',''),?)>0)
+   OR (?<>'' AND instr(lower(u.telegram_username),?)>0)
+   OR instr(lower(COALESCE(u.name,'')),lower(?))>0
+  GROUP BY u.id ORDER BY last DESC LIMIT 20""",
+  (query,phone_digits,phone_digits,username,username,query)).fetchall()
+ return _monitor_results(c,admin,entries,
+  "🔎 نتیجه جستجوی مکالمات AI برای: "+query)
 
 def summary(c,admin,target):
  target=secure(c,admin,target)
@@ -188,6 +243,8 @@ def replay_file(c,admin,target,record_id,direction):
 
 def route(c,admin,op,args):
  # Every entry path checks admin allowlist, including deep-link callbacks.
+ if op=="aimonitor" and len(args)<=1:return monitor(c,admin,args[0] if args else 0)
+ if op=="aimonitordetail" and len(args)==1:return summary(c,admin,args[0])
  if op=="aiuse" and len(args)==1:return summary(c,admin,args[0])
  if op=="aitext" and len(args)==2:return text_list(c,admin,*args)
  if op=="aidetail" and len(args)==2:return text_detail(c,admin,*args)
