@@ -498,7 +498,7 @@ def _preview(c,uid,row):
 def _film_variant_caption(v,bot_username=""):
  title=v["film_title"] or "فیلم";year=v["film_year"] or 0
  original=v["original_title"] or ""
- if year and re.search(r"(?:19|20)\\d{2}$",title):title=re.sub(r"\\s*(?:19|20)\\d{2}$","",title).strip()
+ if year and re.search(r"(?:19|20)\d{2}$",title):title=re.sub(r"\s*(?:19|20)\d{2}$","",title).strip()
  lines=["🎬 "+title+(" ("+str(year)+")" if year else "")]
  if original and original.casefold()!=title.casefold():lines.append("نام اصلی: "+original[:150])
  lines.append("🎞 کیفیت: "+v["quality"]+(" | "+v["version"][:75] if v["version"] else ""))
@@ -516,14 +516,14 @@ def _film_variant_caption(v,bot_username=""):
  if v["director"]:lines.append("🎬 کارگردان: "+v["director"][:100])
  if v["actors"]:lines.append("👥 بازیگران: "+v["actors"][:120])
  if v["description"]:lines.append("📝 "+v["description"][:280])
- body="\\n".join(lines)
+ body="\n".join(lines)
  username=re.sub(r"[^A-Za-z0-9_]","",str(bot_username or "").lstrip("@"))
- credit="\\n\\n🤖 ربات: https://t.me/"+username if username else ""
+ credit="\n\n🤖 ربات: https://t.me/"+username if username else ""
  limit=950
  if len(body)+len(credit)>limit:
   available=max(1,limit-len(credit)-2)
   body=body[:available]
-  if "\\n" in body:body=body.rsplit("\\n",1)[0]
+  if "\n" in body:body=body.rsplit("\n",1)[0]
   body=body.rstrip()+"…"
  return (body+credit)[:limit]
 
