@@ -30,6 +30,14 @@ def setup(c):
  seconds INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL
  );
  """)
+ # Additive upgrades for existing clients, queues, and usage history.
+ columns={r[1] for r in c.execute("PRAGMA table_info(ai_media_jobs)")}
+ for name in ("output_file_id","input_media_type","error_code"):
+  if name not in columns:
+   c.execute("ALTER TABLE ai_media_jobs ADD COLUMN "+name+" TEXT NOT NULL DEFAULT ''")
+ draft_columns={r[1] for r in c.execute("PRAGMA table_info(ai_media_drafts)")}
+ if "input_media_type" not in draft_columns:
+  c.execute("ALTER TABLE ai_media_drafts ADD COLUMN input_media_type TEXT NOT NULL DEFAULT ''")
 
 def _cfg(c):
  import sales
@@ -87,6 +95,8 @@ def input_message(c,uid,state,message,update_id):
  if not _balance(c,uid,kind):raise ValueError("سهمیه یا امتیاز کافی نیست")
  if state.endswith(":input"):
   fid,seconds=_telegram_media(message,kind)
+  file_kind=("document" if message.get("document") else
+      "photo" if kind=="image" else "video") if fid else ""
   prompt=(message.get("caption") or message.get("text") or "").strip()
   if fid:
    import ai_models
@@ -96,21 +106,23 @@ def input_message(c,uid,state,message,update_id):
    if chosen["provider"]=="cloudflare":
     raise ValueError("مدل FLUX فقط ساخت تصویر را انجام می‌دهد؛ برای ویرایش مدل OpenAI را انتخاب کنید")
   if fid and not prompt:
-   c.execute("""INSERT INTO ai_media_drafts(uid,kind,file_id,seconds,created)
-    VALUES(?,?,?,?,?) ON CONFLICT(uid) DO UPDATE SET kind=excluded.kind,
-    file_id=excluded.file_id,seconds=excluded.seconds,created=excluded.created""",
-    (uid,kind,fid,seconds,now()))
+   c.execute("""INSERT INTO ai_media_drafts(uid,kind,file_id,seconds,created,input_media_type)
+    VALUES(?,?,?,?,?,?) ON CONFLICT(uid) DO UPDATE SET kind=excluded.kind,
+    file_id=excluded.file_id,seconds=excluded.seconds,created=excluded.created,
+    input_media_type=excluded.input_media_type""",
+    (uid,kind,fid,seconds,now(),file_kind))
    c.execute("UPDATE users SET state=? WHERE id=?",("ai:"+kind+":caption",uid))
    return enqueue(c,uid,"📝 لطفاً دستور ویرایش تصویر یا ویدیو را با یک پیام متنی ارسال کنید.")
  else:
   record=c.execute("SELECT * FROM ai_media_drafts WHERE uid=? AND kind=?",(uid,kind)).fetchone()
   if not record or now()-record["created"]>900:raise ValueError("فایل قبلی منقضی شد؛ دوباره ارسال کنید")
   fid,seconds=record["file_id"],record["seconds"]
+  file_kind=record["input_media_type"]
   prompt=(message.get("text") or "").strip()
  if not 4<=len(prompt)<=1200:raise ValueError("توضیح تولید یا ویرایش باید بین ۴ تا ۱۲۰۰ حرف باشد")
  c.execute("""INSERT OR IGNORE INTO ai_media_jobs
-   (uid,update_id,kind,prompt,file_id,input_seconds,created,updated)
-   VALUES(?,?,?,?,?,?,?,?)""",(uid,update_id,kind,prompt,fid,seconds,now(),now()))
+   (uid,update_id,kind,prompt,file_id,input_seconds,created,updated,input_media_type)
+   VALUES(?,?,?,?,?,?,?,?,?)""",(uid,update_id,kind,prompt,fid,seconds,now(),now(),file_kind))
  c.execute("DELETE FROM ai_media_drafts WHERE uid=?",(uid,))
  c.execute("UPDATE users SET state='' WHERE id=?",(uid,))
  return enqueue(c,uid,"✅ درخواست "+("تصویر" if kind=="image" else "ویدیو")+
@@ -205,6 +217,11 @@ def _send_file(c,uid,kind,raw):
  with sales.telegram_open(req,timeout=45) as response:
   payload=json.loads(response.read(6000))
   if not payload.get("ok"):raise ValueError("ارسال فایل نتیجه به تلگرام ناموفق بود")
+  result=payload.get("result") or {}
+  if kind=="image":
+   photos=result.get("photo") or []
+   return photos[-1].get("file_id","") if photos else ""
+  return (result.get("video") or {}).get("file_id","")
 
 def _after_delivery(c,row):
  import sales
@@ -244,7 +261,8 @@ def run_once():
      c.execute("UPDATE ai_media_jobs SET status='polling',provider_id=?,updated=? WHERE id=?",
        (value,sales.now(),item["id"]))
      return "video_submitted"
-    _send_file(c,item["uid"],"image",value)
+    output_id=_send_file(c,item["uid"],"image",value)
+    if isinstance(output_id,str) and output_id:c.execute("UPDATE ai_media_jobs SET output_file_id=? WHERE id=?",(output_id,item["id"]))
     _after_delivery(c,item)
     return "image_done"
    import ai_models,ai_fal_video
@@ -255,11 +273,15 @@ def run_once():
      ai_models.provider_key(c,"fal"),info["request_id"])
    if status=="pending":return "video_processing"
    raw=ai_fal_video.download_video(video_url,MAX_MEDIA)
-   _send_file(c,item["uid"],"video",raw)
+   output_id=_send_file(c,item["uid"],"video",raw)
+   if isinstance(output_id,str) and output_id:c.execute("UPDATE ai_media_jobs SET output_file_id=? WHERE id=?",(output_id,item["id"]))
    _after_delivery(c,item)
    return "video_done"
-  except Exception:
-   c.execute("UPDATE ai_media_jobs SET status='failed',updated=? WHERE id=?",(sales.now(),item["id"]))
+  except Exception as exc:
+   error=(type(exc).__name__+":"+str(exc))[:180]
+   error=__import__("re").sub(r"https?://\S+","[url]",error)
+   c.execute("UPDATE ai_media_jobs SET status='failed',error_code=?,updated=? WHERE id=?",
+             (error,sales.now(),item["id"]))
    sales.enqueue(c,item["uid"],"⚠️ پردازش درخواست رسانه موفق نبود؛ سهمیه اشتراک یا امتیازی از شما کسر نشد.",
       key="ai-media-error:"+str(item["update_id"]))
    return "media_failed"
