@@ -160,6 +160,16 @@ class ChannelManagerTests(unittest.TestCase):
   cm._stage_approved(self.c)
   self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],1)
 
+ def test_drafts_only_cover_remaining_daily_slots(self):
+  self.now_mock.return_value=int(dt.datetime(2026,11,2,12,0,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
+  self.assertTrue(cm._make_one_draft(self.c))
+  self.assertEqual(self.posts()[0]["slot"],1)
+  self.assertTrue(cm._make_one_draft(self.c))
+  self.assertEqual(self.posts()[1]["slot"],2)
+  self.assertFalse(cm._make_one_draft(self.c))
+  self.now_mock.return_value=int(dt.datetime(2026,11,2,21,0,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
+  self.assertFalse(cm._make_one_draft(self.c))
+
  def test_cannot_post_without_recent_verification(self):
   self.c.execute("UPDATE channel_manager_config SET verified_at=0")
   self.assertFalse(cm._make_one_draft(self.c))
