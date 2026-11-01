@@ -783,6 +783,10 @@ def tick():
         OR o.dedupe LIKE 'channel-post:%'
         OR o.dedupe LIKE 'channel-reply:%')
     ORDER BY o.id LIMIT 15""",(now(),int(bool(s["require_contact"])))).fetchall():
+   # A paused or unverified channel must not be published by the shared
+   # Telegram outbox, even when its message was queued earlier.
+   if row["dedupe"].startswith(("channel-post:","channel-reply:")) and not channel_manager._posting_ready(c):
+    continue
    try:
     p=json.loads(row["payload"])
     if row["method"]=="file":upload(s,row["chat"],p["filename"],p["content"].encode())
