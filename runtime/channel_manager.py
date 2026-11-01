@@ -137,7 +137,10 @@ def group_message(c,up):
  username=cfg["bot_username"]
  mentioned=bool(username and re.search(r"(?<!\w)@"+re.escape(username)+r"\b",question,re.I))
  replied=(m.get("reply_to_message") or {}).get("from") or {}
- direct=replied.get("id")==cfg["bot_id"] and cfg["bot_id"]>0
+ is_question=(("?" in question or "؟" in question) or
+    question.casefold().startswith(("چرا","چطور","چگونه","آیا","چیه","چیست",
+     "کجا","چه ","میشه","می‌شه","میتونم","می‌تونم","how ","what ","why ")))
+ direct=(replied.get("id")==cfg["bot_id"] and cfg["bot_id"]>0 and is_question)
  if not (mentioned or direct):return False
  cleaned=re.sub(r"(?i)@"+re.escape(username), "",question).strip() if username else question
  if len(cleaned)<3:return False
