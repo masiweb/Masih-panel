@@ -454,7 +454,10 @@ def finalize_episode(c,title_id,season,episode):
 
     # Exactly one announcement per movie or episode, after its complete quality
     # set is ready. Existing published items never re-notify for later variants.
-    if not was_published and not title["silent_import"]:
+    # Film2Media catalogue jobs previously forced silent_import=1.
+    # Respect the explicit one-card-per-completed-title notification policy
+    # without replaying notifications for an already published title.
+    if not was_published and (not title["silent_import"] or title["source"]=="film2media"):
         media_library.broadcast_new_media(c,mid)
     return mid
 
@@ -570,8 +573,10 @@ def process_one(c, config):
     retry_missing_covers(c,config,cfg,storage)
     job=c.execute("""SELECT j.variant_id,v.source_url,v.send_method,j.attempts
        FROM film_import_jobs j JOIN film_variants v ON v.id=j.variant_id
-       WHERE j.state='pending' OR (j.state='failed' AND j.attempts<3)
-       ORDER BY CASE WHEN j.state='failed' THEN 0 ELSE 1 END,j.updated,j.variant_id LIMIT 1""").fetchone()
+       WHERE j.state='pending' OR
+          (j.state='failed' AND j.attempts<8 AND j.updated<=?)
+       ORDER BY CASE WHEN j.state='failed' THEN 0 ELSE 1 END,j.updated,j.variant_id LIMIT 1""",
+       (now()-600,)).fetchone()
     if not job:return "queue_empty"
     vid=job["variant_id"]
     c.execute("UPDATE film_import_jobs SET state='processing',updated=? WHERE variant_id=?",(now(),vid));c.commit()
@@ -607,7 +612,7 @@ def process_one(c, config):
         stored_error=detail if detail.startswith("SKIPPED_SIZE_LIMIT:") else type(ex).__name__+':'+detail
       previous=c.execute("SELECT attempts FROM film_import_jobs WHERE variant_id=?",(vid,)).fetchone()
       attempts=(int(previous["attempts"]) if previous else 0)+1
-      if state=="failed" and attempts>=3:
+      if state=="failed" and attempts>=8:
         state="blocked"
         stored_error="FAILED_AFTER_RETRIES:"+stored_error
       context=c.execute("SELECT title_id,season,episode FROM film_variants WHERE id=?",(vid,)).fetchone()
@@ -631,10 +636,10 @@ def recover_uploaded(c):
        (now(),now()-3600))
     exhausted=c.execute("""SELECT DISTINCT v.title_id,v.season,v.episode
       FROM film_import_jobs j JOIN film_variants v ON v.id=j.variant_id
-      WHERE j.state='failed' AND j.attempts>=3""").fetchall()
+      WHERE j.state='failed' AND j.attempts>=8""").fetchall()
     c.execute("""UPDATE film_import_jobs SET state='blocked',
       last_error=CASE WHEN last_error='' THEN 'FAILED_AFTER_RETRIES' ELSE 'FAILED_AFTER_RETRIES:'||last_error END,
-      updated=? WHERE state='failed' AND attempts>=3""",(now(),))
+      updated=? WHERE state='failed' AND attempts>=8""",(now(),))
     c.commit()
     for episode in exhausted:
         c.execute("BEGIN IMMEDIATE")
