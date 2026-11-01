@@ -145,6 +145,21 @@ class ChannelManagerTests(unittest.TestCase):
   self.assertEqual(output["reply_parameters"]["message_id"],2)
   self.assertEqual(output["chat_id"],-1009999999999)
 
+ def test_pause_cancels_unsent_post_without_losing_admin_approval(self):
+  cm._make_one_draft(self.c)
+  post=self.posts()[0]
+  cm.admin_callback(self.c,101,"ch:approve:"+str(post["id"]))
+  self.now_mock.return_value=int(dt.datetime(2026,11,2,10,10,tzinfo=ZoneInfo(cm.TIMEZONE)).timestamp())
+  cm._stage_approved(self.c)
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],1)
+  cm.admin_callback(self.c,101,"ch:pause")
+  self.assertEqual(cm.config(self.c)["enabled"],0)
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],0)
+  self.assertEqual(self.posts()[0]["status"],"approved")
+  cm.admin_callback(self.c,101,"ch:resume")
+  cm._stage_approved(self.c)
+  self.assertEqual(self.c.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],1)
+
  def test_cannot_post_without_recent_verification(self):
   self.c.execute("UPDATE channel_manager_config SET verified_at=0")
   self.assertFalse(cm._make_one_draft(self.c))
