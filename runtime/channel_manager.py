@@ -278,9 +278,10 @@ def tick(c):
   audit(c,"channel_reply_failed",type(exc).__name__)
 
 def menu(c,uid):
- from sales import enqueue
+ from sales import enqueue,settings
  _admin(c,uid)
  cfg=config(c)
+ selected_model=settings(c).get('channel_ai_model') or settings(c).get('ai_default_text_model') or 'oa-mini'
  day=local_day()
  rows=c.execute("""SELECT id,slot,status FROM channel_manager_posts
   WHERE day=? ORDER BY slot""",(day,)).fetchall()
@@ -290,6 +291,7 @@ def menu(c,uid):
        +"کانال: "+(cfg["channel_id"] or "تنظیم نشده")+
        "\nگروه گفت‌وگو: "+(str(cfg["discussion_id"]) if cfg["discussion_id"] else "متصل نشده")+
        "\nمجوز انتشار: "+("✅ بررسی‌شده" if cfg["verified_at"]>now()-86400 else "⚠️ نیازمند بررسی")+
+       "\nمدل تولید متن: "+str(selected_model)+
        "\nانتشار: "+("فعال" if cfg["enabled"] else "متوقف")+
        "\nسقف روزانه: ۳ پست | تأیید هر پست: اجباری"+
        "\nپاسخ AI: فقط منشن یا پاسخ مستقیم به ربات"+
@@ -298,7 +300,8 @@ def menu(c,uid):
              "ch:view:"+str(r["id"]))] for r in rows]
  buttons.extend([
   [("🔗 تنظیم کانال","ch:config"),("✅ بررسی مجوزها","ch:verify")],
-  [("📋 پیش‌نویس‌ها","ch:pending"),("🧪 ساخت پیش‌نویس","ch:draft")],
+  [("🧠 انتخاب مدل AI","ch:models")],
+  [("📋 پیش‌نویس‌ها","ch:pending"),("🧪 بررسی ساخت پیش‌نویس","ch:draft")],
   [("⏸ توقف" if cfg["enabled"] else "▶️ فعال‌سازی","ch:pause" if cfg["enabled"] else "ch:resume")],
   [("↩️ مدیریت","a:home")]])
  enqueue(c,uid,text,buttons,quick_nav=False)
@@ -311,6 +314,23 @@ def admin_callback(c,uid,cmd):
  ident=int(parts[2]) if len(parts)>2 and parts[2].isdigit() else 0
  cfg=config(c)
  if op=="home":return menu(c,uid)
+ if op=="models":
+  import ai_models
+  models=[m for m in ai_models.catalog(c)
+    if m["modality"]=="text" and m["active"] and m["configured"]]
+  buttons=[[("🧠 "+m["title"][:40],"ch:model:"+m["model_key"])] for m in models[:15]]
+  buttons.append([("↩️ مرکز کانال","ch:home")])
+  return enqueue(c,uid,"مدل متنی برای تولید محتوا را انتخاب کنید."+
+     ("" if models else "\nهیچ مدل متنی با API فعال تنظیم نشده است؛ به مدیریت AI مراجعه کنید."),buttons)
+ if op=="model":
+  import ai_models
+  from sales import put
+  key=cmd.split(":",2)[2]
+  model=ai_models.select(c,key,"text")
+  if not ai_models.credentials(c).get(model["provider"]):
+   raise ValueError("کلید API این مدل تنظیم نشده است")
+  put(c,"channel_ai_model",key)
+  return menu(c,uid)
  if op=="config":
   c.execute("UPDATE users SET state='ch:config' WHERE id=?",(uid,))
   return enqueue(c,uid,"آیدی عمومی کانال مانند @MasihaChannel یا شناسه عددی -100... را ارسال کنید.\n"
