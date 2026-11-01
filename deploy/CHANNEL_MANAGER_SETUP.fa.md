@@ -13,19 +13,17 @@
 
 ## استقرار روی سرور (با دسترسی مدیر سیستم)
 
-بعد از به‌روزرسانی فایل‌های برنامه در /opt/masiha-vpn-extension:
+بعد از دریافت نسخه جدید پروژه در سرور اصلی، از **ریشه مخزن پروژه** نصب را اجرا کنید. اسکریپت فایل‌های قبلی را پشتیبان می‌گیرد و پیش از اعمال تغییرات، بررسی نحوی و تست‌های مستقل را اجرا می‌کند.
 
-\`\`\`bash
-sudo install -m 0644 deploy/masiha-channel-manager.service /etc/systemd/system/
-sudo install -m 0644 deploy/masiha-channel-manager.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now masiha-channel-manager.timer
-sudo systemctl restart masiha-vpn-extension.service
+~~~bash
+cd /root/Masih-panel
+git pull --ff-only origin main
+sudo bash deploy/install-channel-manager.sh
 sudo systemctl status masiha-channel-manager.timer --no-pager
 sudo journalctl -u masiha-channel-manager.service -n 40 --no-pager
-\`\`\`
+~~~
 
-سرویس و تایمر صرفاً پیش‌نویس و صف پاسخ را مدیریت می‌کنند. ارسال پیام‌ها با همان outbox و worker اصلی ربات انجام می‌شود.
+سرویس زمان‌بند جدا از پردازشگر اصلی تلگرام اجرا می‌شود تا درخواست‌های کاربران در زمان تولید محتوای AI کند نشود. انتشار تا زمان تنظیم و تأیید کانال همچنان غیرفعال می‌ماند.
 
 ## قوانین
 
