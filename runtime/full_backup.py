@@ -134,6 +134,8 @@ def valid_link(path, target):
         if target != "/etc/nginx/sites-available/masiha-vpn":
             die("Unexpected Nginx symlink target")
         return
+    if path == "/etc/ppp/chap-secrets" and target == "/etc/masiha-vpn-extension/ipsec/chap-secrets":
+        return
     if not path.startswith("/etc/letsencrypt/"):
         die("Unexpected symlink in backup: " + path)
     resolved = os.path.normpath(os.path.join(os.path.dirname(path), target))
