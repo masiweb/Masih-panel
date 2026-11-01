@@ -60,7 +60,7 @@ def stage_batch(run_id):
     for row,entry in zip(rows,entries):
         try:
             entry["rights_ok"]=True
-            entry["silent_import"]=True
+            entry["silent_import"]=False
             with fi.connect() as c:
                 c.execute("BEGIN IMMEDIATE")
                 try:
