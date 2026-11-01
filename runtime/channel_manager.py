@@ -247,6 +247,15 @@ def _reply_once(c):
 def tick(c):
  """One draft and one reply at most per run; posts remain approval-gated."""
  _complete_outbox(c)
+ cfg=config(c)
+ # Recheck Telegram privileges at least twice a day. A network outage pauses
+ # sending without resetting editorial approvals or publishing a draft.
+ if cfg["enabled"] and cfg["channel_id"] and cfg["verified_at"]<=now()-43200:
+  try:verify(c)
+  except (RuntimeError,ValueError,TimeoutError) as exc:
+   from sales import audit
+   audit(c,"channel_permissions_unavailable",type(exc).__name__)
+   return
  if not _posting_ready(c):return
  _stage_approved(c)
  # Failed provider calls do not acknowledge drafts or questions.
@@ -306,6 +315,7 @@ def admin_callback(c,uid,cmd):
  if op=="resume":
   if not cfg["verified_at"] or cfg["verified_at"]<=now()-86400:
    raise ValueError("قبل از فعال‌سازی، مجوز کانال را دوباره بررسی کنید")
+  _model(c)  # Validate an active text model and configured API credentials.
   c.execute("UPDATE channel_manager_config SET enabled=1 WHERE id=1")
   return menu(c,uid)
  if op=="pause":
