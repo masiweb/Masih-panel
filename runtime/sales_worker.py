@@ -788,7 +788,8 @@ def tick():
         OR o.dedupe LIKE 'new-user:%'
         OR o.dedupe LIKE 'channel-post:%'
         OR o.dedupe LIKE 'channel-reply:%'
-        OR o.dedupe LIKE 'channel-review:%')
+        OR o.dedupe LIKE 'channel-review:%'
+        OR o.dedupe LIKE 'channel-private-ai:%')
     ORDER BY o.id LIMIT 15""",(now(),int(bool(s["require_contact"])))).fetchall():
    # A paused or unverified channel must not be published by the shared
    # Telegram outbox, even when its message was queued earlier.
