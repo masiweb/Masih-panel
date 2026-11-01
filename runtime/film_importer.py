@@ -432,8 +432,10 @@ def process_one(c, config):
         c.rollback()
         # Never expose secrets or direct URLs in error logs.
         state="blocked" if isinstance(ex,ValueError) else "failed"
+        error=(f"HTTPError:{ex.code}:source temporarily unavailable"
+               if isinstance(ex,HTTPError) else type(ex).__name__)
         c.execute("""UPDATE film_import_jobs SET state=?,attempts=attempts+1,
-           last_error=?,updated=? WHERE variant_id=?""",(state,type(ex).__name__,now(),vid))
+           last_error=?,updated=? WHERE variant_id=?""",(state,error,now(),vid))
         c.commit()
         return state+":"+type(ex).__name__
 
