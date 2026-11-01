@@ -51,6 +51,7 @@ def main(c,uid):
   [("📦 سفارش‌ها","a:orders"),("🛍 پلن‌ها و تخفیف","a:catalog")],
   [("🤖 مدیریت هوش مصنوعی","a:aihub"),("🎬 مدیریت رسانه","a:mediahub")],
   [("💰 امور مالی","a:financehub"),("🛟 پشتیبانی و پیام‌ها","a:supporthub")],
+  [("📣 مرکز هوشمند کانال","ch:home")],
   [("⚙️ تنظیمات","a:settingshub"),("🏠 منوی اصلی","home")]])
 def _order_time(timestamp):
  if not timestamp:return "ثبت نشده"
@@ -543,6 +544,7 @@ def callback(c,uid,cmd):
    [("🎬 آرشیو فیلم و سریال","med:film")],
    [("🎵 آرشیو موزیک","med:music")],
    [("🚩 گزارش‌های رسانه","medadmin:reports")],
+   [("📣 مرکز هوشمند کانال","ch:home")],
    [("⚙️ مدیریت پیشرفته در وب‌پنل","a:web")],
    [("↩️ مدیریت","a:home")]])
  if op=="financehub":
