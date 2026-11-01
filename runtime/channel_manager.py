@@ -135,14 +135,21 @@ def group_message(c,up):
  question=(m.get("text") or "").strip()
  if not 3<=len(question)<=900:return False
  username=cfg["bot_username"]
- mentioned=bool(username and re.search(r"(?<!\w)@"+re.escape(username)+r"\b",question,re.I))
+ ask_command=bool(username and re.search(
+  r"(?<!\w)/(?:ask|help)@"+re.escape(username)+r"\b",question,re.I))
+ mentioned=bool(username and re.search(
+  r"(?<!\w)@"+re.escape(username)+r"\b",question,re.I))
  replied=(m.get("reply_to_message") or {}).get("from") or {}
  is_question=(("?" in question or "؟" in question) or
     question.casefold().startswith(("چرا","چطور","چگونه","آیا","چیه","چیست",
      "کجا","چه ","میشه","می‌شه","میتونم","می‌تونم","how ","what ","why ")))
  direct=(replied.get("id")==cfg["bot_id"] and cfg["bot_id"]>0 and is_question)
- if not (mentioned or direct):return False
- cleaned=re.sub(r"(?i)@"+re.escape(username), "",question).strip() if username else question
+ if not (mentioned or ask_command or direct):return False
+ cleaned=question
+ if username:
+  cleaned=re.sub(r"(?i)/(?:ask|help)@"+re.escape(username)+r"\b", "",cleaned)
+  cleaned=re.sub(r"(?i)@"+re.escape(username)+r"\b", "",cleaned)
+ cleaned=cleaned.strip()
  if len(cleaned)<3:return False
  timestamp=now()
  # Read-only quotas per user/group; no AI call in Telegram polling handler.
