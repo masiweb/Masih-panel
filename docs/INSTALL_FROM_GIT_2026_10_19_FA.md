@@ -10,22 +10,26 @@
 
 ## نصب با Git
 
-این دستورات را با SSH روی **سرور تازه** اجرا کنید:
+این دستورات را با SSH روی **سرور تازه** اجرا کنید. تا قبل از ادغام انتشار جدید در main، شاخه upgrade/3x-ui-v3.11.0-migration را Clone کنید. کلون Git اطلاعات کاربران یا کلیدهای سرور قبلی را منتقل نمی‌کند:
 
     sudo apt-get update
     sudo apt-get install -y git ca-certificates curl
-    git clone https://github.com/masiweb/Masih-panel.git
+    git clone --branch upgrade/3x-ui-v3.11.0-migration --single-branch https://github.com/masiweb/Masih-panel.git
     cd Masih-panel
     sudo bash deploy/install-ubuntu-24.04.sh
 
-دامنه (مثل vpn.example.com) و ایمیل Let's Encrypt را در ترمینال وارد کنید. روش غیرتعاملی:
+برای نصب بدون قطع سرویس فعلی از زیردامنه موقت استفاده کنید که DNS A آن به IP سرور جدید اشاره کند (مثلاً stage.example.com). اگر دامنه فعلی هنوز به سرور قبلی اشاره دارد، استفاده از همان دامنه در نصب جدید باعث شکست چالش Let’s Encrypt می‌شود. بعد از بازیابی، تغییر DNS و دامنه/گواهی را در مرحله Cutover انجام دهید.
 
-    sudo env DOMAIN="vpn.example.com" EMAIL="admin@example.com" \
+دامنه (مثل stage.example.com) و ایمیل Let’s Encrypt را در ترمینال وارد کنید. روش غیرتعاملی:
+
+    sudo env DOMAIN="stage.example.com" EMAIL="admin@example.com" \
       PANEL_ADMIN_USER="admin" bash deploy/install-ubuntu-24.04.sh
 
 **مسیر پنل در این نسخه باید /xui/ باشد.** مسیر سفارشی سایر APIها را می‌شکند و نصب‌کننده آن را رد می‌کند.
 
-## نسخه پایه و ابزار ساخت\n\n- upstream: MHSanaei/3x-ui نسخه v3.11.0، commit c621ba9014a6aa21fd7c9ecf45655e44e24ebf13.\n- Go: 1.27.3؛ Node.js: 26.13.0 (مطابق go.mod و engines فرانت‌اند).\n- Patch شامل ۳۳ فایل سفارشی است. ساخت React/TypeScript و Go پیش از جایگزینی باینری انجام می‌شود.\n\n## اجزایی که نصب می‌شوند
+## نسخه پایه و ابزار ساخت
+
+- upstream: MHSanaei/3x-ui نسخه v3.11.0، commit c621ba9014a6aa21fd7c9ecf45655e44e24ebf13.\n- Go: 1.27.3؛ Node.js: 26.13.0 (مطابق go.mod و engines فرانت‌اند).\n- Patch شامل ۳۳ فایل سفارشی است. ساخت React/TypeScript و Go پیش از جایگزینی باینری انجام می‌شود.\n\n## اجزایی که نصب می‌شوند
 
 ۱. **پنل x-ui اختصاصی بر پایه نسخه پین‌شده 3.11.0 سنایی**، به‌همراه ۱۴ اینباند نمونه Xray، HTTPS و Subscription. نسخه پایه رسمی 3.11.0 است و Patch اختصاصی Masiha روی آن اعمال می‌شود؛ برای امکانات مخصوص صفحه اشتراک از باینری اصلاح‌شده استفاده می‌شود.
 
