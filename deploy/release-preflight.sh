@@ -3,20 +3,20 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-PIN='7ef22f94c950ff09f0870e2295fa65ad5968742c'
+PIN='c621ba9014a6aa21fd7c9ecf45655e44e24ebf13'
 echo "=== Masiha release preflight ==="
 for f in deploy/install-ubuntu-24.04.sh deploy/finalize-ubuntu-24.04.sh deploy/finish-install.sh deploy/install-sidecar.sh deploy/verify-sidecar-menu.sh deploy/build-3x-ui.sh deploy/verify-install.sh deploy/repair-panel-login.sh; do
   bash -n "$f"
   echo "Bash syntax OK: $f"
 done
-for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/social.py runtime/test_social.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/masiha-ppp-hook.sh runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/web-backup-worker.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
+for f in runtime/sales.py runtime/sales_worker.py runtime/sales_bot_admin.py runtime/gamification.py runtime/entertainment.py runtime/media_library.py runtime/social.py runtime/test_social.py runtime/test_media_library.py runtime/test_sales.py runtime/unified.py runtime/test_unified.py runtime/full_backup.py runtime/test_tunnels.py deploy/bootstrap-inbounds.py deploy/extend-inbounds.py deploy/benchmark-inbounds.py deploy/full-backup.py deploy/web-backup-worker.py deploy/test_full_backup.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/check-panel-login.py deploy/test_check_panel_login.py; do
   python3 - "$f" <<'PY'
 import ast,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
  ast.parse(handle.read(),filename=sys.argv[1])
 PY
 done
-sh -n runtime/test-oc-route.sh
+sh -n runtime/test-oc-route.sh runtime/masiha-ppp-hook.sh
 echo "Python syntax and portable tunnel route shell syntax OK"
 echo "=== Isolated Xray presets test (no server changes) ==="
 python3 -m unittest -q sidecar/test_dynamic_auth.py
