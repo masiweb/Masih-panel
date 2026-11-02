@@ -56,6 +56,27 @@ class GitInstallerTests(unittest.TestCase):
         self.assertIn('bash "$REPO_ROOT/deploy/finalize-ubuntu-24.04.sh"', s)
         self.assertNotIn("MASIHA VPN INSTALLED SUCCESSFULLY", s)
 
+    def test_current_pinned_upstream_toolchain_and_full_backup_source(self):
+        install = file("deploy/install-ubuntu-24.04.sh")
+        build = file("deploy/build-3x-ui.sh")
+        patch = file("deploy/3x-ui.patch")
+        self.assertIn('PIN="c621ba9014a6aa21fd7c9ecf45655e44e24ebf13"', build)
+        self.assertIn("go1.27.3.linux-amd64.tar.gz", install)
+        self.assertIn("65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40", install)
+        self.assertIn("node-v26.13.0-linux-x64.tar.xz", install)
+        self.assertIn("d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997", install)
+        self.assertIn("source-patch.sha256", build)
+        self.assertIn("frontend-source.sha256", build)
+        self.assertIn("frontend_source_hash()", build)
+        for package in ("strongswan", "strongswan-swanctl", "xl2tpd", "ppp",
+                        "libpcre2-8-0", "iproute2", "ffmpeg",
+                        "libchromaprint-tools", "python3-numpy", "python3-scipy"):
+            self.assertIn(package, install)
+        self.assertIn('install -m 0644 "$REPO_ROOT/runtime/full_backup.py"', install)
+        self.assertEqual(file("runtime/full_backup.py"), file("deploy/full-backup.py"))
+        self.assertIn("masihaSelfUpdateDisabledMessage", patch)
+        self.assertIn("Update through the Masiha Git deployment process", patch)
+
     def test_no_early_success_until_sidecar(self):
         finalize = file("deploy/finalize-ubuntu-24.04.sh")
         finish = file("deploy/finish-install.sh")
