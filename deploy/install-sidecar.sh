@@ -106,6 +106,27 @@ fi
 
 NGINX=/etc/nginx/sites-available/masiha-vpn
 # Upgrade existing installations; keep all unrelated routing and SSL untouched.
+# Fresh installs have no independent sidecar Nginx block yet.
+# Inject the full, reviewed route bundle BEFORE applying legacy upgrades
+# that assume those stable anchors already exist.
+if ! grep -q 'MASIHA-SIDECAR BEGIN' "$NGINX"; then
+  cp -a "$NGINX" "$NGINX.before-masiha-sidecar.$(date -u +%Y%m%dT%H%M%SZ).bak"
+  python3 - "$NGINX" "$SIDE/nginx-locations.conf" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]);s=p.read_text();extra=Path(sys.argv[2]).read_text()
+assert s.count('  location /sub/ {')==1
+s=s.replace('  location /sub/ {',extra.rstrip()+'\n  location /sub/ {',1)
+if 'sub_filter "</body>"' not in s:
+    assert s.count('    proxy_set_header Upgrade $http_upgrade;')==1
+    s=s.replace('    proxy_set_header Upgrade $http_upgrade;',
+    '    proxy_set_header Accept-Encoding "";\n'
+    '    sub_filter_once on;\n'
+    '    sub_filter "</body>" \'<script src="/masiha-ui/nav.js" data-cfasync="false"></script></body>\';\n'
+    '    proxy_set_header Upgrade $http_upgrade;',1)
+p.write_text(s)
+PY
+fi
 python3 - "$NGINX" <<'PYSESSION'
 from pathlib import Path
 import sys
@@ -173,24 +194,6 @@ if old in s:
 elif new not in s:
     raise SystemExit("Missing native Masiha API location; manual review required")
 PYPROFILES
-if ! grep -q 'MASIHA-SIDECAR BEGIN' "$NGINX"; then
-  cp -a "$NGINX" "$NGINX.before-masiha-sidecar.$(date -u +%Y%m%dT%H%M%SZ).bak"
-  python3 - "$NGINX" "$SIDE/nginx-locations.conf" <<'PY'
-from pathlib import Path
-import sys
-p=Path(sys.argv[1]);s=p.read_text();extra=Path(sys.argv[2]).read_text()
-assert s.count('  location /sub/ {')==1
-s=s.replace('  location /sub/ {',extra+'  location /sub/ {',1)
-if 'sub_filter "</body>"' not in s:
-    assert s.count('    proxy_set_header Upgrade $http_upgrade;')==1
-    s=s.replace('    proxy_set_header Upgrade $http_upgrade;',
-    '    proxy_set_header Accept-Encoding "";\n'
-    '    sub_filter_once on;\n'
-    '    sub_filter "</body>" \'<script src="/masiha-ui/nav.js" data-cfasync="false"></script></body>\';\n'
-    '    proxy_set_header Upgrade $http_upgrade;',1)
-p.write_text(s)
-PY
-fi
 # Older fresh installers left an exact backup import that shadowed the
 # sidecar's authenticated prefix location. Correct that legacy proxy safely.
 python3 - "$NGINX" <<'PYN'
