@@ -50,7 +50,7 @@
     sudo bash deploy/finish-install.sh --resume
 
 راهنمای کامل: [نصب از گیت](docs/INSTALL_FROM_GIT_2026_10_19_FA.md).
-این نصب در ابتدا از باینری سفارشی پین‌شده سنایی 3.8.5 استفاده می‌کند؛ پنل رسمی 3.10.2 نیست. منو و بخش مستقل مدیریت مسیحا در آپدیت رسمی حذف نمی‌شوند، ولی route اختصاصی پروفایل‌های صفحه اشتراک هنوز محدودیت سازگاری دارد.
+نسخه فعلی بر پایه upstream 3x-ui v3.11.0 و commit c621ba9014a6aa21fd7c9ecf45655e44e24ebf13 است؛ Go 1.27.3 و Node.js 26.13.0 استفاده می‌شوند. دکمه self-update رسمی پنل عمداً مسدود است، چون باینری رسمی صفحات/APIهای native مسیحا را حذف می‌کند. منوی sidecar مستقل باقی می‌ماند؛ ارتقا فقط از Git و build اختصاصی انجام شود.
 
 ---
 
@@ -62,13 +62,13 @@ Masiha VPN Manager is deployed as a **patched SANAei 3x-ui** with native Xray in
 
 **[چک‌لیست انتشار و تست نصب روی سرور جدید](docs/NEW_SERVER_RELEASE_FA.md)**
 
-**[بکاپ کامل رمزگذاری‌شده و بازیابی انتقال به سرور جدید](docs/FULL_BACKUP_RESTORE_FA.md)** — سه دیتابیس، کلاینت/اینباند/نود/ترافیک، ربات و پرداخت‌ها، OpenVPN/OpenConnect، گواهی و تنظیمات سرور؛ شامل صحت‌سنجی و تست بازیابی ایزوله.
+**[بکاپ کامل رمزگذاری‌شده و بازیابی انتقال به سرور جدید](docs/FULL_BACKUP_RESTORE_FA.md)** — سه دیتابیس، تمام VPNهای فعال، SSTP/IPsec/L2TP، هر دو OpenVPN، Local Telegram Bot API و cache رسانه، گواهی‌ها، systemd و تست بازیابی ایزوله. بکاپ سبک پنل وب جایگزین نسخه کامل CLI نیست.
 
 **[۶ روش آزمایش سرعت Shadowsocks و VLESS + رفع خطای SS2022](docs/INBOUND_SPEED_TEST_FA.md)**
 
 **[راهنمای کتابخانه موزیک/فیلم، پلی‌لیست و گیمیفیکیشن تلگرام](docs/MEDIA_LIBRARY_FA.md)**
 
-## Deployment source of truth (2026-10-11)
+## Deployment source of truth (2026-11-02)
 
 - `deploy/3x-ui.patch`: patch for 30 files over upstream 3x-ui commit `7ef22f94c950ff09f0870e2295fa65ad5968742c`.
 - `runtime/`: live Python extension, shared quota/expiry accounting, OpenVPN and OpenConnect provisioning, Telegram sales worker, safe test scripts.
