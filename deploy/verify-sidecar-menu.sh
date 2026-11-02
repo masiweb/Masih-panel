@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOMAIN="$(python3 -c 'import json;print(json.load(open("/etc/masiha-vpn-extension/config.json"))["domain"])')"
-NODE=/opt/masiha-vpn-toolchains/node-v24.21.0-linux-x64/bin/node
+NODE=/opt/masiha-vpn-toolchains/node-v26.13.0-linux-x64/bin/node
 
 test -s /var/www/masiha-ui/nav.js
 test -s /var/www/masiha-ui/nav.css
