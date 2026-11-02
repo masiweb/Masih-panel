@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ -f /etc/masiha-vpn-extension/.finalize-in-progress ]]; then
   echo "INCOMPLETE Masiha installation detected (safe resume marker present)." >&2
   echo "Do not rerun the fresh installer; this would risk existing SSL/CA state." >&2
-  echo "Continue with: sudo bash $REPO_ROOT/deploy/finalize-ubuntu-24.04.sh --resume" >&2
+  echo "Continue with: sudo bash deploy/resume-interrupted-install.sh" >&2
   exit 3
 fi
 # Interactive prompts are required when values are not supplied via environment.
@@ -198,6 +198,14 @@ done
 # it without +x makes the tunnel appear connected but prevents default routing.
 install -m 0755 "$REPO_ROOT/runtime/test-oc-route.sh" /opt/masiha-vpn-extension/test-oc-route.sh
 install -m 0755 "$REPO_ROOT/runtime/vpn-account-hook.sh" /opt/masiha-vpn-extension/vpn-account-hook.sh
+# Every shipped Python runtime dependency must be present on a new server.
+# Several media modules (film_importer, discovery and uploader) were omitted
+# from earlier fixed-name install loops; install them all deterministically.
+for module in "$REPO_ROOT"/runtime/*.py; do
+  install -m 0644 "$module" "/opt/masiha-vpn-extension/$(basename "$module")"
+done
+install -d -m 0755 /opt/masiha-vpn-extension/deploy
+install -m 0644 "$REPO_ROOT/deploy/recover-start-prompts.py"   /opt/masiha-vpn-extension/deploy/recover-start-prompts.py
 # Root-only runtime configuration; account DBs, bot tokens and passwords stay OFF Git.
 python3 - "$DOMAIN" "$PANEL_PATH" <<'PY'
 import json,sys,pathlib
