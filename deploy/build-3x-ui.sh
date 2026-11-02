@@ -6,8 +6,8 @@ set -Eeuo pipefail
 trap 'rc=$?; echo "ERROR: 3x-ui build script stopped at line ${LINENO} (exit code $rc)." >&2' ERR
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPSTREAM="https://github.com/MHSanaei/3x-ui.git"
-PIN="7ef22f94c950ff09f0870e2295fa65ad5968742c"
-BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-20261011}"
+PIN="c621ba9014a6aa21fd7c9ecf45655e44e24ebf13"
+BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-v3.11.0}"
 PATCH="$REPO_ROOT/deploy/3x-ui.patch"
 SRC="$BUILD_ROOT/src"
 command -v git >/dev/null
@@ -122,10 +122,23 @@ run_npm_ci_with_fallback() {
   echo "Check $BUILD_ROOT/npm-ci-attempt-*.log, then retry with a reachable MASIHA_NPM_REGISTRY." >&2
   return 1
 }
+frontend_source_hash() {
+  (
+    cd "$SRC/frontend"
+    {
+      find src public -type f -print0 | sort -z | xargs -0 -r sha256sum
+      sha256sum package.json package-lock.json vite.config.js tsconfig.json index.html
+    } | sha256sum | awk '{print $1}'
+  )
+}
+FRONTEND_SOURCE_HASH="$(frontend_source_hash)"
 if [[ -s internal/web/dist/index.html && -d frontend/node_modules &&
       -x frontend/node_modules/.bin/vite &&
+      -x frontend/node_modules/.bin/tsc &&
+      -s "$BUILD_ROOT/frontend-source.sha256" &&
+      "$(cat "$BUILD_ROOT/frontend-source.sha256")" == "$FRONTEND_SOURCE_HASH" &&
       -n "$(find internal/web/dist/assets -maxdepth 1 -type f -name '*.js' -print -quit 2>/dev/null)" ]]; then
-  echo "Frontend assets already compiled in verified patched source; retaining them."
+  echo "Frontend assets match the current source hash; retaining verified production build."
 else
   echo "=== Preparing frontend dependencies (Node + npm) ==="
   cd frontend
@@ -141,7 +154,9 @@ else
   echo "=== Frontend Vite production build ==="
   timeout --kill-after=5s 420s npm run build
   cd ..
-  echo "Frontend assets built successfully."
+  printf '%s\n' "$FRONTEND_SOURCE_HASH" > "$BUILD_ROOT/frontend-source.sha256"
+  chmod 0600 "$BUILD_ROOT/frontend-source.sha256"
+  echo "Frontend assets built and source hash recorded successfully."
 fi
 # Download all dependencies of the actual x-ui binary, with a bounded timeout
 # per proxy. The Go build must run OFFLINE after prefetch: otherwise a partial
@@ -212,11 +227,17 @@ prefetch_go_module() {
   echo "Failed to download $module from all configured mirrors." >&2
   return 1
 }
+# Reuse a Go binary only when its own checksum AND the exact pinned upstream
+# commit + Masiha patch hash match. A source patch change must rebuild.
+PATCH_SHA256="$(sha256sum "$PATCH" | awk '{print $1}')"
+EXPECTED_BUILD_ID="$PIN $PATCH_SHA256"
 # Incomplete Go downloads are cached and reused on retry.
 # Only the final binary is replaced; a failed build leaves the source intact.
-if [[ -s "$BUILD_ROOT/x-ui" && -s "$BUILD_ROOT/x-ui.sha256" ]] &&
+if [[ -s "$BUILD_ROOT/x-ui" && -s "$BUILD_ROOT/x-ui.sha256" &&
+      -s "$BUILD_ROOT/source-patch.sha256" &&
+      "$(cat "$BUILD_ROOT/source-patch.sha256")" == "$EXPECTED_BUILD_ID" ]] &&
    (cd "$BUILD_ROOT" && sha256sum -c --status x-ui.sha256); then
-  echo "Using previously verified built binary: $BUILD_ROOT/x-ui"
+  echo "Using previously verified binary matching the exact upstream commit and patch hash."
 else
   prefetch_go_module github.com/cloudflare/circl@v1.6.5
   prefetch_go_module github.com/klauspost/compress@v1.20.0
@@ -254,5 +275,7 @@ else
   chmod 0755 "$BUILD_ROOT/x-ui.new"
   mv -f "$BUILD_ROOT/x-ui.new" "$BUILD_ROOT/x-ui"
   (cd "$BUILD_ROOT" && sha256sum x-ui > x-ui.sha256)
+  printf '%s\n' "$EXPECTED_BUILD_ID" > "$BUILD_ROOT/source-patch.sha256"
+  chmod 0600 "$BUILD_ROOT/source-patch.sha256"
 fi
 printf 'BUILD PASS: %s\n' "$BUILD_ROOT/x-ui"
