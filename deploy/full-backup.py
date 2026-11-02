@@ -24,7 +24,7 @@ import sys
 import tarfile
 import tempfile
 
-VERSION = 1
+VERSION = 2
 DATABASES = {
     "/etc/x-ui/x-ui.db": "panel",
     "/etc/masiha-vpn-extension/users.db": "users",
@@ -35,42 +35,229 @@ SOURCES = (
     "/etc/x-ui",
     "/etc/masiha-vpn-extension",
     "/etc/openvpn/masiha",
+    "/etc/openvpn/masiha-ros6",
     "/etc/openvpn/server/masiha.conf",
+    "/etc/openvpn/server/masiha-ros6.conf",
     "/etc/ocserv",
     "/etc/letsencrypt",
     "/etc/nginx/sites-available/masiha-vpn",
     "/etc/nginx/sites-enabled/masiha-vpn",
     "/etc/nginx/nginx.conf",
     "/etc/nginx/conf.d",
-    "/etc/ufw/user.rules",
-    "/etc/ufw/user6.rules",
-    "/etc/iptables/rules.v4",
-    "/etc/iptables/rules.v6",
+    "/etc/ufw",
+    "/etc/iptables",
+    "/etc/nftables.conf",
     "/etc/systemd/system/x-ui.service",
     "/etc/systemd/system/x-ui.service.d",
     "/etc/systemd/system/masiha-vpn-extension.service",
     "/etc/systemd/system/masiha-vpn-extension.service.d",
     "/etc/sysctl.d/98-masiha-vpn-forward.conf",
+    "/etc/sysctl.d/93-masiha-sstp-ipv4-forward.conf",
     "/usr/local/x-ui",
     "/opt/masiha-vpn-extension",
-    # Audio fingerprints are derived metadata, not Telegram MP3s.
-    "/var/lib/masiha-audio-fp/fingerprints.pklz",
+    "/etc/masiha-sstp",
+    "/opt/masiha-sstp",
+    "/var/lib/masiha-audio-fp",
+    "/var/lib/masiha-telegram-build",
     "/var/www/masiha-ui",
+    "/etc/systemd/system/masiha-vpn-sidecar.service",
+    "/etc/default/telegram-bot-api",
+    "/etc/systemd/system/telegram-bot-api.service",
+    "/etc/systemd/system/masiha-telegram-api-autostart.path",
+    "/etc/systemd/system/masiha-telegram-botapi-build.service",
+    "/etc/systemd/system/masiha-telegram-restore-paused.service",
+    "/etc/systemd/system/masiha-channel-manager.service",
+    "/etc/systemd/system/masiha-channel-manager.timer",
+    "/etc/systemd/system/masiha-film-discover.service",
+    "/etc/systemd/system/masiha-film-discover.timer",
+    "/etc/systemd/system/masiha-rozmusic-import.timer",
+    "/usr/lib/systemd/system/masiha-rozmusic-import.timer",
+    "/usr/local/bin/telegram-bot-api",
+    "/usr/local/sbin/masiha-complete-telegram-bot-api-build",
+    "/usr/local/sbin/masiha-telegram-restore-paused",
+    "/usr/local/sbin/masiha-ipsec-firewall",
+    "/usr/local/sbin/masiha-sstp-network",
+    "/var/lib/telegram-bot-api",
+    "/etc/ipsec.conf",
+    "/etc/ipsec.secrets",
+    "/etc/strongswan.conf",
+    "/etc/strongswan.d",
+    "/etc/xl2tpd",
+    "/etc/ppp/chap-secrets",
+    "/etc/ppp/options.xl2tpd",
+    "/etc/ppp/options.l2tpd",
+    "/etc/ppp/options.masiha-l2tp",
+    "/etc/ppp/ip-up.d/90-masiha-ipsec",
+    "/etc/ppp/ip-down.d/90-masiha-ipsec",
+    "/etc/systemd/system/masiha-ipsec-accounting.service",
+    "/etc/systemd/system/masiha-ipsec-accounting.timer",
+    "/etc/systemd/system/masiha-ipsec-network.service",
+    "/etc/systemd/system/masiha-sstp-network.service",
+    "/etc/systemd/system/masiha-sstp.service",
+    "/etc/systemd/system/masiha-film-import.service",
+    "/etc/systemd/system/masiha-film-import.timer",
+    "/etc/systemd/system/masiha-film2media-discovery.service",
+    "/etc/systemd/system/masiha-film2media-discovery.timer",
+    "/etc/systemd/system/masiha-film2media-initial.service",
+    "/etc/systemd/system/masiha-rozmusic-import.service",
+    "/etc/systemd/system/masiha-rozmusic-import.timer",
+    "/etc/systemd/system/masiha-ai-media.service",
+    "/etc/systemd/system/masiha-ai-media.timer",
     "/etc/systemd/system/masiha-audio-fingerprint.service",
     "/etc/systemd/system/masiha-audio-fingerprint.timer",
-    "/etc/systemd/system/masiha-vpn-sidecar.service",
+    "/etc/systemd/system/masiha-full-backup.service",
+    "/etc/systemd/system/masiha-full-backup.timer",
+    "/etc/systemd/system/strongswan-starter.service.d",
+    "/etc/systemd/system/xl2tpd.service.d",
+    "/etc/systemd/system/ocserv.service.d",
+    "/etc/systemd/system/telegram-bot-api.service.d",
+    "/etc/systemd/system/openvpn-server@masiha.service.d",
+    "/etc/systemd/system/openvpn-server@masiha-ros6.service.d",
+    "/etc/systemd/system.control/masiha-telegram-botapi-build.service.d",
+    "/etc/accel-ppp",
+    "/etc/accel-ppp.conf",
 )
 EXCLUDED_DIRS = frozenset((
     "backups", "release-staging", "toolchain", ".git", "__pycache__",
     ".venv", ".cache", "node_modules",
 ))
 SENSITIVE_TRANSIENT_SUFFIXES = (".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm")
-SERVICES = (
-    "masiha-vpn-extension.service", "masiha-vpn-sidecar.service", "x-ui.service",
-    "openvpn-server@masiha.service", "ocserv.service",
+TELEGRAM_DATA_ROOT = "/var/lib/telegram-bot-api"
+TELEGRAM_LOCAL_FLAG = "/etc/masiha-vpn-extension/sales/telegram_local.enabled"
+TELEGRAM_REQUIRED_FILES = (
+    "/etc/default/telegram-bot-api",
+    "/etc/systemd/system/telegram-bot-api.service",
+    "/etc/systemd/system/masiha-telegram-api-autostart.path",
+    "/usr/local/bin/telegram-bot-api",
 )
+# Ordered dependency-first. start_services/restore_service_states start in this
+# order; stop_services stops in reverse so consumers stop before their providers.
+SERVICES = (
+    "masiha-ipsec-network.service", "masiha-sstp-network.service",
+    "strongswan-starter.service", "xl2tpd.service",
+    "openvpn-server@masiha.service", "openvpn-server@masiha-ros6.service",
+    "ocserv.service", "masiha-sstp.service",
+    "x-ui.service", "masiha-vpn-sidecar.service",
+    "nginx.service", "certbot.timer",
+    "telegram-bot-api.service", "masiha-telegram-api-autostart.path",
+    "masiha-ipsec-accounting.service", "masiha-ipsec-accounting.timer",
+    "masiha-channel-manager.service", "masiha-channel-manager.timer",
+    "masiha-rozmusic-import.service", "masiha-rozmusic-import.timer",
+    "masiha-film-import.service", "masiha-film-import.timer",
+    "masiha-film2media-discovery.service", "masiha-film2media-discovery.timer",
+    "masiha-film2media-initial.service", "masiha-film-discover.service",
+    "masiha-film-discover.timer", "masiha-ai-media.service", "masiha-ai-media.timer",
+    "masiha-audio-fingerprint.service", "masiha-audio-fingerprint.timer",
+    "masiha-vpn-extension.service",
+)
+# These workers can poll, publish, import, or mutate Telegram media. A target
+# restore must not run them while the source server is still live.
+CUTOVER_GATED_UNITS = frozenset((
+    "masiha-vpn-extension.service",
+    "masiha-channel-manager.service", "masiha-channel-manager.timer",
+    "masiha-rozmusic-import.service", "masiha-rozmusic-import.timer",
+    "masiha-film-import.service", "masiha-film-import.timer",
+    "masiha-film2media-discovery.service", "masiha-film2media-discovery.timer",
+    "masiha-film2media-initial.service",
+    "masiha-film-discover.service", "masiha-film-discover.timer",
+    "masiha-ai-media.service", "masiha-ai-media.timer",
+    "masiha-audio-fingerprint.service", "masiha-audio-fingerprint.timer",
+))
 DEFAULT_KEY = Path("/root/.masiha-backup.key")
 DEFAULT_OUTPUT = Path("/root/masiha-backups")
+
+# Runtime packages needed by active services on a fresh Ubuntu 24.04 target.
+# The installer provisions these before a full archive is restored.
+REQUIRED_PACKAGES_BY_UNIT = {
+    "nginx.service": ("nginx",),
+    "certbot.timer": ("certbot",),
+    "openvpn-server@masiha.service": ("openvpn",),
+    "openvpn-server@masiha-ros6.service": ("openvpn",),
+    "ocserv.service": ("ocserv",),
+    "strongswan-starter.service": (
+        "strongswan", "strongswan-swanctl", "libcharon-extra-plugins",
+        "libcharon-extauth-plugins", "libstrongswan-extra-plugins",
+    ),
+    "xl2tpd.service": ("xl2tpd", "ppp"),
+    "masiha-ipsec-network.service": ("iptables", "iproute2"),
+    "masiha-sstp-network.service": ("iptables", "iproute2"),
+    "masiha-sstp.service": ("libpcre2-8-0", "ppp"),
+    "masiha-audio-fingerprint.timer": (
+        "ffmpeg", "libchromaprint-tools", "python3-numpy", "python3-scipy",
+        "python3-docopt", "python3-joblib", "python3-psutil",
+    ),
+}
+
+# A backup must not silently omit the configuration of an active VPN endpoint.
+REQUIRED_PATHS_BY_UNIT = {
+    "x-ui.service": (
+        "/usr/local/x-ui/x-ui", "/usr/local/x-ui/bin/xray-linux-amd64",
+        "/etc/x-ui/x-ui.db",
+    ),
+    "nginx.service": (
+        "/etc/nginx/sites-available/masiha-vpn",
+        "/etc/nginx/sites-enabled/masiha-vpn",
+    ),
+    "openvpn-server@masiha.service": (
+        "/etc/openvpn/server/masiha.conf",
+        "/etc/openvpn/masiha/pki/ca.crt",
+        "/etc/openvpn/masiha/pki/issued/masiha-openvpn.crt",
+        "/etc/openvpn/masiha/pki/private/masiha-openvpn.key",
+        "/etc/openvpn/masiha/tls-crypt.key",
+        "/etc/openvpn/masiha/pki/crl.pem",
+        "/opt/masiha-vpn-extension/vpn-account-hook.sh",
+    ),
+    "openvpn-server@masiha-ros6.service": (
+        "/etc/openvpn/server/masiha-ros6.conf",
+        "/etc/openvpn/masiha-ros6/ca.crt",
+        "/etc/openvpn/masiha-ros6/server.crt",
+        "/etc/openvpn/masiha-ros6/server.key",
+        "/opt/masiha-vpn-extension/ros6-auth-hook.sh",
+        "/opt/masiha-vpn-extension/ros6-account-hook.sh",
+        "/opt/masiha-vpn-extension/routeros6.py",
+    ),
+    "ocserv.service": (
+        "/etc/ocserv/ocserv.conf", "/etc/ocserv/masiha.passwd",
+    ),
+    "strongswan-starter.service": (
+        "/etc/ipsec.conf", "/etc/ipsec.secrets",
+        "/etc/masiha-vpn-extension/ipsec/masiha.secrets",
+        "/etc/masiha-vpn-extension/ipsec/chap-secrets",
+    ),
+    "xl2tpd.service": (
+        "/etc/xl2tpd/xl2tpd.conf", "/etc/ppp/options.masiha-l2tp",
+        "/etc/ppp/chap-secrets",
+        "/etc/ppp/ip-up.d/90-masiha-ipsec",
+        "/etc/ppp/ip-down.d/90-masiha-ipsec",
+    ),
+    "masiha-ipsec-network.service": (
+        "/etc/systemd/system/masiha-ipsec-network.service",
+        "/usr/local/sbin/masiha-ipsec-firewall",
+    ),
+    "masiha-sstp-network.service": (
+        "/etc/systemd/system/masiha-sstp-network.service",
+        "/usr/local/sbin/masiha-sstp-network",
+        "/etc/sysctl.d/93-masiha-sstp-ipv4-forward.conf",
+    ),
+    "masiha-sstp.service": (
+        "/etc/systemd/system/masiha-sstp.service",
+        "/etc/masiha-sstp/accel-ppp.conf",
+        "/etc/masiha-sstp/client-password",
+        "/etc/masiha-sstp/chap-secrets",
+        "/opt/masiha-sstp/sbin/accel-pppd",
+        "/opt/masiha-sstp/lib64/accel-ppp/libtriton.so",
+        "/opt/masiha-sstp/lib64/accel-ppp/libsstp.so",
+    ),
+    "masiha-vpn-extension.service": (
+        "/etc/systemd/system/masiha-vpn-extension.service",
+        "/etc/masiha-vpn-extension/config.json",
+        "/opt/masiha-vpn-extension/worker.py",
+    ),
+    "masiha-vpn-sidecar.service": (
+        "/etc/systemd/system/masiha-vpn-sidecar.service",
+        "/var/www/masiha-ui",
+    ),
+}
 
 
 def die(message):
@@ -107,6 +294,8 @@ def valid_link(path, target):
     if path == "/etc/nginx/sites-enabled/masiha-vpn":
         if target != "/etc/nginx/sites-available/masiha-vpn":
             die("Unexpected Nginx symlink target")
+        return
+    if path == "/etc/ppp/chap-secrets" and target == "/etc/masiha-vpn-extension/ipsec/chap-secrets":
         return
     if not path.startswith("/etc/letsencrypt/"):
         die("Unexpected symlink in backup: " + path)
@@ -241,10 +430,17 @@ def snapshot_databases(stage, skip_media=False):
     return db_stats
 
 
-def copy_snapshot(stage):
+def is_telegram_media_path(path):
+    value = str(path)
+    return value == TELEGRAM_DATA_ROOT or value.startswith(TELEGRAM_DATA_ROOT + "/")
+
+
+def copy_snapshot(stage, skip_media=False):
     entries = {}
     for src in source_files():
         path = safe_path(str(src))
+        if skip_media and is_telegram_media_path(path):
+            continue
         meta = src.lstat()
         if stat.S_ISLNK(meta.st_mode):
             link = os.readlink(src)
@@ -253,7 +449,21 @@ def copy_snapshot(stage):
         elif stat.S_ISREG(meta.st_mode):
             dest = stage / "files" / path.lstrip("/")
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dest, follow_symlinks=False)
+            # A file being actively uploaded must not be captured half-written.
+            # Retry a changing file twice, then fail rather than publish a bad archive.
+            stable = False
+            for attempt in range(3):
+                before = src.stat()
+                shutil.copyfile(src, dest, follow_symlinks=False)
+                after = src.stat()
+                if (before.st_size, before.st_mtime_ns, before.st_ino) == (
+                    after.st_size, after.st_mtime_ns, after.st_ino
+                ) and dest.stat().st_size == after.st_size:
+                    meta = src.lstat()
+                    stable = True
+                    break
+            if not stable:
+                die("Source file changed while being backed up: " + path)
             dest.chmod(0o600)
             entries[path] = {
                 "type": "file", "size": dest.stat().st_size,
@@ -269,14 +479,211 @@ def active_services():
         stderr=subprocess.DEVNULL).returncode == 0]
 
 
+def service_states():
+    states = {}
+    for unit in SERVICES:
+        active = subprocess.run(
+            ["systemctl", "is-active", "--quiet", unit],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        enabled = subprocess.run(
+            ["systemctl", "is-enabled", unit], capture_output=True, text=True, timeout=12)
+        states[unit] = {
+            "active": active,
+            "enabled": enabled.stdout.strip() or "not-found",
+        }
+    return states
+
+
+def package_inventory():
+    fmt = "$" + "{Package}\t$" + "{db:Status-Status}\t$" + "{Version}\n"
+    result = subprocess.run(["dpkg-query", "-W", "-f=" + fmt],
+                            capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        die("Unable to read installed Debian package inventory")
+    packages = {}
+    for line in result.stdout.splitlines():
+        fields = line.split("\t", 2)
+        if len(fields) == 3 and fields[1] == "installed":
+            packages[fields[0]] = fields[2]
+    return packages
+
+
+def validate_required_packages(states, installed=None):
+    installed = package_inventory() if installed is None else installed
+    needed = set()
+    enabled_values = ("enabled", "enabled-runtime", "generated", "indirect")
+    for unit, packages in REQUIRED_PACKAGES_BY_UNIT.items():
+        state = states.get(unit) or {}
+        if state.get("active") or state.get("enabled") in enabled_values:
+            needed.update(packages)
+    missing = sorted(needed - set(installed))
+    if missing:
+        die("Required OS packages are missing for restored services: " +
+            ", ".join(missing) +
+            ". Install them before restore with: apt-get install -y " +
+            " ".join(missing))
+    return sorted(needed)
+
+
+def validate_source_inventory(states):
+    enabled_values = ("enabled", "enabled-runtime", "generated", "indirect")
+    missing = []
+    for unit, paths in REQUIRED_PATHS_BY_UNIT.items():
+        state = states.get(unit) or {}
+        if not (state.get("active") or state.get("enabled") in enabled_values):
+            continue
+        for path in paths:
+            if not os.path.exists(path):
+                missing.append((unit, path))
+    if missing:
+        details = "; ".join(unit + " -> " + path for unit, path in missing)
+        die("Full backup inventory is incomplete for active services: " + details)
+    return True
+
+
+def system_accounts():
+    accounts = {}
+    result = subprocess.run(["getent", "passwd", "tgbotapi"],
+                            capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        fields = result.stdout.strip().split(":")
+        accounts["tgbotapi"] = {
+            "uid": int(fields[2]), "gid": int(fields[3]),
+            "home": fields[5], "shell": fields[6],
+        }
+    return accounts
+
+
+def telegram_local_api_status(skip_media=False):
+    binary = Path("/usr/local/bin/telegram-bot-api")
+    config = Path("/etc/default/telegram-bot-api")
+    data = Path(TELEGRAM_DATA_ROOT)
+    data_files = [x for x in data.rglob("*") if x.is_file()] if data.is_dir() else []
+    return {
+        "enabled": Path(TELEGRAM_LOCAL_FLAG).is_file(),
+        "config_present": config.is_file(),
+        "binary_present": binary.is_file(),
+        "binary_sha256": sha_file(binary) if binary.is_file() else None,
+        "media_cache_included": bool(data.is_dir() and not skip_media),
+        "data_files": len(data_files),
+        "data_bytes": sum(x.stat().st_size for x in data_files),
+    }
+
+
+def validate_local_api_backup(api_status, accounts, skip_media):
+    if not api_status.get("enabled"):
+        return
+    for name in TELEGRAM_REQUIRED_FILES:
+        if not Path(name).is_file():
+            die("Local Telegram API is enabled but a required migration file is missing: " + name)
+    if "tgbotapi" not in accounts:
+        die("Local Telegram API is enabled but the tgbotapi system account is missing")
+    if not skip_media and not api_status.get("media_cache_included"):
+        die("Local Telegram API media cache is missing from a full backup")
+
+
+def ensure_system_accounts(accounts):
+    for name in accounts:
+        if name != "tgbotapi":
+            die("Unexpected system account in backup: " + name)
+        if subprocess.run(["getent", "passwd", name], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0:
+            continue
+        if subprocess.run(["getent", "group", name], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode != 0:
+            run("groupadd", "--system", name)
+        run("useradd", "--system", "--gid", name, "--home-dir",
+            TELEGRAM_DATA_ROOT, "--shell", "/usr/sbin/nologin", name)
+
+
+def fix_telegram_api_ownership():
+    data = Path(TELEGRAM_DATA_ROOT)
+    if not data.exists():
+        return
+    run("chown", "-R", "tgbotapi:tgbotapi", str(data))
+    for path in [data, *data.rglob("*")]:
+        if path.is_dir():
+            path.chmod(0o700)
+
+
+def current_enabled_state(unit):
+    result = subprocess.run(["systemctl", "is-enabled", unit],
+                            capture_output=True, text=True, timeout=12)
+    return result.stdout.strip() or "not-found"
+
+
+def restore_service_states(states, activate_telegram=False):
+    if not isinstance(states, dict) or not states:
+        return []
+    run("systemctl", "daemon-reload")
+    pending = []
+    enabled_values = ("enabled", "enabled-runtime")
+    for unit in SERVICES:
+        state = states.get(unit)
+        if not isinstance(state, dict):
+            continue
+        desired = state.get("enabled", "not-found")
+        gated = unit in CUTOVER_GATED_UNITS and not activate_telegram
+        if gated:
+            if state.get("active") or desired in enabled_values:
+                pending.append(unit)
+            current = current_enabled_state(unit)
+            if current in enabled_values:
+                run("systemctl", "disable", unit)
+            continue
+        current = current_enabled_state(unit)
+        if desired in enabled_values and current not in enabled_values:
+            run("systemctl", "enable", unit)
+        elif desired == "disabled" and current in enabled_values:
+            run("systemctl", "disable", unit)
+        elif desired == "masked" and current != "masked":
+            run("systemctl", "mask", unit)
+    # Start dependencies and network services first; the Telegram worker is last.
+    for unit in SERVICES:
+        state = states.get(unit)
+        if not isinstance(state, dict) or not state.get("active"):
+            continue
+        if unit in CUTOVER_GATED_UNITS and not activate_telegram:
+            continue
+        run("systemctl", "start", unit)
+        if subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode:
+            die("Restored service did not start: " + unit)
+    return pending
+
+
 def stop_services(services):
-    for service in services:
-        run("systemctl", "stop", service)
+    # The input order is dependency-first, so stop consumers first.
+    failures = []
+    for service in reversed(services):
+        try:
+            run("systemctl", "stop", service)
+            active = subprocess.run(
+                ["systemctl", "is-active", "--quiet", service],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if active.returncode == 0:
+                failures.append(service + " remained active")
+        except Exception as exc:
+            failures.append(service + ": " + str(exc))
+    if failures:
+        die("Could not quiesce all services: " + "; ".join(failures))
 
 
 def start_services(services):
-    for service in reversed(services):
-        run("systemctl", "start", service)
+    # The input order is dependency-first, so start providers first.
+    # Continue after one failure so every service gets a restart attempt.
+    failures = []
+    for service in services:
+        try:
+            run("systemctl", "start", service)
+            active = subprocess.run(
+                ["systemctl", "is-active", "--quiet", service],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if active.returncode != 0:
+                failures.append(service + " did not become active")
+        except Exception as exc:
+            failures.append(service + ": " + str(exc))
+    if failures:
+        die("Some services could not be restarted: " + "; ".join(failures))
 
 
 def network_diagnostics():
@@ -324,6 +731,13 @@ def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False, skip
     directory.mkdir(parents=True, exist_ok=True)
     directory.chmod(0o700)
     domain = get_domain()
+    source_states = service_states()
+    packages = package_inventory()
+    validate_required_packages(source_states, packages)
+    validate_source_inventory(source_states)
+    accounts = system_accounts()
+    api_status = telegram_local_api_status(skip_media=skip_media)
+    validate_local_api_backup(api_status, accounts, skip_media)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     final = directory / ("masiha-full-" + domain + "-" + stamp + ".tar.gz.gpg")
     if final.exists():
@@ -332,16 +746,28 @@ def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False, skip
         stage = Path(tmp)
         os.chmod(stage, 0o700)
         running = active_services() if quiesce else []
+        snapshot_error = None
         try:
             if running:
                 print("QUIESCING_VPN_SERVICES", len(running), flush=True)
                 stop_services(running)
             databases = snapshot_databases(stage, skip_media=skip_media)
-            files = copy_snapshot(stage)
-        finally:
-            if running:
+            files = copy_snapshot(stage, skip_media=skip_media)
+        except BaseException as exc:
+            snapshot_error = exc
+        restart_error = None
+        if running:
+            try:
                 start_services(running)
                 print("VPN_SERVICES_RESTARTED", flush=True)
+            except Exception as exc:
+                restart_error = exc
+        if restart_error:
+            die("Backup snapshot error=" + str(snapshot_error) +
+                "; CRITICAL: service restart error=" + str(restart_error) +
+                ". Inspect systemctl status for every listed service immediately.")
+        if snapshot_error:
+            raise snapshot_error
         if not files:
             die("Backup contains no configuration files")
         commit = subprocess.run(["git", "-C", "/root/Masih-panel",
@@ -353,6 +779,10 @@ def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False, skip
             if commit.returncode == 0 else "unavailable",
             "snapshot_type": "quiesced" if quiesce else "online-sqlite-consistent",
             "telegram_media_included": not skip_media,
+            "telegram_local_api": api_status,
+            "system_accounts": accounts,
+            "package_inventory": packages,
+            "service_states": source_states,
             "databases": databases, "files": files, "source_roots": list(SOURCES),
             "network_audit_only": network_diagnostics(),
         }
@@ -401,13 +831,28 @@ def unpack_verified(archive, key, work):
         if not meta.isfile() or meta.size > 10 * 1024 * 1024:
             die("Invalid manifest")
         manifest = json.load(tf.extractfile(meta))
-        if manifest.get("format") != "masiha-full" or manifest.get("version") != VERSION:
+        if manifest.get("format") != "masiha-full" or manifest.get("version") not in (1, VERSION):
             die("Unsupported backup format")
         if set(manifest.get("databases",{})) != set(DATABASES.values()):
             die("Database list is incomplete")
         entries = manifest.get("files")
         if not isinstance(entries,dict) or not entries:
             die("Missing file manifest")
+        if manifest.get("version", 1) >= 2:
+            api = manifest.get("telegram_local_api") or {}
+            if api.get("enabled"):
+                for required in TELEGRAM_REQUIRED_FILES:
+                    if required not in entries:
+                        die("Local Telegram API backup is incomplete: " + required)
+                if "tgbotapi" not in manifest.get("system_accounts", {}):
+                    die("Local Telegram API backup lacks its system account")
+                if api.get("media_cache_included") and not any(
+                    name.startswith(TELEGRAM_DATA_ROOT + "/") for name in entries
+                ):
+                    die("Local Telegram API media cache is missing from archive")
+            states = manifest.get("service_states", {})
+            if not isinstance(states, dict) or any(k not in SERVICES for k in states):
+                die("Invalid source service-state manifest")
         allowed = {"manifest.json"}
         allowed.update("db/" + k + ".db" for k in DATABASES.values())
         for name,entry in entries.items():
@@ -520,14 +965,51 @@ def revert(restored):
             path.unlink(missing_ok=True)
 
 
-def validate_restored(root=None):
+def validate_restored(root=None, manifest=None):
     for original in DATABASES:
         db = map_target(original,root)
         with sqlite3.connect("file:"+str(db)+"?mode=ro",uri=True) as c:
             if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 die("Restored SQLite integrity failed: " + original)
     if root is None:
+        api = (manifest or {}).get("telegram_local_api") or {}
+        if api.get("enabled"):
+            for required in TELEGRAM_REQUIRED_FILES:
+                if not Path(required).is_file():
+                    die("Restored Local Telegram API file is missing: " + required)
+            if not os.access("/usr/local/bin/telegram-bot-api", os.X_OK):
+                die("Restored Telegram Bot API binary is not executable")
+            if not Path(TELEGRAM_DATA_ROOT).is_dir():
+                die("Restored Telegram Bot API data directory is missing")
+            if subprocess.run(["getent", "passwd", "tgbotapi"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+                die("Restored tgbotapi system account is missing")
         subprocess.run(["systemctl","daemon-reload"],check=True,timeout=30)
+        source_states = (manifest or {}).get("service_states") or {}
+        validate_required_packages(source_states)
+        enabled_values = ("enabled", "enabled-runtime", "generated", "indirect")
+        required_binaries = {
+            "strongswan-starter.service": "/usr/sbin/ipsec",
+            "xl2tpd.service": "/usr/sbin/xl2tpd",
+            "openvpn-server@masiha.service": "/usr/sbin/openvpn",
+            "openvpn-server@masiha-ros6.service": "/usr/sbin/openvpn",
+            "masiha-sstp.service": "/opt/masiha-sstp/sbin/accel-pppd",
+            "masiha-ipsec-network.service": "/usr/local/sbin/masiha-ipsec-firewall",
+            "masiha-sstp-network.service": "/usr/local/sbin/masiha-sstp-network",
+        }
+        for unit, binary in required_binaries.items():
+            state = source_states.get(unit) or {}
+            if state.get("active") or state.get("enabled") in enabled_values:
+                if not Path(binary).is_file() or not os.access(binary, os.X_OK):
+                    die("Required executable for restored service is missing: " +
+                        unit + " -> " + binary)
+        for unit, state in source_states.items():
+            if state.get("active") or state.get("enabled") in enabled_values:
+                loaded = subprocess.run(
+                    ["systemctl", "show", "-p", "LoadState", "--value", unit],
+                    capture_output=True, text=True, timeout=12)
+                if loaded.returncode or loaded.stdout.strip() == "not-found":
+                    die("Required systemd unit is not installed after restore: " + unit)
         for binary,command in (
             ("/usr/local/x-ui/bin/xray-linux-amd64",
              ["/usr/local/x-ui/bin/xray-linux-amd64","run","-test","-c",
@@ -562,7 +1044,7 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
             if staging_root.exists() and any(staging_root.iterdir()):
                 die("Isolated staging root must be empty to avoid overwriting data")
             staged_files=restore_files(manifest,contents,root=staging_root)
-            validate_restored(root=staging_root)
+            validate_restored(root=staging_root, manifest=manifest)
             print("ISOLATED_RESTORE_OK",staging_root,"entries",len(staged_files))
             return
         destination_domain=get_domain()
@@ -571,7 +1053,10 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
                 "); restore only after matching domain, or use --allow-domain-mismatch with manual cert/DNS migration")
         if destination_domain != manifest["source_domain"]:
             print("WARNING: certificates, DNS, subscriptions and node URLs must be manually migrated for new domain",flush=True)
-        running=active_services()
+        source_states = manifest.get("service_states") or {}
+        validate_required_packages(source_states)
+        target_states=service_states()
+        running=[unit for unit,state in target_states.items() if state.get("active")]
         # Take encrypted rollback snapshot before mutating any live file.
         print("CREATING_DESTINATION_SAFETY_BACKUP",flush=True)
         rollback_backup=create_backup(quiesce=False)
@@ -580,19 +1065,34 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
         changed=[]
         try:
             stop_services(running)
+            ensure_system_accounts(manifest.get("system_accounts", {}))
             changed=restore_files(manifest,contents,rollback=undo)
-            validate_restored()
-            # The same Telegram bot token must NEVER poll from two servers.
-            # Keep the commerce/Telegram worker down until source is stopped.
-            to_start=[unit for unit in running if
-                      activate_telegram or unit!="masiha-vpn-extension.service"]
-            start_services(to_start)
-            if "masiha-vpn-extension.service" in running and not activate_telegram:
-                print("TELEGRAM_AND_EXTENSION_LEFT_STOPPED_FOR_SAFE_CUTOVER")
-                print("STOP_THE_SOURCE_WORKER_THEN_START_TARGET_EXTENSION_MANUALLY")
-            for unit in to_start:
-                if subprocess.run(["systemctl","is-active","--quiet",unit]).returncode:
-                    die("Restored service did not start: "+unit)
+            fix_telegram_api_ownership()
+            validate_restored(manifest=manifest)
+            source_states=manifest.get("service_states")
+            if source_states:
+                pending=restore_service_states(source_states,activate_telegram=activate_telegram)
+                if pending:
+                    print("TELEGRAM_CUTOVER_PENDING_UNITS",pending,flush=True)
+                    print("Keep Telegram polling/import workers stopped until the source server is shut down.",flush=True)
+                    enable_units = [u for u in pending
+                                    if (source_states.get(u) or {}).get("enabled")
+                                    in ("enabled", "enabled-runtime")]
+                    start_only = [u for u in pending if u not in enable_units
+                                  and (source_states.get(u) or {}).get("active")]
+                    if enable_units:
+                        print("After source shutdown, run: systemctl enable --now " +
+                              " ".join(enable_units),flush=True)
+                    if start_only:
+                        print("After source shutdown, run: systemctl start " +
+                              " ".join(start_only),flush=True)
+            else:
+                # Backward compatibility for v1 archives without service-state metadata.
+                to_start=[unit for unit in running if
+                          activate_telegram or unit not in CUTOVER_GATED_UNITS]
+                start_services(to_start)
+                if not activate_telegram:
+                    print("LEGACY_BACKUP: service states were not recorded; review and enable target services manually.",flush=True)
         except Exception:
             print("RESTORE_FAILED_ATTEMPTING_ROLLBACK",file=sys.stderr,flush=True)
             for unit in running:
@@ -600,8 +1100,14 @@ def restore(archive,key,confirm=False,staging_root=None,allow_domain_mismatch=Fa
             if changed:
                 revert(changed)
             subprocess.run(["systemctl","daemon-reload"],check=False)
-            for unit in reversed(running):
-                subprocess.run(["systemctl","start",unit],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            if target_states:
+                try:
+                    restore_service_states(target_states,activate_telegram=True)
+                except Exception as rollback_error:
+                    print("SERVICE_ROLLBACK_ERROR",str(rollback_error),file=sys.stderr,flush=True)
+            else:
+                for unit in reversed(running):
+                    subprocess.run(["systemctl","start",unit],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             print("ROLLBACK_ATTEMPTED",file=sys.stderr,flush=True)
             raise
         print("LIVE_RESTORE_COMPLETE", manifest["source_domain"])
@@ -617,7 +1123,7 @@ def main():
     b.add_argument("--output-dir",default=str(DEFAULT_OUTPUT))
     b.add_argument("--key-file",default=str(DEFAULT_KEY))
     b.add_argument("--skip-media",action="store_true",
-                   help="exclude bot music/films, playlists, comments and reports; preserve sales and points")
+                   help="exclude media tables and Telegram Local API cache; preserve sales and points")
     b.add_argument("--quiesce",action="store_true",
                    help="briefly stop VPN services while taking snapshot (recommended for final migration)")
     v=sub.add_parser("verify")
