@@ -8,7 +8,7 @@ umask 077
 if [[ "${1:-}" == "--help" ]]; then
   echo 'Usage (interactive): sudo bash deploy/install-ubuntu-24.04.sh'
   echo 'Usage (automated): sudo env DOMAIN=vpn.example.com EMAIL=admin@example.com bash deploy/install-ubuntu-24.04.sh'
-  echo 'Optional: PANEL_ADMIN_USER=admin MASIHA_BUILD_ROOT=/opt/masiha-vpn-build-20261011'
+  echo 'Optional: PANEL_ADMIN_USER=admin MASIHA_BUILD_ROOT=/opt/masiha-vpn-build-v3.11.0'
   exit 0
 fi
 [[ "$EUID" -eq 0 ]] || { echo "Run as root with sudo -E" >&2; exit 1; }
@@ -68,7 +68,10 @@ done
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl git tar xz-utils build-essential pkg-config python3 \
-  sqlite3 jq nginx certbot openvpn openconnect ocserv easy-rsa iptables ufw openssl gnupg python3-qrcode python3-pil libraqm0 fonts-dejavu-core
+  sqlite3 jq nginx certbot openvpn openconnect ocserv easy-rsa iptables ufw openssl gnupg python3-qrcode python3-pil libraqm0 fonts-dejavu-core \
+  strongswan strongswan-swanctl libcharon-extra-plugins libcharon-extauth-plugins \
+  libstrongswan-extra-plugins xl2tpd ppp libpcre2-8-0 iproute2 ffmpeg \
+  libchromaprint-tools python3-numpy python3-scipy python3-docopt python3-joblib python3-psutil
 # Distribution ocserv may start on TCP/443 before Masiha config is installed.
 # Release that listener so Nginx can terminate the public HTTPS endpoint.
 systemctl stop ocserv.service 2>/dev/null || true
@@ -136,35 +139,38 @@ download_verified() {
   echo "or MASIHA_NODE_ARCHIVE before re-running the installer." >&2
   return 1
 }
-if [[ ! -x "$TOOLS/go/bin/go" ]]; then
-  download_verified "$TOOLS/go.tar.gz" \
-    "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445" \
+GO_DIR="$TOOLS/go1.27.3"
+if [[ ! -x "$GO_DIR/bin/go" ]]; then
+  download_verified "$TOOLS/go1.27.3.tar.gz" \
+    "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40" \
     "${MASIHA_GO_ARCHIVE:-}" "${MASIHA_GO_URL:-}" \
-    "https://mirrors.aliyun.com/golang/go1.27.1.linux-amd64.tar.gz" \
-    "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz" \
-    "https://dl.google.com/go/go1.27.1.linux-amd64.tar.gz" \
-    "https://storage.googleapis.com/golang/go1.27.1.linux-amd64.tar.gz" \
-    "https://golang.google.cn/dl/go1.27.1.linux-amd64.tar.gz"
-  tar -xzf "$TOOLS/go.tar.gz" -C "$TOOLS"
+    "https://go.dev/dl/go1.27.3.linux-amd64.tar.gz" \
+    "https://dl.google.com/go/go1.27.3.linux-amd64.tar.gz" \
+    "https://storage.googleapis.com/golang/go1.27.3.linux-amd64.tar.gz" \
+    "https://mirrors.aliyun.com/golang/go1.27.3.linux-amd64.tar.gz" \
+    "https://golang.google.cn/dl/go1.27.3.linux-amd64.tar.gz"
+  mkdir -p "$GO_DIR"
+  tar -xzf "$TOOLS/go1.27.3.tar.gz" -C "$GO_DIR" --strip-components=1
 fi
-if [[ ! -x "$TOOLS/node-v24.21.0-linux-x64/bin/node" ]]; then
-  download_verified "$TOOLS/node.tar.xz" \
-    "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6" \
+if [[ ! -x "$TOOLS/node-v26.13.0-linux-x64/bin/node" ]]; then
+  download_verified "$TOOLS/node-v26.13.0.tar.xz" \
+    "d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997" \
     "${MASIHA_NODE_ARCHIVE:-}" "${MASIHA_NODE_URL:-}" \
-    "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
-    "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
-    "https://mirrors.aliyun.com/nodejs-release/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
-    "https://npmmirror.com/mirrors/node/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
-    "https://mirrors.cloud.tencent.com/nodejs-release/v24.21.0/node-v24.21.0-linux-x64.tar.xz" \
-    "https://mirrors.huaweicloud.com/nodejs/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
-  tar -xJf "$TOOLS/node.tar.xz" -C "$TOOLS"
+    "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz" \
+    "https://nodejs.org/download/release/v26.13.0/node-v26.13.0-linux-x64.tar.xz" \
+    "https://mirrors.aliyun.com/nodejs-release/v26.13.0/node-v26.13.0-linux-x64.tar.xz" \
+    "https://npmmirror.com/mirrors/node/v26.13.0/node-v26.13.0-linux-x64.tar.xz" \
+    "https://mirrors.cloud.tencent.com/nodejs-release/v26.13.0/node-v26.13.0-linux-x64.tar.xz" \
+    "https://mirrors.huaweicloud.com/nodejs/v26.13.0/node-v26.13.0-linux-x64.tar.xz"
+  tar -xJf "$TOOLS/node-v26.13.0.tar.xz" -C "$TOOLS"
 fi
-export PATH="$TOOLS/go/bin:$TOOLS/node-v24.21.0-linux-x64/bin:$PATH"
-[[ "$(go version)" == *"go1.27.1"* ]] || { echo "Go version mismatch" >&2; exit 1; }
-[[ "$(node -v)" == "v24.21.0" ]] || { echo "Node version mismatch" >&2; exit 1; }
+export PATH="$GO_DIR/bin:$TOOLS/node-v26.13.0-linux-x64/bin:$PATH"
+[[ "$(node --version)" == "v26.13.0" ]] || { echo "Node version mismatch" >&2; exit 1; }
+[[ "$(go version)" == *"go1.27.3"* ]] || { echo "Go version mismatch" >&2; exit 1; }
+[[ "$(node -v)" == "v26.13.0" ]] || { echo "Node version mismatch" >&2; exit 1; }
 echo "=== Stage 1/5: Verify and build patched Masiha 3x-ui ==="
 bash "$REPO_ROOT/deploy/build-3x-ui.sh"
-BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-20261011}"
+BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-v3.11.0}"
 [[ -s "$BUILD_ROOT/x-ui" ]] || exit 1
 # Official pinned installer supplies Xray, geo data and native systemd helpers.
 # The official downloaded 3x-ui binary is IMMEDIATELY replaced by the verified Masiha build.
@@ -180,7 +186,7 @@ install -m 0755 "$BUILD_ROOT/x-ui" /usr/local/x-ui/x-ui
 install -d -m 0700 /etc/x-ui /etc/masiha-vpn-extension /opt/masiha-vpn-extension
 # Web-based, admin-authenticated backup/restore worker runs outside x-ui
 # via systemd-run so final recovery survives panel service restarts.
-install -m 0644 "$REPO_ROOT/deploy/full-backup.py" /opt/masiha-vpn-extension/full_backup.py
+install -m 0644 "$REPO_ROOT/runtime/full_backup.py" /opt/masiha-vpn-extension/full_backup.py
 install -m 0644 "$REPO_ROOT/deploy/web-backup-worker.py" /opt/masiha-vpn-extension/web_backup_worker.py
 for file in manager.py routeros6.py ipsec_backend.py ipsec_accounting.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py gamification.py entertainment.py media_library.py social.py audio_fingerprint.py acoustid_client.py ai_commerce.py ai_models.py ai_media.py ai_fal_video.py ai_conversation.py runtime_config.py bot_texts.py bot_texts_export.py bot_texts_admin.py bot_texts.fa.json; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
