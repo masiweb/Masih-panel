@@ -3,11 +3,11 @@
 set -Eeuo pipefail
 [[ $(id -u) -eq 0 ]] || { echo "Run as root" >&2; exit 1; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_ROOT=/opt/masiha-vpn-build-20261011
+BUILD_ROOT=/opt/masiha-vpn-build-v3.11.0
 if [[ -v MASIHA_BUILD_ROOT && -n "$MASIHA_BUILD_ROOT" ]]; then BUILD_ROOT="$MASIHA_BUILD_ROOT"; fi
 SRC="$BUILD_ROOT/src/frontend"
 SIDE="$ROOT/sidecar"
-NODE=/opt/masiha-vpn-toolchains/node-v24.21.0-linux-x64/bin
+NODE=/opt/masiha-vpn-toolchains/node-v26.13.0-linux-x64/bin
 [[ -d "$SRC/node_modules" && -x "$SRC/node_modules/.bin/vite" ]] || {
   echo "Missing prebuilt frontend/dependencies at $SRC" >&2;exit 1;
 }
