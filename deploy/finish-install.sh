@@ -17,7 +17,7 @@ CREDS=/root/masiha-vpn-initial-login.env
  { echo "First complete deploy/finalize-ubuntu-24.04.sh --resume." >&2;exit 1; }
 # This is a FRESH-install completion tool, not a general native x-ui upgrader.
 # It must refuse changed x-ui binaries rather than give misleading success.
-BUILD_ROOT="/opt/masiha-vpn-build-20261011"
+BUILD_ROOT="/opt/masiha-vpn-build-v3.11.0"
 if [[ -v MASIHA_BUILD_ROOT && -n "$MASIHA_BUILD_ROOT" ]]; then BUILD_ROOT="$MASIHA_BUILD_ROOT"; fi
 [[ -s "$BUILD_ROOT/x-ui" ]] || { echo "Missing compiled Masiha x-ui source build" >&2;exit 1; }
 cmp -s "$BUILD_ROOT/x-ui" /usr/local/x-ui/x-ui ||
