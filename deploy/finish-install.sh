@@ -27,6 +27,8 @@ echo "=== Preparing independent Masiha sales/VPN/backup web interface ==="
 bash "$ROOT/deploy/install-sidecar.sh"
 # Optional media worker remains idle until the API key and model access are configured.
 bash "$ROOT/deploy/install-ai-media.sh"
+# Enable the private AI channel handoff and admin-only conversation monitor.
+bash "$ROOT/deploy/install-channel-manager.sh"
 echo "=== Verifying native panel, OpenVPN, OpenConnect, shared quotas and sales worker ==="
 MASIHA_EXPECT_DEFAULT_INBOUNDS=1 MASIHA_EXPECT_EXTRA_INBOUNDS=1 MASIHA_EXPECT_BENCHMARK_INBOUNDS=1 \
  bash "$ROOT/deploy/verify-install.sh"
