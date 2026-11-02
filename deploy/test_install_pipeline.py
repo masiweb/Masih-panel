@@ -77,6 +77,15 @@ class GitInstallerTests(unittest.TestCase):
         self.assertIn("masihaSelfUpdateDisabledMessage", patch)
         self.assertIn("Update through the Masiha Git deployment process", patch)
 
+    def test_fresh_server_media_and_onboarding_runtime_dependencies(self):
+        install = file("deploy/install-ubuntu-24.04.sh")
+        self.assertIn('for module in "$REPO_ROOT"/runtime/*.py',install)
+        self.assertIn("recover-start-prompts.py",install)
+        sidecar = file("deploy/install-sidecar.sh")
+        self.assertLess(sidecar.index("if ! grep -q 'MASIHA-SIDECAR BEGIN'"),
+                        sidecar.index("<<'PYSESSION'"))
+        self.assertIn("extra.rstrip()+'\\n  location /sub/ {'",sidecar)
+
     def test_private_chat_and_admin_audit_deployed_with_fresh_install(self):
         install = file("deploy/install-ubuntu-24.04.sh")
         finish = file("deploy/finish-install.sh")
@@ -85,6 +94,23 @@ class GitInstallerTests(unittest.TestCase):
         for module in ("test_channel_manager.py","test_ai_admin_audit.py"):
             self.assertIn(module, install)
         self.assertIn('bash "$ROOT/deploy/install-channel-manager.sh"', finish)
+
+    def test_interrupted_install_has_guarded_recovery(self):
+        install=file("deploy/install-ubuntu-24.04.sh")
+        rescue=file("deploy/resume-interrupted-install.sh")
+        finish=file("deploy/finish-install.sh")
+        self.assertIn("resume-interrupted-install.sh", install)
+        for needle in ("--check", "--resume", "--register-unsafely-without-email",
+                       "finalize-ubuntu-24.04.sh", "finish-install.sh",
+                       "cmp -s", "client_traffics"):
+            self.assertIn(needle, rescue)
+        self.assertNotIn("print(' Admin password    : '+data['XUI_PASSWORD'])",finish)
+        self.assertIn("root-only file /root/masiha-vpn-initial-login.env",finish)
+
+    def test_menu_test_does_not_use_obsolete_build_directory(self):
+        nav=file("sidecar/test_nav.cjs")
+        self.assertNotIn("/opt/masiha-vpn-build-20261011",nav)
+        self.assertIn("process.env.MASIHA_BUILD_ROOT",nav)
 
     def test_no_early_success_until_sidecar(self):
         finalize = file("deploy/finalize-ubuntu-24.04.sh")
