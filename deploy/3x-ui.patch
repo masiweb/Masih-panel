@@ -1,11 +1,11 @@
 diff --git a/MASIHA-VPN.md b/MASIHA-VPN.md
 new file mode 100644
-index 00000000..b4977e29
+index 0000000..c967f5b
 --- /dev/null
 +++ b/MASIHA-VPN.md
 @@ -0,0 +1,32 @@
 +# Integrated OpenVPN and OpenConnect
-+Based on official MHSanaei/3x-ui v3.8.5, commit 7ef22f94c950ff09f0870e2295fa65ad5968742c.
++Based on official MHSanaei/3x-ui v3.11.0, commit c621ba9014a6aa21fd7c9ecf45655e44e24ebf13.
 +
 +## Interfaces
 +- /panel/openvpn and /panel/openconnect are native React/Ant Design pages.
@@ -25,7 +25,7 @@ index 00000000..b4977e29
 +- Existing subscription and Xray configuration are not modified.
 +
 +## Build and deployment
-+Go 1.27.1 and Node 24.21.0 are installed under /opt/masiha-vpn-extension/toolchain.
++Go 1.27.3 and Node 26.13.0 are installed under /opt/masiha-vpn-toolchains.
 +Run npm ci, npm run typecheck, npm run build inside frontend, then go build at repository root.
 +Build candidate outside /usr/local/x-ui, run smoke_panel.py and test_tunnels.py before deploying.
 +The tests create temporary users and isolated Linux network namespaces; they remove their own test accounts afterward.
@@ -33,12 +33,12 @@ index 00000000..b4977e29
 +Backup files are held under /opt/masiha-vpn-extension/backups (root-only).
 +
 +## Updates
-+An official 3x-ui binary update overwrites these custom routes and pages. Rebase this branch and rebuild for updates.
++The in-panel upstream self-update is deliberately blocked in this custom build: it would replace the Masiha binary with an official binary and break custom VPN, Telegram and backup routes. The update status therefore reports no upstream self-update. Update only through the Masiha Git release/build pipeline; Xray/geodata updates remain separate.
 +The helper, service settings and account database remain independent. Preserve the original LICENSE and attribution.
 +Do not commit account databases, password files, certificates or exported profiles to Git.
 diff --git a/SALES-BOT.md b/SALES-BOT.md
 new file mode 100644
-index 00000000..5594f453
+index 0000000..5594f45
 --- /dev/null
 +++ b/SALES-BOT.md
 @@ -0,0 +1,41 @@
@@ -85,7 +85,7 @@ index 00000000..5594f453
 +Amounts stored as integer tomans and sent as integer IRR (times 10). Browser status does not credit; server verifies authority and stored amount. Duplicate 100/101 responses are protected by a unique ledger reference. The callback path /xui/sales-payment has bounded concurrent verification slots and does not accept arbitrary admin actions.
 diff --git a/extensions/masiha-sales/sales.py b/extensions/masiha-sales/sales.py
 new file mode 100644
-index 00000000..16be7efd
+index 0000000..16be7ef
 --- /dev/null
 +++ b/extensions/masiha-sales/sales.py
 @@ -0,0 +1,268 @@
@@ -359,7 +359,7 @@ index 00000000..16be7efd
 + except Exception as e:print(json.dumps({"success":False,"msg":str(e)},ensure_ascii=False))
 diff --git a/extensions/masiha-sales/sales_worker.py b/extensions/masiha-sales/sales_worker.py
 new file mode 100644
-index 00000000..f4c1ce1c
+index 0000000..f4c1ce1
 --- /dev/null
 +++ b/extensions/masiha-sales/sales_worker.py
 @@ -0,0 +1,304 @@
@@ -669,7 +669,7 @@ index 00000000..f4c1ce1c
 +if __name__=="__main__":main()
 diff --git a/extensions/masiha-sales/test_sales.py b/extensions/masiha-sales/test_sales.py
 new file mode 100644
-index 00000000..d9aec523
+index 0000000..d9aec52
 --- /dev/null
 +++ b/extensions/masiha-sales/test_sales.py
 @@ -0,0 +1,77 @@
@@ -752,7 +752,7 @@ index 00000000..d9aec523
 +if __name__=="__main__":unittest.main()
 diff --git a/extensions/masiha-vpn/check_live.py b/extensions/masiha-vpn/check_live.py
 new file mode 100644
-index 00000000..557378e3
+index 0000000..557378e
 --- /dev/null
 +++ b/extensions/masiha-vpn/check_live.py
 @@ -0,0 +1,34 @@
@@ -792,7 +792,7 @@ index 00000000..557378e3
 +print('Live panel validation PASS')
 diff --git a/extensions/masiha-vpn/manager.py b/extensions/masiha-vpn/manager.py
 new file mode 100644
-index 00000000..910c7cdd
+index 0000000..910c7cd
 --- /dev/null
 +++ b/extensions/masiha-vpn/manager.py
 @@ -0,0 +1,157 @@
@@ -955,7 +955,7 @@ index 00000000..910c7cdd
 +if __name__=="__main__": main()
 diff --git a/extensions/masiha-vpn/masiha-vpn-extension.service b/extensions/masiha-vpn/masiha-vpn-extension.service
 new file mode 100644
-index 00000000..0f418f40
+index 0000000..0f418f4
 --- /dev/null
 +++ b/extensions/masiha-vpn/masiha-vpn-extension.service
 @@ -0,0 +1,17 @@
@@ -978,7 +978,7 @@ index 00000000..0f418f40
 +WantedBy=multi-user.target
 diff --git a/extensions/masiha-vpn/ocserv.conf b/extensions/masiha-vpn/ocserv.conf
 new file mode 100644
-index 00000000..04c937af
+index 0000000..04c937a
 --- /dev/null
 +++ b/extensions/masiha-vpn/ocserv.conf
 @@ -0,0 +1,35 @@
@@ -1019,7 +1019,7 @@ index 00000000..04c937af
 +tls-priorities = "NORMAL:%SERVER_PRECEDENCE:-VERS-SSL3.0:-VERS-TLS1.0:-VERS-TLS1.1"
 diff --git a/extensions/masiha-vpn/openvpn.conf b/extensions/masiha-vpn/openvpn.conf
 new file mode 100644
-index 00000000..cf0d614f
+index 0000000..cf0d614
 --- /dev/null
 +++ b/extensions/masiha-vpn/openvpn.conf
 @@ -0,0 +1,28 @@
@@ -1053,7 +1053,7 @@ index 00000000..cf0d614f
 +verb 3
 diff --git a/extensions/masiha-vpn/smoke_panel.py b/extensions/masiha-vpn/smoke_panel.py
 new file mode 100644
-index 00000000..724a5a85
+index 0000000..724a5a8
 --- /dev/null
 +++ b/extensions/masiha-vpn/smoke_panel.py
 @@ -0,0 +1,66 @@
@@ -1125,7 +1125,7 @@ index 00000000..724a5a85
 +   except subprocess.TimeoutExpired:p.kill();p.wait()
 diff --git a/extensions/masiha-vpn/test-oc-route.sh b/extensions/masiha-vpn/test-oc-route.sh
 new file mode 100755
-index 00000000..b2cea9d1
+index 0000000..b2cea9d
 --- /dev/null
 +++ b/extensions/masiha-vpn/test-oc-route.sh
 @@ -0,0 +1,8 @@
@@ -1139,7 +1139,7 @@ index 00000000..b2cea9d1
 +fi
 diff --git a/extensions/masiha-vpn/test_tunnels.py b/extensions/masiha-vpn/test_tunnels.py
 new file mode 100644
-index 00000000..3f1a13a9
+index 0000000..3f1a13a
 --- /dev/null
 +++ b/extensions/masiha-vpn/test_tunnels.py
 @@ -0,0 +1,58 @@
@@ -1203,7 +1203,7 @@ index 00000000..3f1a13a9
 +   run("ip","netns","delete",ns,check=False)
 diff --git a/extensions/masiha-vpn/worker.py b/extensions/masiha-vpn/worker.py
 new file mode 100644
-index 00000000..b715f5bd
+index 0000000..b715f5b
 --- /dev/null
 +++ b/extensions/masiha-vpn/worker.py
 @@ -0,0 +1,39 @@
@@ -1246,22 +1246,8 @@ index 00000000..b715f5bd
 +            print("Reconciliation error:",str(e),flush=True)
 +        time.sleep(15)
 +if __name__=="__main__": main()
-diff --git a/frontend/src/layouts/AppSidebar.tsx b/frontend/src/layouts/AppSidebar.tsx
-index a86dfe11..4b75a6e9 100644
---- a/frontend/src/layouts/AppSidebar.tsx
-+++ b/frontend/src/layouts/AppSidebar.tsx
-@@ -224,6 +224,9 @@ export default function AppSidebar() {
-       { key: '/', icon: 'dashboard', title: t('menu.dashboard') },
-       { key: '/inbounds', icon: 'inbound', title: t('menu.inbounds') },
-       { key: '/clients', icon: 'team', title: t('menu.clients') },
-+      { key: '/sales-bot', icon: 'setting', title: 'تنظیمات ربات فروش' },
-+      { key: '/openvpn', icon: 'inbound', title: 'OpenVPN' },
-+      { key: '/openconnect', icon: 'inbound', title: 'OpenConnect' },
-       { key: '/groups', icon: 'groups', title: t('menu.groups') },
-       { key: '/nodes', icon: 'cluster', title: t('menu.nodes') },
-       { key: '/hosts', icon: 'hosts', title: t('menu.hosts') },
 diff --git a/frontend/src/pages/sub/SubPage.tsx b/frontend/src/pages/sub/SubPage.tsx
-index 82acec7b..74577d45 100644
+index 5a54835..a0e5071 100644
 --- a/frontend/src/pages/sub/SubPage.tsx
 +++ b/frontend/src/pages/sub/SubPage.tsx
 @@ -14,6 +14,7 @@ import { ClipboardManager, LanguageManager } from '@/utils';
@@ -1272,7 +1258,7 @@ index 82acec7b..74577d45 100644
  import SubConfigsTab from './SubConfigsTab';
  import SubHeader from './SubHeader';
  import SubHero from './SubHero';
-@@ -142,6 +143,7 @@ export default function SubPage() {
+@@ -125,6 +126,7 @@ export default function SubPage() {
          children: <SubConfigsTab links={links} onCopy={copy} />,
        });
      }
@@ -1282,7 +1268,7 @@ index 82acec7b..74577d45 100644
  
 diff --git a/frontend/src/pages/sub/SubVPNProfiles.tsx b/frontend/src/pages/sub/SubVPNProfiles.tsx
 new file mode 100644
-index 00000000..5181f3de
+index 0000000..5181f3d
 --- /dev/null
 +++ b/frontend/src/pages/sub/SubVPNProfiles.tsx
 @@ -0,0 +1,38 @@
@@ -1326,7 +1312,7 @@ index 00000000..5181f3de
 +}
 diff --git a/frontend/src/pages/vpn/BackupRestorePanel.tsx b/frontend/src/pages/vpn/BackupRestorePanel.tsx
 new file mode 100644
-index 00000000..97dbdffb
+index 0000000..f37b02a
 --- /dev/null
 +++ b/frontend/src/pages/vpn/BackupRestorePanel.tsx
 @@ -0,0 +1,161 @@
@@ -1416,11 +1402,11 @@ index 00000000..97dbdffb
 +  return <Tag color={color}>{title}</Tag>;
 + };
 + return <Space direction="vertical" size="large" style={{width:'100%'}}>
-+  <Alert type="info" showIcon title="انتقال کامل سرویس‌ها؛ بدون کتابخانه موزیک و فیلم"
-+   description="کلاینت‌ها، نودها، اینباندها، حجم و مصرف، اشتراک‌ها، تنظیمات، کیف پول و سفارش‌ها حفظ می‌شوند. فایل‌ها، مشخصات موزیک و فیلم، نظرات و پلی‌لیست‌ها منتقل نمی‌شوند."/>
++  <Alert type="info" showIcon title="بکاپ سبک؛ مناسب انتقال حساب‌ها و سفارش‌ها، نه مهاجرت کامل"
++   description="این بخش جدول‌های رسانه و فایل‌های کش Local Telegram Bot API را حذف می‌کند؛ فایل‌ها، کتابخانه موزیک/فیلم، پلی‌لیست‌ها و داده‌های اثرانگشت صوتی منتقل نمی‌شوند. برای مهاجرت کامل همه سرویس‌ها و رسانه‌ها، از بکاپ نسخه ۲ خط فرمان استفاده کنید: python3 /opt/masiha-vpn-extension/full_backup.py backup --quiesce. این عملیات برای snapshot دقیق، سرویس‌های VPN، پنل و ربات را موقتاً متوقف و سپس برمی‌گرداند."/>
 +  <Card title="۱. ساخت و دانلود نسخه پشتیبان">
 +   <Space wrap style={{marginBottom:14}}>
-+    <Button type="primary" onClick={()=>void create()} loading={busy}>ساخت بکاپ جدید</Button>
++    <Button type="primary" onClick={()=>void create()} loading={busy}>ساخت بکاپ سبک (بدون رسانه)</Button>
 +    <Button onClick={()=>void reload()}>به‌روزرسانی وضعیت</Button>
 +    {status.has_key&&<a href={url('backup-secret.key')} download="backup-secret.key">
 +     <Button danger ghost>دانلود فایل کلید (محرمانه)</Button>
@@ -1493,7 +1479,7 @@ index 00000000..97dbdffb
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.css b/frontend/src/pages/vpn/SalesBotPage.css
 new file mode 100644
-index 00000000..66e9ae5a
+index 0000000..66e9ae5
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.css
 @@ -0,0 +1,79 @@
@@ -1578,7 +1564,7 @@ index 00000000..66e9ae5a
 +}
 diff --git a/frontend/src/pages/vpn/SalesBotPage.tsx b/frontend/src/pages/vpn/SalesBotPage.tsx
 new file mode 100644
-index 00000000..468dcd68
+index 0000000..468dcd6
 --- /dev/null
 +++ b/frontend/src/pages/vpn/SalesBotPage.tsx
 @@ -0,0 +1,181 @@
@@ -1765,7 +1751,7 @@ index 00000000..468dcd68
 +}
 diff --git a/frontend/src/pages/vpn/VPNPage.tsx b/frontend/src/pages/vpn/VPNPage.tsx
 new file mode 100644
-index 00000000..67476623
+index 0000000..6747662
 --- /dev/null
 +++ b/frontend/src/pages/vpn/VPNPage.tsx
 @@ -0,0 +1,97 @@
@@ -1866,32 +1852,34 @@ index 00000000..67476623
 +  </Modal>
 + </div>;
 +}
-diff --git a/frontend/src/routes.tsx b/frontend/src/routes.tsx
-index beb9a4e1..5a3a4934 100644
---- a/frontend/src/routes.tsx
-+++ b/frontend/src/routes.tsx
-@@ -4,6 +4,8 @@ import { Spin } from 'antd';
- 
- import PanelLayout from '@/layouts/PanelLayout';
- 
+diff --git a/frontend/src/routes/panelRoutes.tsx b/frontend/src/routes/panelRoutes.tsx
+index b003a11..3a6e3d4 100644
+--- a/frontend/src/routes/panelRoutes.tsx
++++ b/frontend/src/routes/panelRoutes.tsx
+@@ -25,6 +25,10 @@ const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
+ const XrayPage = lazy(() => import('@/pages/xray/XrayPage'));
+ const ApiDocsPage = lazy(() => import('@/pages/api-docs/ApiDocsPage'));
+ const SponsorsPage = lazy(() => import('@/pages/sponsors/SponsorsPage'));
 +const SalesBotPage = lazy(() => import('@/pages/vpn/SalesBotPage'));
 +const VPNPage = lazy(() => import('@/pages/vpn/VPNPage'));
- const IndexPage = lazy(() => import('@/pages/index/IndexPage'));
- const InboundsPage = lazy(() => import('@/pages/inbounds/InboundsPage'));
- const ClientsPage = lazy(() => import('@/pages/clients/ClientsPage'));
-@@ -42,6 +44,9 @@ const routes: RouteObject[] = [
-     children: [
-       { index: true, element: withSuspense(<IndexPage />) },
-       { path: 'inbounds', element: withSuspense(<InboundsPage />) },
-+      { path: 'sales-bot', element: withSuspense(<SalesBotPage />) },
-+      { path: 'openvpn', element: withSuspense(<VPNPage protocol="openvpn" />) },
-+      { path: 'openconnect', element: withSuspense(<VPNPage protocol="openconnect" />) },
-       { path: 'clients', element: withSuspense(<ClientsPage />) },
-       { path: 'groups', element: withSuspense(<GroupsPage />) },
-       { path: 'nodes', element: withSuspense(<NodesPage />) },
++const OpenVPNPage: ComponentType = () => <VPNPage protocol="openvpn" />;
++const OpenConnectPage: ComponentType = () => <VPNPage protocol="openconnect" />;
+ 
+ export interface PanelRoute {
+   path: string;
+@@ -38,6 +42,9 @@ export interface PanelRoute {
+ export const PANEL_ROUTES: PanelRoute[] = [
+   { path: '/', titleKey: 'menu.dashboard', icon: DashboardOutlined, component: IndexPage },
+   { path: '/inbounds', titleKey: 'menu.inbounds', icon: ImportOutlined, component: InboundsPage },
++  { path: '/sales-bot', titleKey: 'تنظیمات ربات فروش', icon: SettingOutlined, component: SalesBotPage },
++  { path: '/openvpn', titleKey: 'OpenVPN', icon: ImportOutlined, component: OpenVPNPage },
++  { path: '/openconnect', titleKey: 'OpenConnect', icon: ImportOutlined, component: OpenConnectPage },
+   { path: '/clients', titleKey: 'menu.clients', icon: TeamOutlined, component: ClientsPage },
+   { path: '/groups', titleKey: 'menu.groups', icon: TagsOutlined, component: GroupsPage },
+   { path: '/nodes', titleKey: 'menu.nodes', icon: ClusterOutlined, component: NodesPage },
 diff --git a/frontend/src/test/sales-bot.test.tsx b/frontend/src/test/sales-bot.test.tsx
 new file mode 100644
-index 00000000..5122ca12
+index 0000000..5122ca1
 --- /dev/null
 +++ b/frontend/src/test/sales-bot.test.tsx
 @@ -0,0 +1,24 @@
@@ -1922,7 +1910,7 @@ index 00000000..5122ca12
 \ No newline at end of file
 diff --git a/frontend/src/test/vpn-page.test.tsx b/frontend/src/test/vpn-page.test.tsx
 new file mode 100644
-index 00000000..ad458494
+index 0000000..ad45849
 --- /dev/null
 +++ b/frontend/src/test/vpn-page.test.tsx
 @@ -0,0 +1,25 @@
@@ -1952,10 +1940,10 @@ index 00000000..ad458494
 + await waitFor(()=>expect(screen.getByLabelText('نام کاربری')).not.toBeNull());
 +});
 diff --git a/internal/sub/controller.go b/internal/sub/controller.go
-index 5f5b2ae3..d7722ebe 100644
+index e2de1f7..db4c6ba 100644
 --- a/internal/sub/controller.go
 +++ b/internal/sub/controller.go
-@@ -327,6 +327,8 @@ func (a *SUBController) initRouter(g *gin.RouterGroup) {
+@@ -348,6 +348,8 @@ func (a *SUBController) initRouter(g *gin.RouterGroup) {
  	gLink.GET(":subid", a.subs)
  	gLink.HEAD(":subid", a.subs)
  	gLink.GET(":subid/hwid-status", a.hwidStatus)
@@ -1963,10 +1951,10 @@ index 5f5b2ae3..d7722ebe 100644
 +	gLink.GET(":subid/vpn/:client/:protocol", a.masihaProfiles)
  	gLink.HEAD(":subid/hwid-status", a.hwidStatus)
  	if a.jsonEnabled {
- 		gJson := g.Group(a.subJsonPath)
+ 		gJson := g.Group(a.subJsonPath, setNoCacheHeaders)
 diff --git a/internal/sub/masiha_profiles.go b/internal/sub/masiha_profiles.go
 new file mode 100644
-index 00000000..33eca196
+index 0000000..33eca19
 --- /dev/null
 +++ b/internal/sub/masiha_profiles.go
 @@ -0,0 +1,65 @@
@@ -2036,13 +2024,14 @@ index 00000000..33eca196
 +	c.JSON(http.StatusOK, result.Obj)
 +}
 diff --git a/internal/web/controller/api.go b/internal/web/controller/api.go
-index c02eb2cd..298d4a65 100644
+index 4c9038f..5337abb 100644
 --- a/internal/web/controller/api.go
 +++ b/internal/web/controller/api.go
-@@ -177,6 +177,14 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
+@@ -200,6 +200,16 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
  	api.Use(middleware.ConfigEnvelopeMiddleware())
- 	api.Use(middleware.CSRFMiddleware())
+ 	api.Use(middleware.CSRFMiddleware(getRemoteIp))
  
++	// Masiha native VPN, sales and encrypted migration endpoints.
 +	api.POST("/masiha-vpn", masihaVPN)
 +	api.POST("/masiha-reconcile", masihaReconcile)
 +	api.POST("/sales-bot", masihaSales)
@@ -2051,12 +2040,13 @@ index c02eb2cd..298d4a65 100644
 +	api.POST("/masiha-backup/create", a.backupCreate)
 +	api.POST("/masiha-backup/import", a.backupUpload)
 +	api.POST("/masiha-backup/restore", a.backupRestore)
++
  	api.GET("/openapi.json", ServeOpenAPISpec)
  
  	// Inbounds API
 diff --git a/internal/web/controller/masiha_backup.go b/internal/web/controller/masiha_backup.go
 new file mode 100644
-index 00000000..183ddb02
+index 0000000..183ddb0
 --- /dev/null
 +++ b/internal/web/controller/masiha_backup.go
 @@ -0,0 +1,253 @@
@@ -2315,7 +2305,7 @@ index 00000000..183ddb02
 +}
 diff --git a/internal/web/controller/masiha_reconcile.go b/internal/web/controller/masiha_reconcile.go
 new file mode 100644
-index 00000000..fae8c7ef
+index 0000000..fae8c7e
 --- /dev/null
 +++ b/internal/web/controller/masiha_reconcile.go
 @@ -0,0 +1,36 @@
@@ -2357,7 +2347,7 @@ index 00000000..fae8c7ef
 +}
 diff --git a/internal/web/controller/masiha_sales.go b/internal/web/controller/masiha_sales.go
 new file mode 100644
-index 00000000..e3127f10
+index 0000000..e3127f1
 --- /dev/null
 +++ b/internal/web/controller/masiha_sales.go
 @@ -0,0 +1,75 @@
@@ -2438,7 +2428,7 @@ index 00000000..e3127f10
 +}
 diff --git a/internal/web/controller/masiha_vpn.go b/internal/web/controller/masiha_vpn.go
 new file mode 100644
-index 00000000..30a76886
+index 0000000..30a7688
 --- /dev/null
 +++ b/internal/web/controller/masiha_vpn.go
 @@ -0,0 +1,33 @@
@@ -2475,11 +2465,106 @@ index 00000000..30a76886
 +	c.Header("Cache-Control", "no-store")
 +	c.Data(http.StatusOK, "application/json; charset=utf-8", out)
 +}
+diff --git a/internal/web/service/panel/panel.go b/internal/web/service/panel/panel.go
+index 62ce7d1..f3bd0d0 100644
+--- a/internal/web/service/panel/panel.go
++++ b/internal/web/service/panel/panel.go
+@@ -126,23 +126,19 @@ func (s *PanelService) RestartPanel(delay time.Duration) error {
+ 	return nil
+ }
+ 
+-// GetUpdateInfo checks GitHub for the latest 3x-ui release. When the dev channel
+-// is enabled on a dev build it compares commits against the rolling dev release;
+-// otherwise it compares versions against the latest stable tag.
++// Masiha embeds custom VPN, Telegram commerce, and backup features into the
++// upstream panel. The upstream self-updater downloads an official binary and
++// would silently replace those changes, so this build intentionally reports
++// no upstream self-update. Deploy upgrades only from the matching Git patch.
++const masihaSelfUpdateDisabledMessage = "This is a Masiha-customized 3x-ui build. Updating from the panel would overwrite custom VPN, Telegram, and backup features. Update through the Masiha Git deployment process."
++
+ func (s *PanelService) GetUpdateInfo() (*PanelUpdateInfo, error) {
+-	if devChannelActive() {
+-		return getDevUpdateInfo()
+-	}
+-	latest, err := fetchLatestPanelVersion()
+-	if err != nil {
+-		return nil, err
+-	}
+-	current := config.GetBaseVersion()
++	current := config.GetPanelVersion()
+ 	return &PanelUpdateInfo{
+ 		Channel:         "stable",
+ 		CurrentVersion:  current,
+-		LatestVersion:   latest,
+-		UpdateAvailable: isNewerVersion(latest, current),
++		LatestVersion:   current,
++		UpdateAvailable: false,
+ 	}, nil
+ }
+ 
+@@ -182,14 +178,14 @@ func getDevUpdateInfo() (*PanelUpdateInfo, error) {
+ // setting. Returns the run ID to pass to GetUpdateStatus so the caller can
+ // tell this run's result apart from a stale one.
+ func (s *PanelService) StartUpdate() (int64, error) {
+-	return s.startUpdate(devChannelActive())
++	return 0, fmt.Errorf("%s", masihaSelfUpdateDisabledMessage)
+ }
+ 
+ // StartUpdateChannel runs the updater against an explicitly chosen channel,
+ // overriding the local dev-channel setting. Used by the master node updater so
+ // a node can be moved to the dev channel from the central panel.
+ func (s *PanelService) StartUpdateChannel(dev bool) (int64, error) {
+-	return s.startUpdate(dev)
++	return 0, fmt.Errorf("%s", masihaSelfUpdateDisabledMessage)
+ }
+ 
+ // GetUpdateStatus reports the outcome of the most recently launched panel
+diff --git a/internal/web/service/panel/panel_test.go b/internal/web/service/panel/panel_test.go
+index 9677606..af31b0d 100644
+--- a/internal/web/service/panel/panel_test.go
++++ b/internal/web/service/panel/panel_test.go
+@@ -4,6 +4,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"runtime"
++	"strings"
+ 	"sync"
+ 	"sync/atomic"
+ 	"testing"
+@@ -13,6 +14,28 @@ import (
+ 	"github.com/mhsanaei/3x-ui/v3/internal/web/service"
+ )
+ 
++func TestMasihaBuildDisablesOfficialSelfUpdate(t *testing.T) {
++	service := &PanelService{}
++	for name, update := range map[string]func() (int64, error){
++		"stable":  func() (int64, error) { return service.StartUpdate() },
++		"channel": func() (int64, error) { return service.StartUpdateChannel(true) },
++	} {
++		if _, err := update(); err == nil || !strings.Contains(err.Error(), "Masiha") {
++			t.Fatalf("%s self-update error = %v, want protective Masiha message", name, err)
++		}
++	}
++}
++
++func TestMasihaBuildNeverAdvertisesUnsafeUpstreamUpdate(t *testing.T) {
++	info, err := (&PanelService{}).GetUpdateInfo()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if info.CurrentVersion == "" || info.LatestVersion != info.CurrentVersion || info.UpdateAvailable {
++		t.Fatalf("Masiha update info = %+v; expected current==latest and no upstream update", info)
++	}
++}
++
+ func TestIsNewerVersion(t *testing.T) {
+ 	cases := []struct {
+ 		latest  string
 diff --git a/internal/web/web.go b/internal/web/web.go
-index d726039a..0bf91879 100644
+index aaee5db..e36bf5b 100644
 --- a/internal/web/web.go
 +++ b/internal/web/web.go
-@@ -178,7 +178,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
+@@ -185,7 +185,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
  	// large backups and streams them to disk, so only its exact route suffix is
  	// exempt. Follow-up: make the limit a setting.
  	const maxRequestBodyBytes = 10 << 20 // 10 MiB
@@ -2488,7 +2573,7 @@ index d726039a..0bf91879 100644
  
  	webDomain, err := s.settingService.GetWebDomain()
  	if err != nil {
-@@ -250,6 +250,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
+@@ -257,6 +257,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
  	controller.SetDistFS(distFS)
  
  	g := engine.Group(basePath)
