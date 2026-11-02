@@ -72,6 +72,7 @@ class FastCatalog(unittest.TestCase):
    def close(self):pass
   fake=FakeConn()
   with patch.object(upload,"AUDIO_HTTP") as opener,\
+       patch.object(sales,"telegram_local_enabled",return_value=False),\
        patch.object(upload.http.client,"HTTPSConnection",return_value=fake),\
        patch.object(upload,"verified_storage_chat",return_value=101),\
        patch.object(upload,"delete_storage_message",return_value=True) as deleted,\
