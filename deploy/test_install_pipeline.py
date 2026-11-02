@@ -77,6 +77,15 @@ class GitInstallerTests(unittest.TestCase):
         self.assertIn("masihaSelfUpdateDisabledMessage", patch)
         self.assertIn("Update through the Masiha Git deployment process", patch)
 
+    def test_private_chat_and_admin_audit_deployed_with_fresh_install(self):
+        install = file("deploy/install-ubuntu-24.04.sh")
+        finish = file("deploy/finish-install.sh")
+        for module in ("ai_admin_audit.py","channel_manager.py","channel_manager_worker.py"):
+            self.assertIn(module, install)
+        for module in ("test_channel_manager.py","test_ai_admin_audit.py"):
+            self.assertIn(module, install)
+        self.assertIn('bash "$ROOT/deploy/install-channel-manager.sh"', finish)
+
     def test_no_early_success_until_sidecar(self):
         finalize = file("deploy/finalize-ubuntu-24.04.sh")
         finish = file("deploy/finish-install.sh")
