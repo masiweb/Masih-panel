@@ -10,7 +10,7 @@ umask 077
 [[ "${1:-}" == "--resume" || "${1:-}" == "--from-installer" ]] ||
   { echo "Usage: sudo bash deploy/finalize-ubuntu-24.04.sh --resume" >&2; exit 2; }
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-20261011}"
+BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-v3.11.0}"
 # A root-owned interrupted-install marker is installed BEFORE modifying
 # service files. It enables an idempotent --resume after failures during
 # service start or verification, but never reconfigures a healthy production
