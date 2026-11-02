@@ -1,4 +1,6 @@
-const { JSDOM } = require('/opt/masiha-vpn-build-20261011/src/frontend/node_modules/jsdom');
+const path = require('node:path');
+const frontendRoot = process.env.MASIHA_BUILD_ROOT || '/opt/masiha-vpn-build-v3.11.0';
+const { JSDOM } = require(path.join(frontendRoot,'src/frontend/node_modules/jsdom'));
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const code = fs.readFileSync(require('node:path').join(__dirname,'nav.js'),'utf8');
