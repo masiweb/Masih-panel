@@ -741,6 +741,8 @@ class Commerce(unittest.TestCase):
  def test_recovery_queues_only_latest_old_channel_prompt(self):
   import importlib.util
   module_path=Path(__file__).resolve().parents[1]/"deploy"/"recover-start-prompts.py"
+  if not module_path.is_file():
+   module_path=Path(__file__).resolve().parent/"deploy"/"recover-start-prompts.py"
   spec=importlib.util.spec_from_file_location("onboarding_recovery",module_path)
   recovery=importlib.util.module_from_spec(spec);spec.loader.exec_module(recovery)
   with s.conn() as c:
