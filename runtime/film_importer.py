@@ -280,6 +280,9 @@ def download(url,path,hosts):
         if response.status!=200:raise RuntimeError("Video source HTTP "+str(response.status))
         expected=response.headers.get("Content-Length","")
         if expected.isdigit() and int(expected)>MAX_FILE:raise ValueError("SKIPPED_SIZE_LIMIT: source exceeds Telegram Local API 1950 MB limit")
+        # Reserve space for the download, MP4 remux and Telegram Local API copy.
+        if expected.isdigit() and shutil.disk_usage(path.parent).free < RESERVE+3*int(expected):
+            raise RuntimeError("Insufficient disk free space")
         mime=(response.headers.get("Content-Type","").split(";")[0].strip().lower())
         if mime in ("text/html","application/json","text/plain"):
             raise ValueError("Video URL returned webpage, not media")
@@ -570,6 +573,8 @@ def process_one(c, config):
     cfg=sales.settings(c)
     if not config["local_bot_api"]:return "waiting_for_local_bot_api"
     storage=audio.verified_storage_chat(cfg)
+    if shutil.disk_usage(TEMP.parent).free < RESERVE+256*1024*1024:
+        return "paused_low_disk"
     retry_missing_covers(c,config,cfg,storage)
     job=c.execute("""SELECT j.variant_id,v.source_url,v.send_method,j.attempts
        FROM film_import_jobs j JOIN film_variants v ON v.id=j.variant_id
@@ -585,13 +590,20 @@ def process_one(c, config):
       with tempfile.TemporaryDirectory(prefix="job-",dir=TEMP) as d:
         source=Path(d)/"source.bin";output=Path(d)/"stream.mp4"
         download(job["source_url"],source,config["hosts"])
+        if shutil.disk_usage(source.parent).free < RESERVE+2*source.stat().st_size:
+            raise RuntimeError("Insufficient disk free space")
         info=prepare_streamable(source,output)
+        if shutil.disk_usage(output.parent).free < RESERVE+output.stat().st_size:
+            raise RuntimeError("Insufficient disk free space")
+        cache_before=audio.local_cache_snapshot(cfg,"videos")
         fid,unique,message_id=upload(output,"sendVideo",config,cfg,storage,info)
         c.execute("""UPDATE film_variants SET send_method='sendVideo',file_id=?,file_unique_id=?,
           file_bytes=?,duration=?,width=?,height=?,video_codec=?,audio_codec=?,stream_ready=1,uploaded=?
           WHERE id=?""",(fid,unique,output.stat().st_size,info["duration"],info["width"],
           info["height"],info["video_codec"],info["audio_codec"],now(),vid))
         c.execute("UPDATE film_import_jobs SET state='uploaded',updated=? WHERE variant_id=?",(now(),vid));c.commit()
+        if audio.cleanup_uploaded_from_snapshot(cfg,"videos",cache_before,output.stat().st_size):
+            print("FILM_LOCAL_CACHE_REMOVED_AFTER_COMMIT",flush=True)
         title=c.execute("SELECT t.id,t.cover_url,t.cover_id FROM film_titles t JOIN film_variants v ON v.title_id=t.id WHERE v.id=?",(vid,)).fetchone()
         if title and title["cover_url"] and not title["cover_id"]:
           try:
@@ -602,7 +614,24 @@ def process_one(c, config):
       c.execute("BEGIN IMMEDIATE");mid=publish(c,vid);c.commit()
       return "published:"+str(mid) if mid else "uploaded_waiting_for_episode_qualities"
     except Exception as ex:
-      c.rollback();state="blocked" if isinstance(ex,ValueError) else "failed"
+      c.rollback()
+      if isinstance(ex,RuntimeError) and str(ex)=="Insufficient disk free space":
+        c.execute("""UPDATE film_import_jobs SET state='pending',
+          last_error='PAUSED_LOW_DISK',updated=? WHERE variant_id=?""",(now(),vid))
+        c.commit()
+        return "paused_low_disk"
+      if isinstance(ex,HTTPError) and ex.code in (429,500,502,503,504):
+        # Source throttling/outage is not a corrupt video; retry with cooldown.
+        previous=c.execute("SELECT attempts FROM film_import_jobs WHERE variant_id=?",
+                           (vid,)).fetchone()
+        attempts=min(7,(int(previous["attempts"]) if previous else 0)+1)
+        delay=min(6*3600,300*(2**min(attempts,6)))
+        c.execute("""UPDATE film_import_jobs SET state='failed',attempts=?,
+           last_error=?,updated=? WHERE variant_id=?""",
+           (attempts,"SOURCE_HTTP_"+str(ex.code)+"_RETRY",now()+delay,vid))
+        c.commit()
+        return "deferred_source_http_"+str(ex.code)
+      state="blocked" if isinstance(ex,ValueError) else "failed"
       detail=str(ex) if isinstance(ex,(ValueError,RuntimeError)) else type(ex).__name__
       detail=re.sub(r"https?://\S+","[source-url]",detail)
       detail=re.sub(r"/var/tmp/masiha-films/\S+","[temporary-file]",detail)

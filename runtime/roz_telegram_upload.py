@@ -15,12 +15,13 @@ import ssl
 import tempfile
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit, quote
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 
 _STORAGE_SEND_LOCK=threading.Lock()
 _STORAGE_LAST=0.0
+_TRANSCODE_LOCK=threading.BoundedSemaphore(1)
 
 def storage_send_pace():
     """Bound sendAudio + sendPhoto to one per 1.15s for one storage chat."""
@@ -46,20 +47,28 @@ def validate_mp3_url(url):
         raise ValueError("Audio host is not authorized RozMusic")
     if not p.path.lower().endswith(".mp3"):
         raise ValueError("Audio source must be MP3")
-    return url
+    # Keep the original host/scheme untouched; only percent-encode unsafe
+    # characters in already validated media paths and queries. Music sources
+    # frequently publish raw spaces and parentheses inside *.mp3 URLs.
+    encoded_path = quote(p.path, safe="/%:@!$&'()*+,;=-._~")
+    encoded_query = quote(p.query, safe="/%:@!$&'()*+,;=?-._~")
+    safe_url = urlunsplit((p.scheme, p.netloc, encoded_path, encoded_query, ""))
+    if urlsplit(safe_url).hostname != host:
+        raise ValueError("Untrusted normalized audio host")
+    return safe_url
 
 
 class SafeRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        validate_mp3_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        safe_url = validate_mp3_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, safe_url)
 
 
 AUDIO_HTTP = build_opener(SafeRedirect)
 
 
 def download_mp3(url, dest):
-    validate_mp3_url(url)
+    url = validate_mp3_url(url)
     req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "audio/mpeg,*/*;q=0.5"})
     with AUDIO_HTTP.open(req, timeout=60) as response:
         validate_mp3_url(response.url)
@@ -79,12 +88,35 @@ def download_mp3(url, dest):
         if downloaded < 4096:
             raise ValueError("Downloaded file too small to be a music file")
         with Path(dest).open("rb") as f:
-            magic = f.read(3)
-            # ID3 tag or standard MPEG Layer III sync byte.
-            if not (magic == b"ID3" or
-                    len(magic) >= 2 and magic[0] == 0xff and magic[1] & 0xe0 == 0xe0):
-                raise ValueError("Download is not an MP3 audio stream")
-    return downloaded
+            magic = f.read(12)
+        if magic[:3] == b"ID3" or (len(magic) >= 2 and magic[0] == 0xff and magic[1] & 0xe0 == 0xe0):
+            return downloaded
+        # One licensed source mislabels M4A (MP4/ftyp) audio as .mp3.
+        # Convert only this known container type; never publish non-audio.
+        if magic[4:8] != b"ftyp":
+            raise ValueError("Download is not an MP3 audio stream")
+        converted = Path(dest).with_name("converted-track.mp3")
+        try:
+            with _TRANSCODE_LOCK:
+                subprocess.run(["/usr/bin/ffmpeg","-nostdin","-hide_banner",
+                    "-loglevel","error","-i",str(dest),"-map","0:a:0",
+                    "-vn","-sn","-dn","-c:a","libmp3lame","-b:a","160k",
+                    "-threads","1","-f","mp3",str(converted)],
+                    check=True,timeout=120,stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL)
+            converted_size = converted.stat().st_size
+            if not 4096 <= converted_size <= MAX_AUDIO:
+                raise ValueError("Converted MP3 exceeds allowed size")
+            with converted.open("rb") as f:
+                prefix=f.read(3)
+            if prefix != b"ID3" and not (len(prefix)>=2 and prefix[0]==0xff and prefix[1]&0xe0==0xe0):
+                raise ValueError("Converted audio is not MP3")
+            os.replace(converted,dest)
+            return converted_size
+        except (subprocess.CalledProcessError,subprocess.TimeoutExpired,FileNotFoundError) as exc:
+            raise ValueError("Source M4A audio could not be safely converted") from exc
+        finally:
+            converted.unlink(missing_ok=True)
 
 
 def multipart_fields(fields, boundary):
@@ -121,6 +153,8 @@ def upload_to_telegram(path, artist, title, token, chat_id):
           if sales.telegram_local_enabled()
           else http.client.HTTPSConnection("api.telegram.org",timeout=120,
                                            context=ssl.create_default_context()))
+    if not sales.telegram_local_enabled():
+        conn._create_connection = sales._telegram_connect
     try:
         storage_send_pace()
         conn.putrequest("POST", "/bot" + token + "/sendAudio", skip_accept_encoding=True)
@@ -150,6 +184,90 @@ def upload_to_telegram(path, artist, title, token, chat_id):
                 "message_id": message.get("message_id")}
     finally:
         conn.close()
+
+
+def local_cache_snapshot(settings, kind="videos"):
+    """List known Local Bot API file names without triggering getFile downloads."""
+    import re
+    import sales
+    if kind not in ("music", "videos") or not sales.telegram_local_enabled():
+        return None
+    token = settings.get("token", "")
+    if not re.fullmatch(r"[0-9]{6,12}:[A-Za-z0-9_-]{20,}", token):
+        return None
+    folder = Path("/var/lib/telegram-bot-api") / token / kind
+    try:
+        if folder.is_symlink() or not folder.is_dir():
+            return None
+        return (time.time(), frozenset(p.name for p in folder.iterdir()
+                 if re.fullmatch(r"file_[0-9]+", p.name)))
+    except OSError:
+        return None
+
+
+def cleanup_uploaded_from_snapshot(settings, kind, snapshot, expected_size):
+    """Delete only freshly created exact-size video cache after durable DB commit.
+
+    No getFile call: getFile for large old videos can itself fill the disk.
+    """
+    import re
+    import stat
+    if kind != "videos" or snapshot is None or not expected_size:
+        return False
+    started, old_names = snapshot
+    token = settings.get("token", "")
+    if not re.fullmatch(r"[0-9]{6,12}:[A-Za-z0-9_-]{20,}", token):
+        return False
+    folder = Path("/var/lib/telegram-bot-api") / token / kind
+    if folder.is_symlink() or not folder.is_dir():
+        return False
+    removed = False
+    try:
+        for p in folder.iterdir():
+            if p.name in old_names or not re.fullmatch(r"file_[0-9]+", p.name):
+                continue
+            meta = p.lstat()
+            if (stat.S_ISREG(meta.st_mode) and meta.st_nlink == 1 and
+                meta.st_size == expected_size and meta.st_mtime >= started - 3):
+                p.unlink()
+                removed = True
+    except OSError:
+        return removed
+    return removed
+
+
+def cleanup_uploaded_local_cache(settings, file_id, kind="music"):
+    """Remove a confirmed Telegram upload's local cache after DB commit.
+
+    Telegram file_id is the durable reference. Never remove an arbitrary path
+    returned by getFile: only a regular file_N in this bot's own API cache.
+    """
+    import re
+    import stat
+    import sales
+    if kind not in ("music", "videos") or not sales.telegram_local_enabled():
+        return False
+    token = settings.get("token", "")
+    if not re.fullmatch(r"[0-9]{6,12}:[A-Za-z0-9_-]{20,}", token):
+        return False
+    expected = Path("/var/lib/telegram-bot-api") / token / kind
+    try:
+        info = sales.tg(settings, "getFile", {"file_id": file_id})
+        path = Path(info.get("file_path") or "")
+        if not path.is_absolute() or path.parent != expected:
+            return False
+        if not re.fullmatch(r"file_[0-9]+", path.name):
+            return False
+        if expected.is_symlink() or path.is_symlink():
+            return False
+        meta = path.lstat()
+        if not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1:
+            return False
+        path.unlink()
+        return True
+    except (OSError, ValueError, TypeError, KeyError):
+        # A housekeeping timer handles old files when local API is unavailable.
+        return False
 
 
 def delete_storage_message(settings, chat_id, message_id):
@@ -244,6 +362,8 @@ def upload_cover(url, settings):
     conn=(http.client.HTTPConnection("127.0.0.1",8081,timeout=35)
           if sales.telegram_local_enabled()
           else http.client.HTTPSConnection("api.telegram.org",timeout=35,context=ssl.create_default_context()))
+    if not sales.telegram_local_enabled():
+        conn._create_connection = sales._telegram_connect
     try:
         storage_send_pace()
         conn.putrequest("POST","/bot"+settings["token"]+"/sendPhoto",skip_accept_encoding=True)

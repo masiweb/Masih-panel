@@ -29,7 +29,7 @@ def configured(protocol):
     # The service isn't usable unless both the native daemon and verified
     # accounting hooks are in place.
     return (ACTIVE.is_file() and (ROOT/"accounting-verified").is_file()
-            and Path("/usr/sbin/ipsec").is_file() and Path("/usr/sbin/swanctl").is_file()
+            and Path("/usr/sbin/ipsec").is_file()
             and (protocol!="l2tp" or Path("/usr/sbin/xl2tpd").is_file()))
 
 def run(*argv,check=True):
@@ -153,8 +153,41 @@ def profile(protocol,username):
 def status(protocol):
     if protocol not in ALLOWED:raise ValueError("Invalid protocol")
     state=run("systemctl","is-active",UNITS[protocol],check=False).strip()
+    online=[]
+    if state=="active":
+        if protocol=="ikev2":
+            try:
+                import ipsec_accounting
+                raw=run("/usr/sbin/swanctl","--list-sas",check=False)
+                for entry in ipsec_accounting.parse_ike_sas(raw):
+                    online.append({"username":entry["username"],"session":entry["ike_id"],
+                                   "bytes_in":entry["up"],"bytes_out":entry["down"]})
+            except Exception:
+                pass
+        else:
+            try:
+                import ipsec_accounting
+                import json
+                for path in ipsec_accounting.SESSIONS.glob("ppp*.json"):
+                    if not ipsec_accounting.IFACE.fullmatch(path.stem):continue
+                    if not Path("/sys/class/net",path.stem).exists():continue
+                    obj=json.loads(path.read_text())
+                    online.append({"username":obj.get("name",""),"interface":path.stem})
+            except Exception:
+                pass
     return {"service":state,"endpoint":HOST+":500/4500 UDP",
-            "online":[],"configured":configured(protocol)}
+            "online":online,"configured":configured(protocol)}
+
+def expire_accounts():
+    if not ACTIVE.is_file():return 0
+    with db() as c:
+        expired=c.execute("SELECT username FROM users WHERE protocol IN ('ikev2','l2tp') AND enabled=1 AND expires>0 AND expires<=?",
+                          (int(time.time()),)).fetchall()
+        if expired:
+            c.execute("UPDATE users SET enabled=0 WHERE protocol IN ('ikev2','l2tp') AND enabled=1 AND expires>0 AND expires<=?",
+                      (int(time.time()),))
+            apply(c)
+        return len(expired)
 
 def handle(req):
     protocol=req.get("protocol")
@@ -171,6 +204,8 @@ def handle(req):
         if not configured(protocol):raise RuntimeError("IPsec service not enabled")
         command=req.get("operation")
         if command not in ("start","stop","restart"):raise ValueError("Invalid service operation")
+        if protocol=="l2tp" and command in ("start","restart"):
+            run("systemctl","start",UNITS["ikev2"])
         run("systemctl",command,UNITS[protocol])
         return status(protocol)
     if action=="config":return profile(protocol,req.get("username"))

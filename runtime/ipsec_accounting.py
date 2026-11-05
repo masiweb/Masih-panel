@@ -10,6 +10,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import unified
@@ -53,10 +54,19 @@ def parse_ike_sas(raw):
     emit()
     return output
 
-def _one_account(name):
+def _one_account(name, protocol):
+    # Reject missing, disabled and expired local accounts even when they
+    # are not linked to a shared Xray subscription.
+    import manager
+    with manager.db() as c:
+        row=c.execute("SELECT enabled,expires FROM users WHERE protocol=? AND username=?",
+                      (protocol,name)).fetchone()
+        if not row or not row["enabled"] or (row["expires"] and row["expires"]<=int(time.time())):
+            return False
     with unified.connection() as c:
         a=unified.account_for_username(c,name)
-        if not a:return True  # Standalone accounts have their own expiry policy.
+        if not a:
+            return True  # Valid standalone account; expiry enforced above.
         rows=[r for r in unified.clients(c) if r["id"]==a["client_id"] and r["created_at"]==a["generation"]]
         return bool(rows and unified.permitted(rows[0]))
 
@@ -74,7 +84,7 @@ def sample_ike(raw=None):
         session=unified.boot()+":ike:"+entry["ike_id"]+":"+entry["child_id"]
         unified.credit(username,"ikev2",session,entry["up"],entry["down"])
         total+=1
-        if not _one_account(username) and live:
+        if not _one_account(username,"ikev2") and live:
             # Stop an exhausted EAP session by its numeric IKE identifier.
             subprocess.run(["/usr/sbin/swanctl","--terminate","--ike-id",entry["ike_id"]],
                            timeout=10,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -89,7 +99,7 @@ def ppp_start():
     name=os.environ.get("PEERNAME","")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,39}",name):return
     path=session_path(iface)
-    if not _one_account(name):
+    if not _one_account(name,"l2tp"):
         subprocess.run(["/usr/sbin/ip","link","set",iface,"down"],timeout=5)
         return
     SESSIONS.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -120,7 +130,7 @@ def sample_ppp():
             in_bytes=int((root/"rx_bytes").read_text())
             out_bytes=int((root/"tx_bytes").read_text())
             unified.credit(payload["name"],"l2tp",payload["session"],out_bytes,in_bytes)
-            if not _one_account(payload["name"]):
+            if not _one_account(payload["name"],"l2tp"):
                 subprocess.run(["/usr/sbin/ip","link","set",iface,"down"],timeout=5)
             total+=1
         except (ValueError,KeyError,OSError):continue
@@ -133,6 +143,7 @@ def main():
     elif action=="collect":
         import ipsec_backend
         if not ipsec_backend.ACTIVE.exists():return
+        ipsec_backend.expire_accounts()
         sample_ppp()
         if ipsec_backend.configured("ikev2"):sample_ike()
     else:raise ValueError("Invalid action")

@@ -42,6 +42,32 @@ class IPsecSafety(unittest.TestCase):
    self.assertIn('"testuser" xl2tpd "long-password-1234" *',ppp)
    self.assertNotIn('test-password',str(ipsec.status("ikev2")))
    self.assertEqual(len(c.execute("SELECT * FROM ipsec_credentials").fetchall()),1)
+ def test_local_account_expiry_and_disable(self):
+  with ipsec.db() as c:
+   c.execute("INSERT INTO users VALUES('ikev2','localuser',1,0,'',1)")
+   c.execute("INSERT INTO users VALUES('l2tp','localuser',1,0,'',1)")
+  self.assertTrue(accounting._one_account("localuser","ikev2"))
+  self.assertTrue(accounting._one_account("localuser","l2tp"))
+  with ipsec.db() as c:
+   c.execute("UPDATE users SET enabled=0 WHERE protocol='ikev2' AND username='localuser'")
+  self.assertFalse(accounting._one_account("localuser","ikev2"))
+  self.assertTrue(accounting._one_account("localuser","l2tp"))
+  with ipsec.db() as c:
+   c.execute("UPDATE users SET enabled=1, expires=1 WHERE username='localuser'")
+  self.assertFalse(accounting._one_account("localuser","ikev2"))
+  self.assertFalse(accounting._one_account("localuser","l2tp"))
+  self.assertFalse(accounting._one_account("missing","l2tp"))
+ def test_expire_accounts_removes_access(self):
+  from unittest.mock import patch
+  ipsec.ACTIVE.parent.mkdir(parents=True, exist_ok=True)
+  ipsec.ACTIVE.touch()
+  with ipsec.db() as c:
+   c.execute("INSERT INTO users VALUES('ikev2','expired1',1,1,'',1)")
+  with patch.object(ipsec,"apply") as apply:
+   self.assertEqual(ipsec.expire_accounts(),1)
+   apply.assert_called_once()
+  with ipsec.db() as c:
+   self.assertEqual(c.execute("SELECT enabled FROM users WHERE username='expired1'").fetchone()[0],0)
  def test_invalid_credentials(self):
   for username,password in [("a","long-password-1234"),("goodname","bad\npassword"),("goodname","short"),("bad space","good-password-1234")]:
    with self.assertRaises(ValueError):ipsec.validate(username,password)

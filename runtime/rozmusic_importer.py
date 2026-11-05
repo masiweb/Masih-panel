@@ -93,7 +93,7 @@ def parse_article(body):
  valid_mp3=[]
  for candidate in candidates:
   try:
-   path=trusted(html.unescape(candidate),"mp3")
+   path=telegram_upload.validate_mp3_url(trusted(html.unescape(candidate),"mp3"))
    if path not in valid_mp3:valid_mp3.append(path)
   except ValueError:continue
  if not valid_mp3:return None
@@ -182,6 +182,13 @@ def index(c,delay=1.0,max_sitemaps=0):
   if j==1 or j%10==0 or j==len(files):
    print("INDEX",j,"OF",len(files),"NEW",added,"URLS",len(batch),flush=True)
   if delay and j<len(files):time.sleep(delay)
+ # Recheck previously missing source pages at most once a day. Recreated
+ # pages can then enter the existing verified audio upload path automatically.
+ c.execute("""UPDATE roz_catalog_queue SET state='pending', attempts=0,
+     last_error='',updated=0 WHERE state='error' AND attempts>=3
+     AND last_error='Source HTTP 404' AND updated<?""",
+     (int(time.time())-86400,))
+ c.commit()
  return len(files),added
 
 def save(c,playlist_id,article_url,row,telegram_file_id,cover_id=""):
@@ -258,6 +265,10 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
  if prepare:rollback_legacy_links(c)
  processed=0
  while True:
+  import shutil
+  if shutil.disk_usage("/var/lib/telegram-bot-api").free < 3*1024**3:
+   print("MUSIC_PAUSED_LOW_DISK",flush=True)
+   break
   c.execute("BEGIN IMMEDIATE")
   try:
    item=c.execute("""SELECT q.url,q.attempts FROM roz_catalog_queue q
@@ -274,6 +285,7 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
    raise
   if not item:break
   url=item["url"]
+  uploaded_cache_id=None
   try:
    if confirmed(c,url):
     c.execute("""UPDATE roz_catalog_queue SET state='done',updated=?
@@ -320,6 +332,7 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
            updated=excluded.updated""",(mid,fingerprint_id,int(time.time())))
      c.execute("""UPDATE roz_catalog_queue SET state='done',last_error='',updated=?
                   WHERE url=?""",(int(time.time()),url))
+     uploaded_cache_id=file_id
      print("TELEGRAM_FILE_SAVED bytes",size,"TEMP_FILE_REMOVED yes",
            "STORAGE_MESSAGE_REMOVED",deleted,flush=True)
   except HTTPError as exc:
@@ -329,9 +342,12 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
     c.commit()
     time.sleep(180)
     continue
-   c.execute("""UPDATE roz_catalog_queue SET state='error',attempts=attempts+1,
+   # A verified 404 on all listed audio variants is not a transient 5xx.
+   # Stop repeated requests in this run; the daily index will recheck it.
+   tries = 3 if exc.code in (404,410) else item["attempts"]+1
+   c.execute("""UPDATE roz_catalog_queue SET state='error',attempts=?,
                 last_error=?,updated=? WHERE url=?""",
-             ("Source HTTP "+str(exc.code),int(time.time()),url))
+             (tries,"Source HTTP "+str(exc.code),int(time.time()),url))
   except (URLError,TimeoutError,ValueError,OSError,RuntimeError,
           http.client.HTTPException,ET.ParseError) as exc:
    # Never log Telegram token, MP3 URL, secrets, or a binary request body.
@@ -345,6 +361,9 @@ def run(c,pid,delay=3.0,max_posts=0,prepare=True):
    print("IMPORT_RETRY",detail,flush=True)
    if "Telegram HTTP 429" in detail:time.sleep(180)
   c.commit()
+  if uploaded_cache_id:
+   if telegram_upload.cleanup_uploaded_local_cache(cfg,uploaded_cache_id,"music"):
+    print("MUSIC_LOCAL_CACHE_REMOVED_AFTER_COMMIT",flush=True)
   processed+=1
   if processed==1 or processed%25==0:
    print("PROGRESS",json.dumps(stats(c,pid)),flush=True)

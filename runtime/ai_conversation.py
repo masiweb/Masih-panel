@@ -46,11 +46,13 @@ def record(c,uid,question,answer,model,reference):
    (uid,"user",question,"",reference,now()))
  c.execute("INSERT OR IGNORE INTO ai_chat_history(user_id,role,content,model,reference,created) VALUES(?,?,?,?,?,?)",
    (uid,"assistant",answer,model,reference,now()))
+ import ai_admin_audit
+ ai_admin_audit.record_text(c,uid,reference,question,answer,model,now())
 
 def clear(c,uid):
  c.execute("DELETE FROM ai_chat_history WHERE user_id=?",(uid,))
  c.execute("DELETE FROM ai_long_requests WHERE user_id=?",(uid,))
- return enqueue(c,uid,"🗑 سابقه گفتگوهای هوش مصنوعی شما پاک شد. پرسش‌های جدید بدون استفاده از گفتگوهای قبلی پاسخ داده می‌شوند.",
+ return enqueue(c,uid,"🗑 سابقه گفتگوهای هوش مصنوعی شما پاک شد. پرسش‌های جدید بدون استفاده از گفتگوهای قبلی پاسخ داده می‌شوند. گزارش مدیریتی استفاده تا ۹۰ روز باقی می‌ماند.",
    [[("💬 گفتگوی جدید","fun:ai:text"),("🏠 منوی اصلی","home")]])
 
 def offer(c,uid,question,update_id):

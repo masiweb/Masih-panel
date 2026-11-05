@@ -301,6 +301,9 @@ class Handler(BaseHTTPRequestHandler):
             if trusted_panel_api_path(path, "sales-bot"):
                 body = self.read_json(65536)
                 return self.send_bytes(200, json_command("sales.py", body))
+            if trusted_panel_api_path(path, "masiha-film"):
+                body = self.read_json(65536)
+                return self.send_bytes(200, json_command("film_admin.py", body))
             if trusted_panel_api_path(path, "masiha-backup/create"):
                 self.read_json(2048)
                 job = secrets.token_hex(16)
