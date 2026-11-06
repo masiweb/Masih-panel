@@ -1312,10 +1312,10 @@ index 0000000..5181f3d
 +}
 diff --git a/frontend/src/pages/vpn/BackupRestorePanel.tsx b/frontend/src/pages/vpn/BackupRestorePanel.tsx
 new file mode 100644
-index 0000000..ea37528
+index 0000000..9e54448
 --- /dev/null
 +++ b/frontend/src/pages/vpn/BackupRestorePanel.tsx
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,368 @@
 +import {useEffect,useMemo,useState} from 'react';
 +import {Alert,Button,Card,Checkbox,Input,Space,Table,Tag,Typography,Upload,App,Descriptions,Popconfirm} from 'antd';
 +import type {UploadFile} from 'antd';
@@ -1360,6 +1360,7 @@ index 0000000..ea37528
 + const [sshTrusted,setSshTrusted]=useState(false);
 + const [sshBusy,setSshBusy]=useState(false);
 + const [sshJob,setSshJob]=useState('');
++ const [recheckJob,setRecheckJob]=useState('');
 + const recent=useMemo(()=>[...status.jobs].sort((a,b)=>(b.at||0)-(a.at||0)).slice(0,9),[status.jobs]);
 + // The verified upload can still be selected after a browser refresh.
 + const verifiedUpload=recent.find(j=>j.action==='inspect'&&j.state==='done'&&j.metadata);
@@ -1391,6 +1392,20 @@ index 0000000..ea37528
 +   await reload();
 +  }catch(e){message.error(String(e))}
 +  finally{setBusy(false)}
++ };
++ const recheckReceived=async(row:BackupEntry)=>{
++  if(row.kind!=='received'||!row.job)return;
++  const job=row.job;
++  setRecheckJob(job);
++  try{
++   const r=await HttpUtil.post<{job:string}>(endpoint+'/reinspect',
++    {job},{headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
++   if(!r.success||r.obj?.job!==job)throw new Error(r.msg||'آغاز بررسی بکاپ دریافتی ناموفق بود');
++   setImportID(job);
++   message.success('بررسی مجدد بکاپ موجود روی همین سرور شروع شد؛ بدون انتقال یا دانلود دوباره.');
++   await reload();
++  }catch(e){message.error(String(e))}
++  finally{setRecheckJob('')}
 + };
 + const deleteArchive=async(row:BackupEntry)=>{
 +  setBusy(true);
@@ -1512,6 +1527,9 @@ index 0000000..ea37528
 +       {r.kind!=='received'&&<a href={url(r.name)} download={r.name}>
 +        <Button size="small">دانلود</Button>
 +       </a>}
++       {r.kind==='received'&&r.job&&<Button size="small" type="primary"
++        loading={recheckJob===r.job}
++        onClick={()=>void recheckReceived(r)}>بررسی مجدد روی همین سرور</Button>}
 +       <Popconfirm
 +        title="حذف دائمی بکاپ"
 +        description={<span>بکاپ {r.name} و فایل‌های مرتبط حذف می‌شوند. پس از حذف بازیابی ممکن نیست؛ کلید اصلی رمزگذاری و دیتابیس‌ها حفظ می‌شوند.</span>}
@@ -1595,7 +1613,17 @@ index 0000000..ea37528
 +     </Space>}/>}
 +   </Space>
 +  </Card>
-+  <Card title="۳. وارد کردن دستی بکاپ روی سرور جدید">
++  <Card title="۳. بکاپ‌های دریافت‌شده و بررسی مجدد در همین سرور">
++   <Space direction="vertical" style={{width:'100%'}}>
++    <Typography.Text>فایل‌های دریافت‌شده از سرور فرستنده در جدول بخش اول، با برچسب «دریافت‌شده» مشخص می‌شوند.
++     کنار هر فایل، دکمه «بررسی مجدد روی همین سرور» قرار دارد. این عملیات بدون اتصال SSH به فرستنده،
++     بدون ارسال مجدد و بدون جایگزینی دیتابیس انجام می‌شود.</Typography.Text>
++    {!status.backups.some(b=>b.kind==='received')&&<Alert showIcon type="warning"
++     title="در این سرور بکاپ دریافتی پیدا نشد"
++     description="اگر فایل روی سرور دیگری ارسال شده است، IP مقصد انتقال را بررسی کنید. تا زمانی که فایل GPG و کلید آن روی همین سرور وجود نداشته باشند، بررسی مجدد ممکن نیست."/>}
++   </Space>
++  </Card>
++  <Card title="۴. وارد کردن دستی بکاپ روی سرور جدید">
 +   <Space direction="vertical" style={{width:'100%'}}>
 +    <Typography.Text type="secondary">پس از نصب نسخه جدید مسیحا با دامنه مقصد، فایل GPG و کلید آن را همین‌جا بارگذاری کن (حداکثر ۶ گیگابایت).</Typography.Text>
 +    <Space wrap align="start">
@@ -1623,7 +1651,7 @@ index 0000000..ea37528
 +    </Descriptions>}
 +   </Space>
 +  </Card>
-+  <Card title="۴. بازیابی با حفظ هویت سرور جدید">
++  <Card title="۵. بازیابی با حفظ هویت سرور جدید">
 +   <Alert type="warning" showIcon style={{marginBottom:12}}
 +    title="بازیابی محافظت‌شده؛ بازگشت‌پذیر"
 +    description="اطلاعات کاربران، ربات و گواهی‌های VPN از بکاپ بازیابی می‌شوند. دامنه، گواهی HTTPS، Nginx، رمز مدیریت پنل مقصد و باینری جدید حفظ خواهند شد. نود خارجی و پردازشگرهای تلگرام پس از بازیابی خودکار فعال نمی‌شوند. فایل‌ها و دیتابیس‌های فعلی مقصد نسخه بازگشت خواهند داشت."/>
@@ -2206,7 +2234,7 @@ diff --git a/internal/web/controller/api.go b/internal/web/controller/api.go
 index 4c9038f..5337abb 100644
 --- a/internal/web/controller/api.go
 +++ b/internal/web/controller/api.go
-@@ -200,6 +200,17 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
+@@ -200,6 +200,18 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
  	api.Use(middleware.ConfigEnvelopeMiddleware())
  	api.Use(middleware.CSRFMiddleware(getRemoteIp))
  
@@ -2218,6 +2246,7 @@ index 4c9038f..5337abb 100644
 +	api.GET("/masiha-backup/download/:name", a.backupDownload)
 +	api.POST("/masiha-backup/create", a.backupCreate)
 +	api.POST("/masiha-backup/delete", a.backupDelete)
++	api.POST("/masiha-backup/reinspect", a.backupReinspect)
 +	api.POST("/masiha-backup/import", a.backupUpload)
 +	api.POST("/masiha-backup/restore", a.backupRestore)
 +
@@ -2226,10 +2255,10 @@ index 4c9038f..5337abb 100644
  	// Inbounds API
 diff --git a/internal/web/controller/masiha_backup.go b/internal/web/controller/masiha_backup.go
 new file mode 100644
-index 0000000..bfa983a
+index 0000000..a6165ed
 --- /dev/null
 +++ b/internal/web/controller/masiha_backup.go
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,394 @@
 +package controller
 +
 +import (
@@ -2549,6 +2578,44 @@ index 0000000..bfa983a
 +		return
 +	}
 +	c.JSON(202, gin.H{"success": true, "obj": gin.H{"job": id}})
++}
++
++// backupReinspect checks an already received archive on the destination.
++// No restore, reupload, database writes or bot activation is performed here.
++func (a *APIController) backupReinspect(c *gin.Context) {
++	if !a.backupAdmin(c) {
++		return
++	}
++	var body map[string]interface{}
++	if c.ShouldBindJSON(&body) != nil {
++		c.JSON(400, gin.H{"success": false, "msg": "Invalid request"})
++		return
++	}
++	job, ok := body["job"].(string)
++	if !ok || !safeIdentifier.MatchString(job) {
++		c.JSON(400, gin.H{"success": false, "msg": "Invalid received backup ID"})
++		return
++	}
++	received := filepath.Join(archiveDirectory, "web-imports")
++	for _, ext := range []string{".gpg", ".key"} {
++		if !privateRegular(filepath.Join(received, job+ext)) {
++			c.JSON(404, gin.H{"success": false, "msg": "Received backup or key not found"})
++			return
++		}
++	}
++	statePath := filepath.Join(archiveDirectory, "web-jobs", job+".json")
++	if raw, err := os.ReadFile(statePath); err == nil {
++		var row map[string]interface{}
++		if json.Unmarshal(raw, &row) == nil && row["state"] == "running" {
++			c.JSON(409, gin.H{"success": false, "msg": "Backup verification is running"})
++			return
++		}
++	}
++	if err := launchBackup(job, "inspect"); err != nil {
++		c.JSON(503, gin.H{"success": false, "msg": "Could not start verification"})
++		return
++	}
++	c.JSON(202, gin.H{"success": true, "obj": gin.H{"job": job}})
 +}
 +func (a *APIController) backupRestore(c *gin.Context) {
 +	if !a.backupAdmin(c) {

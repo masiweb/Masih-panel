@@ -318,6 +318,44 @@ func (a *APIController) backupUpload(c *gin.Context) {
 	}
 	c.JSON(202, gin.H{"success": true, "obj": gin.H{"job": id}})
 }
+
+// backupReinspect checks an already received archive on the destination.
+// No restore, reupload, database writes or bot activation is performed here.
+func (a *APIController) backupReinspect(c *gin.Context) {
+	if !a.backupAdmin(c) {
+		return
+	}
+	var body map[string]interface{}
+	if c.ShouldBindJSON(&body) != nil {
+		c.JSON(400, gin.H{"success": false, "msg": "Invalid request"})
+		return
+	}
+	job, ok := body["job"].(string)
+	if !ok || !safeIdentifier.MatchString(job) {
+		c.JSON(400, gin.H{"success": false, "msg": "Invalid received backup ID"})
+		return
+	}
+	received := filepath.Join(archiveDirectory, "web-imports")
+	for _, ext := range []string{".gpg", ".key"} {
+		if !privateRegular(filepath.Join(received, job+ext)) {
+			c.JSON(404, gin.H{"success": false, "msg": "Received backup or key not found"})
+			return
+		}
+	}
+	statePath := filepath.Join(archiveDirectory, "web-jobs", job+".json")
+	if raw, err := os.ReadFile(statePath); err == nil {
+		var row map[string]interface{}
+		if json.Unmarshal(raw, &row) == nil && row["state"] == "running" {
+			c.JSON(409, gin.H{"success": false, "msg": "Backup verification is running"})
+			return
+		}
+	}
+	if err := launchBackup(job, "inspect"); err != nil {
+		c.JSON(503, gin.H{"success": false, "msg": "Could not start verification"})
+		return
+	}
+	c.JSON(202, gin.H{"success": true, "obj": gin.H{"job": job}})
+}
 func (a *APIController) backupRestore(c *gin.Context) {
 	if !a.backupAdmin(c) {
 		return

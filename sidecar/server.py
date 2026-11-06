@@ -371,6 +371,23 @@ class Handler(BaseHTTPRequestHandler):
                     handoff.unlink(missing_ok=True)
                     raise
                 return self.send_bytes(202,envelope(True,{"job":job}))
+            if trusted_panel_api_path(path, "masiha-backup/reinspect"):
+                body=self.read_json(2048)
+                job=body.get("job") if isinstance(body,dict) else None
+                if not isinstance(job,str) or not HEX.fullmatch(job):
+                    return self.error_json(400,"شناسه بکاپ دریافتی معتبر نیست")
+                if not all(private(IMPORTS/(job+ext)) for ext in (".gpg",".key")):
+                    return self.error_json(404,"بکاپ یا کلید دریافت‌شده در این سرور وجود ندارد")
+                state=JOBS/(job+".json")
+                if private(state):
+                    try:
+                        row=json.loads(state.read_text())
+                    except (OSError,ValueError):
+                        row={}
+                    if row.get("state")=="running":
+                        return self.error_json(409,"بررسی بکاپ در حال اجرا است")
+                launch("inspect",job)
+                return self.send_bytes(202,envelope(True,{"job":job}))
             if trusted_panel_api_path(path, "masiha-backup/delete"):
                 body=self.read_json(2048)
                 if not isinstance(body,dict) or body.get("confirm")!="DELETE":

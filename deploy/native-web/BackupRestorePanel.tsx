@@ -42,6 +42,7 @@ export default function BackupRestorePanel(){
  const [sshTrusted,setSshTrusted]=useState(false);
  const [sshBusy,setSshBusy]=useState(false);
  const [sshJob,setSshJob]=useState('');
+ const [recheckJob,setRecheckJob]=useState('');
  const recent=useMemo(()=>[...status.jobs].sort((a,b)=>(b.at||0)-(a.at||0)).slice(0,9),[status.jobs]);
  // The verified upload can still be selected after a browser refresh.
  const verifiedUpload=recent.find(j=>j.action==='inspect'&&j.state==='done'&&j.metadata);
@@ -73,6 +74,20 @@ export default function BackupRestorePanel(){
    await reload();
   }catch(e){message.error(String(e))}
   finally{setBusy(false)}
+ };
+ const recheckReceived=async(row:BackupEntry)=>{
+  if(row.kind!=='received'||!row.job)return;
+  const job=row.job;
+  setRecheckJob(job);
+  try{
+   const r=await HttpUtil.post<{job:string}>(endpoint+'/reinspect',
+    {job},{headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
+   if(!r.success||r.obj?.job!==job)throw new Error(r.msg||'آغاز بررسی بکاپ دریافتی ناموفق بود');
+   setImportID(job);
+   message.success('بررسی مجدد بکاپ موجود روی همین سرور شروع شد؛ بدون انتقال یا دانلود دوباره.');
+   await reload();
+  }catch(e){message.error(String(e))}
+  finally{setRecheckJob('')}
  };
  const deleteArchive=async(row:BackupEntry)=>{
   setBusy(true);
@@ -194,6 +209,9 @@ export default function BackupRestorePanel(){
        {r.kind!=='received'&&<a href={url(r.name)} download={r.name}>
         <Button size="small">دانلود</Button>
        </a>}
+       {r.kind==='received'&&r.job&&<Button size="small" type="primary"
+        loading={recheckJob===r.job}
+        onClick={()=>void recheckReceived(r)}>بررسی مجدد روی همین سرور</Button>}
        <Popconfirm
         title="حذف دائمی بکاپ"
         description={<span>بکاپ {r.name} و فایل‌های مرتبط حذف می‌شوند. پس از حذف بازیابی ممکن نیست؛ کلید اصلی رمزگذاری و دیتابیس‌ها حفظ می‌شوند.</span>}
@@ -277,7 +295,17 @@ export default function BackupRestorePanel(){
      </Space>}/>}
    </Space>
   </Card>
-  <Card title="۳. وارد کردن دستی بکاپ روی سرور جدید">
+  <Card title="۳. بکاپ‌های دریافت‌شده و بررسی مجدد در همین سرور">
+   <Space direction="vertical" style={{width:'100%'}}>
+    <Typography.Text>فایل‌های دریافت‌شده از سرور فرستنده در جدول بخش اول، با برچسب «دریافت‌شده» مشخص می‌شوند.
+     کنار هر فایل، دکمه «بررسی مجدد روی همین سرور» قرار دارد. این عملیات بدون اتصال SSH به فرستنده،
+     بدون ارسال مجدد و بدون جایگزینی دیتابیس انجام می‌شود.</Typography.Text>
+    {!status.backups.some(b=>b.kind==='received')&&<Alert showIcon type="warning"
+     title="در این سرور بکاپ دریافتی پیدا نشد"
+     description="اگر فایل روی سرور دیگری ارسال شده است، IP مقصد انتقال را بررسی کنید. تا زمانی که فایل GPG و کلید آن روی همین سرور وجود نداشته باشند، بررسی مجدد ممکن نیست."/>}
+   </Space>
+  </Card>
+  <Card title="۴. وارد کردن دستی بکاپ روی سرور جدید">
    <Space direction="vertical" style={{width:'100%'}}>
     <Typography.Text type="secondary">پس از نصب نسخه جدید مسیحا با دامنه مقصد، فایل GPG و کلید آن را همین‌جا بارگذاری کن (حداکثر ۶ گیگابایت).</Typography.Text>
     <Space wrap align="start">
@@ -305,7 +333,7 @@ export default function BackupRestorePanel(){
     </Descriptions>}
    </Space>
   </Card>
-  <Card title="۴. بازیابی با حفظ هویت سرور جدید">
+  <Card title="۵. بازیابی با حفظ هویت سرور جدید">
    <Alert type="warning" showIcon style={{marginBottom:12}}
     title="بازیابی محافظت‌شده؛ بازگشت‌پذیر"
     description="اطلاعات کاربران، ربات و گواهی‌های VPN از بکاپ بازیابی می‌شوند. دامنه، گواهی HTTPS، Nginx، رمز مدیریت پنل مقصد و باینری جدید حفظ خواهند شد. نود خارجی و پردازشگرهای تلگرام پس از بازیابی خودکار فعال نمی‌شوند. فایل‌ها و دیتابیس‌های فعلی مقصد نسخه بازگشت خواهند داشت."/>

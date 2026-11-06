@@ -31,6 +31,10 @@ echo "=== Verified prebuilt x-ui fast-update regression ==="
 python3 -m unittest -q deploy/test_prebuilt_updater.py
 echo "=== Direct SSH backup transfer regression ==="
 python3 -m unittest -q deploy/test_server_transfer.py
+echo "=== Receiver-side archive reinspection and DB diagnostic code ==="
+python3 -m py_compile deploy/diagnose-db-readonly.py
+grep -q "masiha-backup/reinspect" sidecar/server.py
+grep -q "backupReinspect" deploy/native-web/masiha_backup.go
 echo "=== Safe archive deletion regression ==="
 python3 -m unittest -q deploy/test_backup_deletion.py
 cmp -s runtime/full_backup.py deploy/full-backup.py

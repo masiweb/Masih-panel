@@ -43,6 +43,10 @@ class ServerTransferRegression(unittest.TestCase):
         self.assertIn("بدون ارسال دوباره",panel)
         self.assertIn("حذف بکاپ",panel)
         self.assertIn("delete_backup_file",(ROOT/"sidecar/server.py").read_text())
+        self.assertIn("masiha-backup/reinspect",(ROOT/"sidecar/server.py").read_text())
+        self.assertIn("backupReinspect",(ROOT/"deploy/native-web/masiha_backup.go").read_text())
+        self.assertIn("recheckReceived",(ROOT/"deploy/native-web/BackupRestorePanel.tsx").read_text())
+        self.assertIn("بررسی مجدد روی همین سرور",(ROOT/"deploy/native-web/BackupRestorePanel.tsx").read_text())
         self.assertIn("delete",(ROOT/"sidecar/nginx-locations.conf").read_text())
         self.assertIn("RemoteInspectionError",(ROOT/"runtime/backup_transfer.py").read_text())
 
