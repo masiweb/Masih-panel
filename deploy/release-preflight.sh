@@ -25,6 +25,8 @@ echo "=== Complete fresh-install pipeline regression tests ==="
 python3 -m unittest -q deploy/test_install_pipeline.py
 echo "=== Portable backup/restore cross-domain regression ==="
 python3 -m unittest -q deploy/test_portable_migration.py
+echo "=== One-command installer/updater regression ==="
+python3 -m unittest -q deploy/test_one_command.py
 cmp -s runtime/full_backup.py deploy/full-backup.py
 cmp -s runtime/portable_migration.py deploy/portable_migration.py
 grep -Fq 'runtime/portable_migration.py' deploy/install-ubuntu-24.04.sh

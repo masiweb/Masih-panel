@@ -1,3 +1,21 @@
+# Masiha VPN Manager — نصب و آپدیت با یک دستور
+
+**نصب روی سرور تازه Ubuntu 24.04:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/masiweb/Masih-panel/upgrade/3x-ui-v3.11.0-migration/install.sh | sudo bash
+```
+
+**آپدیت نرم‌افزار روی سرور موجود، بدون نیاز به فایل بکاپ یا دیتابیس انتقالی:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/masiweb/Masih-panel/upgrade/3x-ui-v3.11.0-migration/update.sh | sudo bash
+```
+
+نصب، آپدیت و بازیابی اطلاعات سه عملیات مستقل هستند. آپدیت هیچ بکاپی را
+وارد نمی‌کند و تنظیمات دامنه، SSL و اطلاعات کاربران را بازنویسی نمی‌کند.
+[راهنمای کامل دو فرمان](docs/ONE_COMMAND_DEPLOY_FA.md).
+
+---
+
 ## ورود امن مستقل از مسیر ثابت سنایی
 نشست مدیر در مسیر فعلی و واقعی x-ui بررسی می‌شود؛ ورود از پنل مسیحا به پچ ثابت سنایی یا مسیر SUB وابسته نیست و احراز هویت و CSRF لازم‌اند.
 
