@@ -16,6 +16,12 @@ PATCH_HASH="$(sha256sum "$ROOT/deploy/3x-ui.patch" | awk '{print $1}')"
 BR="${MASIHA_UPDATE_BUILD_ROOT:-/opt/masiha-release-builds/${PATCH_HASH:0:16}}"
 [[ "$EUID" == 0 ]] || { echo 'Please run as root.' >&2;exit 2; }
 [[ "$MODE" == update || "$MODE" == --check ]] || { echo 'Usage: update-existing.sh [--check]' >&2; exit 2; }
+if [[ "$MODE" == update ]] && (! command -v rsync >/dev/null ||
+    ! command -v ssh-keyscan >/dev/null || ! command -v ssh-keygen >/dev/null);then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y rsync openssh-client
+fi
 [[ -x "$LIVE" ]] || { echo '3x-ui is not installed. Use the INSTALL command on a fresh server.' >&2;exit 3; }
 [[ -s "$ROOT/deploy/3x-ui.patch" && -s "$ROOT/runtime/full_backup.py" &&
    -s "$ROOT/sidecar/server.py" && -s "$ROOT/deploy/prepare-portable-build.sh" ]] || {
@@ -241,6 +247,7 @@ for source in "$ROOT"/runtime/*.py "$ROOT"/runtime/*.json;do
  [[ -f "$source" ]] || continue
  install -m 0644 "$source" "$EXT/$(basename "$source")"
 done
+install -m 0755 "$ROOT/runtime/transfer_askpass.py" "$EXT/transfer_askpass.py"
 install -m 0644 "$ROOT/deploy/web-backup-worker.py" "$EXT/web_backup_worker.py"
 install -m 0644 "$ROOT/sidecar/server.py" "$EXT/sidecar_server.py"
 python3 -m py_compile "$EXT/full_backup.py" "$EXT/portable_migration.py" \
@@ -253,6 +260,8 @@ import sys
 p=Path(sys.argv[1]);s=p.read_text()
 s=s.replace("client_max_body_size 512m;","client_max_body_size 6g;")
 s=s.replace("proxy_request_buffering on;","proxy_request_buffering off;")
+s=s.replace("masiha-backup/(?:status|create|import|restore|download/.+)",
+            "masiha-backup/(?:status|create|import|restore|transfer-probe|transfer-start|download/.+)")
 p.write_text(s)
 PY
 nginx -t

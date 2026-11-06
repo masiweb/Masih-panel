@@ -122,13 +122,15 @@ def upstream_panel_token(cookie):
 
 
 def launch(action, job):
-    if action not in ("create", "create-full", "inspect", "restore") or not HEX.fullmatch(job):
+    if action not in ("create", "create-full", "inspect", "restore", "transfer") or not HEX.fullmatch(job):
         raise ValueError("Invalid backup job")
+    program = ("/opt/masiha-vpn-extension/backup_transfer.py" if action == "transfer"
+               else "/opt/masiha-vpn-extension/web_backup_worker.py")
+    argv = ([job] if action == "transfer" else [action, job])
     subprocess.run(["/usr/bin/systemd-run", "--quiet", "--collect",
                     "--unit=masiha-webbackup-" + action + "-" + job,
                     "--property=Type=exec", "/usr/bin/python3",
-                    "/opt/masiha-vpn-extension/web_backup_worker.py",
-                    action, job], check=True, timeout=12,
+                    program, *argv], check=True, timeout=12,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -304,6 +306,27 @@ class Handler(BaseHTTPRequestHandler):
             if trusted_panel_api_path(path, "masiha-film"):
                 body = self.read_json(65536)
                 return self.send_bytes(200, json_command("film_admin.py", body))
+            if trusted_panel_api_path(path, "masiha-backup/transfer-probe"):
+                from backup_transfer import probe_host
+                body=self.read_json(2048)
+                if not isinstance(body,dict):
+                    raise ValueError("Invalid SSH target")
+                result=probe_host(body.get("host"),body.get("username","root"),body.get("port",22))
+                # The host key itself remains server-side. Administrator must
+                # independently verify the displayed SHA256 fingerprint.
+                result.pop("known_host",None)
+                return self.send_bytes(200,envelope(True,result))
+            if trusted_panel_api_path(path, "masiha-backup/transfer-start"):
+                from backup_transfer import create_transfer_handoff
+                body=self.read_json(4096)
+                job=secrets.token_hex(16)
+                handoff=create_transfer_handoff(job,body)
+                try:
+                    launch("transfer",job)
+                except BaseException:
+                    handoff.unlink(missing_ok=True)
+                    raise
+                return self.send_bytes(202,envelope(True,{"job":job}))
             if trusted_panel_api_path(path, "masiha-backup/create"):
                 body=self.read_json(2048)
                 if not isinstance(body,dict) or not isinstance(body.get("include_media",False),bool):

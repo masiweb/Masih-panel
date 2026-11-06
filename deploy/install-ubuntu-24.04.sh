@@ -67,7 +67,7 @@ done
   { echo "Incomplete Masiha release checkout" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git tar xz-utils build-essential pkg-config python3 \
+apt-get install -y ca-certificates curl git tar xz-utils rsync openssh-client build-essential pkg-config python3 \
   sqlite3 jq nginx certbot openvpn openconnect ocserv easy-rsa iptables ufw openssl gnupg python3-qrcode python3-pil libraqm0 fonts-dejavu-core \
   strongswan strongswan-swanctl libcharon-extra-plugins libcharon-extauth-plugins \
   libstrongswan-extra-plugins xl2tpd ppp libpcre2-8-0 iproute2 ffmpeg \
@@ -188,6 +188,8 @@ install -d -m 0700 /etc/x-ui /etc/masiha-vpn-extension /opt/masiha-vpn-extension
 # via systemd-run so final recovery survives panel service restarts.
 install -m 0644 "$REPO_ROOT/runtime/full_backup.py" /opt/masiha-vpn-extension/full_backup.py
 install -m 0644 "$REPO_ROOT/runtime/portable_migration.py" /opt/masiha-vpn-extension/portable_migration.py
+install -m 0644 "$REPO_ROOT/runtime/backup_transfer.py" /opt/masiha-vpn-extension/backup_transfer.py
+install -m 0755 "$REPO_ROOT/runtime/transfer_askpass.py" /opt/masiha-vpn-extension/transfer_askpass.py
 install -m 0644 "$REPO_ROOT/deploy/web-backup-worker.py" /opt/masiha-vpn-extension/web_backup_worker.py
 for file in manager.py routeros6.py ipsec_backend.py ipsec_accounting.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py ai_admin_audit.py channel_manager.py channel_manager_worker.py gamification.py entertainment.py media_library.py social.py audio_fingerprint.py acoustid_client.py ai_commerce.py ai_models.py ai_media.py ai_fal_video.py ai_conversation.py runtime_config.py bot_texts.py bot_texts_export.py bot_texts_admin.py bot_texts.fa.json; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"

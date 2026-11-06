@@ -1312,10 +1312,10 @@ index 0000000..5181f3d
 +}
 diff --git a/frontend/src/pages/vpn/BackupRestorePanel.tsx b/frontend/src/pages/vpn/BackupRestorePanel.tsx
 new file mode 100644
-index 0000000..e3260a9
+index 0000000..a31d057
 --- /dev/null
 +++ b/frontend/src/pages/vpn/BackupRestorePanel.tsx
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,308 @@
 +import {useEffect,useMemo,useState} from 'react';
 +import {Alert,Button,Card,Checkbox,Input,Space,Table,Tag,Typography,Upload,App,Descriptions} from 'antd';
 +import type {UploadFile} from 'antd';
@@ -1330,7 +1330,13 @@ index 0000000..e3260a9
 +};
 +type JobEntry={job:string,state:string,detail?:string,at?:number,action?:string,metadata?:BackupMetadata};
 +type BackupStatus={backups:BackupEntry[],jobs:JobEntry[],has_key:boolean};
++type TransferProbe={host:string;username:string;port:number;fingerprint:string;key_type:string};
++type TransferProgress={phase?:string;sent_bytes?:number;total_bytes?:number;
++ rate_bytes_s?:number;remote_job?:string;destination_ready_for_restore?:boolean;host?:string};
 +const endpoint='/panel/api/masiha-backup';
++const sshPublicKeyFile=(keyType:string)=>keyType==='ssh-ed25519'?
++ '/etc/ssh/ssh_host_ed25519_key.pub':keyType.startsWith('ecdsa')?
++ '/etc/ssh/ssh_host_ecdsa_key.pub':'/etc/ssh/ssh_host_rsa_key.pub';
 +const humanSize=(n:number)=>n>=1073741824?(n/1073741824).toFixed(2)+' GB':
 + n>=1048576?(n/1048576).toFixed(1)+' MB':(n/1024).toFixed(0)+' KB';
 +
@@ -1346,12 +1352,23 @@ index 0000000..e3260a9
 + const [confirmation,setConfirmation]=useState('');
 + const [acknowledged,setAcknowledged]=useState(false);
 + const [restoreMode,setRestoreMode]=useState(false);
++ const [sshHost,setSshHost]=useState('');
++ const [sshUser,setSshUser]=useState('root');
++ const [sshPort,setSshPort]=useState('22');
++ const [sshPassword,setSshPassword]=useState('');
++ const [sshProbe,setSshProbe]=useState<TransferProbe|null>(null);
++ const [sshTrusted,setSshTrusted]=useState(false);
++ const [sshBusy,setSshBusy]=useState(false);
++ const [sshJob,setSshJob]=useState('');
 + const recent=useMemo(()=>[...status.jobs].sort((a,b)=>(b.at||0)-(a.at||0)).slice(0,9),[status.jobs]);
 + // The verified upload can still be selected after a browser refresh.
 + const verifiedUpload=recent.find(j=>j.action==='inspect'&&j.state==='done'&&j.metadata);
 + const selectedJob=importID||verifiedUpload?.job||'';
 + const currentImport=recent.find(j=>j.job===selectedJob);
 + const meta=currentImport?.metadata;
++ const remoteTransfer=recent.find(j=>j.job===sshJob)||
++  recent.find(j=>j.action==='transfer');
++ const remoteProgress=remoteTransfer?.metadata as TransferProgress|undefined;
 + const root=(window.X_UI_BASE_PATH||'/').replace(/\/$/,'');
 + const url=(name:string)=>root+endpoint+'/download/'+encodeURIComponent(name);
 + const reload=async()=>{
@@ -1392,6 +1409,43 @@ index 0000000..e3260a9
 +   await reload();
 +  }catch(e){message.error(String(e))}
 +  finally{setBusy(false)}
++ };
++ const changeServer=()=>{
++  setSshProbe(null);setSshTrusted(false);
++ };
++ const testRemote=async()=>{
++  const port=Number(sshPort);
++  if(!sshHost.trim()||!sshUser.trim()||!Number.isInteger(port)||port<1||port>65535){
++   message.error('IP، نام کاربری و پورت SSH معتبر را وارد کنید');return;
++  }
++  setSshBusy(true);changeServer();
++  try{
++   const r=await HttpUtil.post<{host:string;username:string;port:number;fingerprint:string;key_type:string}>(
++    endpoint+'/transfer-probe',
++    {host:sshHost.trim(),username:sshUser.trim(),port},
++    {headers:{'Content-Type':'application/json'},silent:true,timeout:25000});
++   if(!r.success||!r.obj)throw new Error(r.msg||'کلید SSH مقصد دریافت نشد');
++   setSshProbe(r.obj);
++   message.info('اثر انگشت را با SSH سرور مقصد مقایسه و سپس تأیید کنید.');
++  }catch(e){message.error(String(e))}
++  finally{setSshBusy(false)}
++ };
++ const sendDirect=async()=>{
++  if(!sshProbe||!sshTrusted||!sshPassword)return;
++  setSshBusy(true);
++  try{
++   const r=await HttpUtil.post<{job:string}>(endpoint+'/transfer-start',
++    {host:sshProbe.host,username:sshProbe.username,port:sshProbe.port,
++     password:sshPassword,fingerprint:sshProbe.fingerprint,include_media:includeMedia},
++    {headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
++   if(!r.success||!r.obj?.job)throw new Error(r.msg||'شروع انتقال ناموفق بود');
++   setSshJob(r.obj.job);
++   setSshPassword('');
++   setSshTrusted(false);
++   message.success('ساخت بکاپ و انتقال مستقیم آغاز شد. بستن مرورگر عملیات سرور را قطع نمی‌کند.');
++   await reload();
++  }catch(e){message.error(String(e))}
++  finally{setSshBusy(false)}
 + };
 + const restore=async()=>{
 +  if(!selectedJob||currentImport?.state!=='done'||confirmation!=='RESTORE'||!acknowledged)return;
@@ -1442,7 +1496,74 @@ index 0000000..e3260a9
 +     ]}/>
 +   </Space>
 +  </Card>
-+  <Card title="۲. وارد کردن بکاپ روی سرور جدید">
++  <Card title="۲. انتقال مستقیم بکاپ از این سرور به سرور مقصد">
++   <Space direction="vertical" size="middle" style={{width:'100%'}}>
++    <Alert type="info" showIcon
++     title="ارسال سرور به سرور، بدون عبور فایل از کامپیوتر"
++     description="با انتخاب حالت بکاپ کامل یا سبک در بخش بالا، همین سرور بکاپ رمزگذاری‌شده جدید می‌سازد و از طریق SSH و rsync مستقیماً به مقصد می‌فرستد. پس از بررسی SHA-256 و رمزگشایی در مقصد، فایل در بخش بازیابی آن سرور قابل استفاده خواهد بود. این عملیات هیچ دیتابیسی را خودکار بازیابی نمی‌کند."/>
++    <Space wrap size="middle">
++     <Space direction="vertical" size={2}>
++      <Typography.Text>IP سرور مقصد</Typography.Text>
++      <Input value={sshHost} onChange={e=>{setSshHost(e.target.value);changeServer()}}
++       placeholder="مثلاً 212.74.39.225" style={{width:200}} dir="ltr"/>
++     </Space>
++     <Space direction="vertical" size={2}>
++      <Typography.Text>نام کاربری SSH</Typography.Text>
++      <Input value={sshUser} onChange={e=>{setSshUser(e.target.value);changeServer()}}
++       placeholder="root" style={{width:150}} dir="ltr"/>
++     </Space>
++     <Space direction="vertical" size={2}>
++      <Typography.Text>پورت SSH</Typography.Text>
++      <Input value={sshPort} onChange={e=>{setSshPort(e.target.value);changeServer()}}
++       placeholder="22" style={{width:95}} dir="ltr"/>
++     </Space>
++    </Space>
++    <Button onClick={()=>void testRemote()} loading={sshBusy}>
++     بررسی اتصال و هویت SSH مقصد
++    </Button>
++    {sshProbe&&<>
++     <Alert type="warning" showIcon
++      title="تأیید هویت سرور مقصد ضروری است"
++      description={<>اثر انگشت SSH مقصد (نوع {sshProbe.key_type}) را با خروجی
++       <Typography.Text code>{'ssh-keygen -lf '+sshPublicKeyFile(sshProbe.key_type)}</Typography.Text>
++       روی همان سرور مقایسه کنید. قبل از تأیید، اطلاعات ورود ارسال نمی‌شوند.</>}/>
++     <Typography.Text copyable={{text:sshProbe.fingerprint}} code>
++      {sshProbe.fingerprint}
++     </Typography.Text>
++     <Checkbox checked={sshTrusted} onChange={e=>setSshTrusted(e.target.checked)}>
++      اثر انگشت را با سرور مقصد مقایسه و تأیید کردم
++     </Checkbox>
++     <Space direction="vertical" size={2}>
++      <Typography.Text>رمز عبور SSH مقصد</Typography.Text>
++      <Input.Password value={sshPassword} autoComplete="new-password"
++       onChange={e=>setSshPassword(e.target.value)}
++       placeholder="رمز فقط برای این انتقال استفاده می‌شود" style={{maxWidth:350}}/>
++     </Space>
++     <Button type="primary" loading={sshBusy}
++      disabled={!sshTrusted||!sshPassword}
++      onClick={()=>void sendDirect()}>
++      ساخت بکاپ و ارسال مستقیم به مقصد
++     </Button>
++    </>}
++    <Typography.Text type="secondary">
++     برای انتقال به پوشه بازیابی پنل مقصد، ورود root یا کاربری با sudo بدون رمز لازم است.
++     انتقال قطع‌شده تا سه بار از فایل نیمه‌کاره ادامه پیدا می‌کند؛ کلید و رمز SSH در Git ذخیره نمی‌شوند.
++    </Typography.Text>
++    {remoteTransfer&&<Alert
++     type={remoteTransfer.state==='done'?'success':remoteTransfer.state==='failed'?'error':'info'}
++     title={'وضعیت انتقال: '+(remoteTransfer.state==='done'?'کامل':remoteTransfer.state==='failed'?'خطا':'در حال اجرا')}
++     description={<Space direction="vertical" size={2}>
++      <Typography.Text>{remoteTransfer.detail||'در حال آماده‌سازی'}</Typography.Text>
++      {remoteProgress?.total_bytes? <Typography.Text>
++       {humanSize(remoteProgress.sent_bytes||0)} / {humanSize(remoteProgress.total_bytes)}
++       {remoteProgress.rate_bytes_s?' — '+humanSize(remoteProgress.rate_bytes_s)+'/s':''}
++      </Typography.Text>:null}
++      {remoteProgress?.destination_ready_for_restore&&
++       <Typography.Text>بکاپ در سرور {remoteProgress.host} بررسی شد و برای بازیابی دستی آماده است.</Typography.Text>}
++     </Space>}/>}
++   </Space>
++  </Card>
++  <Card title="۳. وارد کردن دستی بکاپ روی سرور جدید">
 +   <Space direction="vertical" style={{width:'100%'}}>
 +    <Typography.Text type="secondary">پس از نصب نسخه جدید مسیحا با دامنه مقصد، فایل GPG و کلید آن را همین‌جا بارگذاری کن (حداکثر ۶ گیگابایت).</Typography.Text>
 +    <Space wrap align="start">
@@ -1470,7 +1591,7 @@ index 0000000..e3260a9
 +    </Descriptions>}
 +   </Space>
 +  </Card>
-+  <Card title="۳. بازیابی با حفظ هویت سرور جدید">
++  <Card title="۴. بازیابی با حفظ هویت سرور جدید">
 +   <Alert type="warning" showIcon style={{marginBottom:12}}
 +    title="بازیابی محافظت‌شده؛ بازگشت‌پذیر"
 +    description="اطلاعات کاربران، ربات و گواهی‌های VPN از بکاپ بازیابی می‌شوند. دامنه، گواهی HTTPS، Nginx، رمز مدیریت پنل مقصد و باینری جدید حفظ خواهند شد. نود خارجی و پردازشگرهای تلگرام پس از بازیابی خودکار فعال نمی‌شوند. فایل‌ها و دیتابیس‌های فعلی مقصد نسخه بازگشت خواهند داشت."/>
@@ -1503,7 +1624,6 @@ index 0000000..e3260a9
 +  </Card>
 + </Space>;
 +}
-+
 diff --git a/frontend/src/pages/vpn/SalesBotPage.css b/frontend/src/pages/vpn/SalesBotPage.css
 new file mode 100644
 index 0000000..66e9ae5
