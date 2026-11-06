@@ -62,6 +62,42 @@ class OneCommandTests(unittest.TestCase):
                                      capture_output=True,text=True)
             self.assertEqual(completed.returncode,0,completed.stderr)
 
+    def test_missing_webroot_is_allowed_in_update_preflight(self):
+        updater=self.read('deploy/update-existing.sh')
+        self.assertIn('WEBROOT_MISSING_WILL_CREATE=',updater)
+        self.assertIn('WEB_PREEXISTED=0',updater)
+        self.assertIn('WEBROOT_CREATED=$WEB',updater)
+        self.assertIn('Masiha UI HTTP check failed',updater)
+        self.assertIn('if [[ "$WEB_PREEXISTED" == 1 ]];then',updater)
+        self.assertIn('elif [[ "$WEB_PREEXISTED" == 0 ]]',updater)
+        self.assertNotIn("Masiha web extension directory is missing.",updater)
+        # Use a copied script in the same deploy/ folder to preserve ROOT.
+        # --check only acquires the lock and checks preconditions; it does not
+        # touch live webroots, binaries, or any database.
+        if os.geteuid()!=0 or not Path('/usr/local/x-ui/x-ui').exists():
+            self.skipTest('Requires installed root-owned test host')
+        with tempfile.TemporaryDirectory(prefix="masiha-webroot-fixture-") as tmp:
+            root=Path(tmp)
+            fake=root/'absent-static-ui'
+            script=BASE/'deploy'/'.update-missing-webroot-fixture.sh'
+            try:
+                script.write_text(updater.replace(
+                    'WEB=/var/www/masiha-ui',
+                    'WEB='+str(fake)))
+                run=subprocess.run(['bash',str(script),'--check'],
+                                   capture_output=True,text=True,timeout=20)
+                self.assertEqual(run.returncode,0,run.stderr)
+                self.assertIn('WEBROOT_MISSING_WILL_CREATE='+str(fake),run.stdout)
+                self.assertIn('MASIHA_UPDATE_CHECK_OK',run.stdout)
+                self.assertFalse(fake.exists())
+                fake.symlink_to(root/'target')
+                run=subprocess.run(['bash',str(script),'--check'],
+                                   capture_output=True,text=True,timeout=20)
+                self.assertNotEqual(run.returncode,0)
+                self.assertIn('Unexpected webroot type',run.stderr)
+            finally:
+                script.unlink(missing_ok=True)
+
     def test_installer_and_updater_keep_data_separate(self):
         install=self.read('deploy/install-ubuntu-24.04.sh')
         update=self.read('deploy/update-existing.sh')

@@ -23,7 +23,18 @@ BR="${MASIHA_UPDATE_BUILD_ROOT:-/opt/masiha-release-builds/${PATCH_HASH:0:16}}"
 }
 [[ -s "$NGINX" ]] || { echo 'Nginx Masiha site is missing; do not replace a partial installation.' >&2;exit 1; }
 [[ -d "$EXT" ]] || { echo 'Masiha extension installation directory is missing.' >&2;exit 1; }
-[[ -d "$WEB" ]] || { echo 'Masiha web extension directory is missing.' >&2;exit 1; }
+# S3 may have x-ui + the extension installed but not yet have a webroot.
+# The generated static UI is installable application code, not customer data.
+# It is safe to create a missing webroot AFTER the new UI has built.
+if [[ -L "$WEB" || ( -e "$WEB" && ! -d "$WEB" ) ]];then
+ echo "Unexpected webroot type at $WEB; refusing to overwrite." >&2; exit 1;
+fi
+WEB_PREEXISTED=0
+if [[ -d "$WEB" ]];then
+ WEB_PREEXISTED=1
+else
+ echo "WEBROOT_MISSING_WILL_CREATE=$WEB"
+fi
 command -v flock >/dev/null || { echo 'flock is required.' >&2;exit 1; }
 install -d -m 0755 /run/lock
 exec 9>/run/lock/masiha-update.lock
@@ -126,9 +137,14 @@ rollback() {
     chmod 0755 "$LIVE.rollback"
     mv -f "$LIVE.rollback" "$LIVE"
   fi
-  if [[ "$WEB_SWAPPED" == 1 && -d "$ROLL/web.before" ]];then
-    rm -rf "$WEB"
-    mv "$ROLL/web.before" "$WEB"
+  if [[ "$WEB_SWAPPED" == 1 ]];then
+    if [[ "$WEB_PREEXISTED" == 1 && -d "$ROLL/web.before" ]];then
+      rm -rf -- "$WEB"
+      mv "$ROLL/web.before" "$WEB"
+    elif [[ "$WEB_PREEXISTED" == 0 ]];then
+      # Restore absence: do not leave behind a half-created fresh UI.
+      rm -rf -- "$WEB"
+    fi
   fi
   if [[ "$CODE_SWAPPED" == 1 ]];then
     cp -a "$ROLL/code.before/." "$EXT/" || true
@@ -166,9 +182,13 @@ s=s.replace("proxy_request_buffering on;","proxy_request_buffering off;")
 p.write_text(s)
 PY
 nginx -t
-# Replace UI with a staged tree; retain a full rollback copy.
+# Replace UI with a staged tree; retain a full rollback copy if present.
+# On servers with no webroot yet this is the first static UI installation.
+if [[ "$WEB_PREEXISTED" == 1 ]];then
+ mv "$WEB" "$ROLL/web.before"
+fi
 WEB_SWAPPED=1
-mv "$WEB" "$ROLL/web.before"
+install -d -m 0755 "$(dirname "$WEB")"
 mv "$ROLL/web-next" "$WEB"
 install -m 0755 "$BR/x-ui" "$LIVE.next"
 mv -f "$LIVE.next" "$LIVE"
@@ -202,9 +222,19 @@ if [[ "$XUI_WAS_ACTIVE" == 1 && -n "$DOMAIN" ]];then
    [[ "$ready" == 1 ]] || {
      echo 'Panel HTTP health test failed after upgrade.' >&2;false;
    }
+   # A missing static UI folder must be repaired, not silently reported as
+   # success while the Masiha page returns 404.
+   ui_status="$(curl -sk --connect-timeout 3 --max-time 8 \
+      --resolve "$DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' \
+      "https://$DOMAIN/masiha-ui/" || true)"
+   [[ "$ui_status" == 200 ]] || {
+     echo "Masiha UI HTTP check failed ($ui_status); rolling back." >&2
+     false
+   }
 fi
 trap - ERR INT TERM
 echo "MASIHA_UPDATE_OK=$VERSION"
+[[ "$WEB_PREEXISTED" == 0 ]] && echo "WEBROOT_CREATED=$WEB"
 echo "BACKUP_RESTORE_NOT_STARTED=YES"
 echo "MIGRATION_DATABASES_NOT_TOUCHED=YES"
 echo "ROLLBACK_PATH=$ROLL"
