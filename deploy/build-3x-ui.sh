@@ -11,9 +11,18 @@ BUILD_ROOT="${MASIHA_BUILD_ROOT:-/opt/masiha-vpn-build-v3.11.0}"
 PATCH="$REPO_ROOT/deploy/3x-ui.patch"
 SRC="$BUILD_ROOT/src"
 command -v git >/dev/null
-command -v go >/dev/null
+if [[ "${MASIHA_FRONTEND_ONLY:-0}" != "1" ]];then
+  command -v go >/dev/null
+fi
 command -v node >/dev/null
 command -v npm >/dev/null
+# Stable caches survive a new content-addressed source checkout so a local
+# fallback recompiles only changed packages instead of the entire Go world.
+export GOCACHE="${MASIHA_GOCACHE:-${GOCACHE:-$HOME/.cache/go-build}}"
+export GOMODCACHE="${MASIHA_GOMODCACHE:-${GOMODCACHE:-$HOME/go/pkg/mod}}"
+mkdir -p "$GOCACHE" "$GOMODCACHE"
+echo "Persistent Go caches: build=$GOCACHE modules=$GOMODCACHE"
+
 # Use HTTPS module proxies that were verified to carry the required versions.
 # Go's '|' separator (not ',') falls back on ALL HTTP failures including 403.
 # Existing go.sum entries and the default checksum database remain enforced.
@@ -157,6 +166,10 @@ else
   printf '%s\n' "$FRONTEND_SOURCE_HASH" > "$BUILD_ROOT/frontend-source.sha256"
   chmod 0600 "$BUILD_ROOT/frontend-source.sha256"
   echo "Frontend assets built and source hash recorded successfully."
+fi
+if [[ "${MASIHA_FRONTEND_ONLY:-0}" == "1" ]];then
+  echo 'FRONTEND_ONLY_READY: skipped ALL Go module downloads and Go compilation.'
+  exit 0
 fi
 # Download all dependencies of the actual x-ui binary, with a bounded timeout
 # per proxy. The Go build must run OFFLINE after prefetch: otherwise a partial

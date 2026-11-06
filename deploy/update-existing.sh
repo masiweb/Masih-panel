@@ -54,6 +54,64 @@ if [[ "$MODE" == --check ]];then
  exit 0
 fi
 
+# Download the native 3x-ui binary once from GitHub Releases instead of
+# compiling a 102MB executable on every low-powered VPS. Release tags are
+# content-addressed by the exact current native patch SHA256. The separately
+# published build-id and archive SHA256 are checked before any executable is
+# installed. When Actions have not yet published a matching asset, fall back
+# to the original checked local compile with persistent caches.
+download_verified_prebuilt() {
+  [[ "${MASIHA_FORCE_LOCAL_BUILD:-0}" != "1" ]] || return 1
+  command -v curl >/dev/null || return 1
+  local tag="masiha-xui-$PATCH_HASH"
+  local url="https://github.com/masiweb/Masih-panel/releases/download/$tag"
+  local tmp file
+  install -d -m 0700 "$BR"
+  tmp="$(mktemp -d "$BR/.prebuilt-XXXXXXXX")" || return 1
+  echo "=== Looking for precompiled x-ui: $tag ==="
+  for file in x-ui-linux-amd64.tar.gz x-ui-linux-amd64.tar.gz.sha256 build-id.txt;do
+    if ! curl -fsSL --retry 1 --connect-timeout 8 --max-time 120 \
+       -o "$tmp/$file" "$url/$file";then
+      echo 'Precompiled GitHub binary is not published/reachable; using local fallback.'
+      rm -rf -- "$tmp"
+      return 1
+    fi
+  done
+  if [[ "$(cat "$tmp/build-id.txt")" != "$PIN $PATCH_HASH" ]] ||
+     ! grep -Eq '^[a-f0-9]{64}  x-ui-linux-amd64[.]tar[.]gz$' \
+       "$tmp/x-ui-linux-amd64.tar.gz.sha256" ||
+     ! (cd "$tmp" && sha256sum -c --status x-ui-linux-amd64.tar.gz.sha256) ||
+     [[ "$(tar -tzf "$tmp/x-ui-linux-amd64.tar.gz" 2>/dev/null)" != 'x-ui' ]];then
+    echo 'Precompiled GitHub asset failed integrity/provenance checks; refusing it.' >&2
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! tar -xzf "$tmp/x-ui-linux-amd64.tar.gz" -C "$tmp" -- x-ui;then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  chmod 0755 "$tmp/x-ui"
+  if [[ "$("$tmp/x-ui" -v 2>&1 | head -1)" != '3.11.0' ]];then
+    echo 'Precompiled executable has an unexpected version; ignoring asset.' >&2
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  install -m 0755 "$tmp/x-ui" "$BR/x-ui.new" || {
+    rm -rf -- "$tmp";return 1;
+  }
+  mv -f "$BR/x-ui.new" "$BR/x-ui" || {
+    rm -rf -- "$tmp";return 1;
+  }
+  (cd "$BR" && sha256sum x-ui > x-ui.sha256)
+  printf '%s %s\n' "$PIN" "$PATCH_HASH" > "$BR/source-patch.sha256"
+  chmod 0600 "$BR/source-patch.sha256"
+  rm -rf -- "$tmp"
+  echo 'NATIVE_XUI_PREBUILT_VERIFIED=YES'
+  echo 'GO_MODULE_DOWNLOADS=SKIPPED'
+  echo 'GO_COMPILATION=SKIPPED'
+  return 0
+}
+
 [[ "$(uname -m)" == x86_64 ]] || { echo 'Update build supports Linux x86_64 only.' >&2;exit 1; }
 if [[ ! -s "$BR/x-ui" || ! -s "$BR/x-ui.sha256" ||
       ! -s "$BR/source-patch.sha256" ||
@@ -64,10 +122,20 @@ if [[ ! -s "$BR/x-ui" || ! -s "$BR/x-ui.sha256" ||
    echo 'Not enough free space for source compilation (need at least 3 GiB).' >&2
    echo 'No live files have been changed.' >&2;exit 1;
   }
-  echo '=== Building and validating the latest full Masiha panel in isolated workspace ==='
-  MASIHA_BUILD_ROOT="$BR" bash "$ROOT/deploy/prepare-portable-build.sh"
+  if download_verified_prebuilt;then
+    echo '=== Preparing frontend only; no Go download or compilation ==='
+    MASIHA_FRONTEND_ONLY=1 MASIHA_BUILD_ROOT="$BR" \
+      bash "$ROOT/deploy/prepare-portable-build.sh"
+  else
+    echo '=== No trusted precompiled release available; building locally ==='
+    MASIHA_BUILD_ROOT="$BR" bash "$ROOT/deploy/prepare-portable-build.sh"
+  fi
 else
   echo 'Verified native build cache reused.'
+  if [[ ! -x "$BR/src/frontend/node_modules/.bin/vite" ]];then
+    MASIHA_FRONTEND_ONLY=1 MASIHA_BUILD_ROOT="$BR" \
+      bash "$ROOT/deploy/prepare-portable-build.sh"
+  fi
 fi
 [[ "$("$BR/x-ui" -v 2>&1 | head -1)" == 3.11.0 ]] || {
  echo 'Compiled panel version mismatch; live files unchanged.' >&2; exit 1;

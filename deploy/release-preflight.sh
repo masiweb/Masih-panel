@@ -27,6 +27,8 @@ echo "=== Portable backup/restore cross-domain regression ==="
 python3 -m unittest -q deploy/test_portable_migration.py
 echo "=== One-command installer/updater regression ==="
 python3 -m unittest -q deploy/test_one_command.py
+echo "=== Verified prebuilt x-ui fast-update regression ==="
+python3 -m unittest -q deploy/test_prebuilt_updater.py
 cmp -s runtime/full_backup.py deploy/full-backup.py
 cmp -s runtime/portable_migration.py deploy/portable_migration.py
 grep -Fq 'runtime/portable_migration.py' deploy/install-ubuntu-24.04.sh

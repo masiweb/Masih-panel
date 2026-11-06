@@ -14,6 +14,8 @@ curl -fsSL https://raw.githubusercontent.com/masiweb/Masih-panel/upgrade/3x-ui-v
 وارد نمی‌کند و تنظیمات دامنه، SSL و اطلاعات کاربران را بازنویسی نمی‌کند.
 [راهنمای کامل دو فرمان](docs/ONE_COMMAND_DEPLOY_FA.md).
 
+آپدیت‌های بعدی باینری آمادهٔ تأییدشده را از GitHub Releases دریافت می‌کنند؛ دانلود و کامپایل Go روی سرور مسیر پشتیبان است. [وضعیت ساخت خودکار](https://github.com/masiweb/Masih-panel/actions/workflows/masiha-prebuilt-xui.yml).
+
 ---
 
 ## ورود امن مستقل از مسیر ثابت سنایی

@@ -42,7 +42,7 @@ download_checked() {
  echo "Could not obtain verified $(basename "$output"); no live services changed." >&2
  return 1
 }
-if [[ ! -x "$TOOLS/go1.27.3/bin/go" ]];then
+if [[ "${MASIHA_FRONTEND_ONLY:-0}" != "1" && ! -x "$TOOLS/go1.27.3/bin/go" ]];then
  download_checked "$TOOLS/go1.27.3.tar.gz" \
   65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 \
   https://go.dev/dl/go1.27.3.linux-amd64.tar.gz \
@@ -60,7 +60,9 @@ if [[ ! -x "$TOOLS/node-v26.13.0-linux-x64/bin/node" ]];then
  tar -xJf "$TOOLS/node-v26.13.0.tar.xz" -C "$TOOLS"
 fi
 export PATH="$TOOLS/go1.27.3/bin:$TOOLS/node-v26.13.0-linux-x64/bin:$PATH"
-[[ "$(go version)" == *'go1.27.3'* ]] || { echo 'Unexpected Go version' >&2;exit 1; }
+if [[ "${MASIHA_FRONTEND_ONLY:-0}" != "1" ]];then
+  [[ "$(go version)" == *'go1.27.3'* ]] || { echo 'Unexpected Go version' >&2;exit 1; }
+fi
 [[ "$(node --version)" == 'v26.13.0' ]] || { echo 'Unexpected Node version' >&2;exit 1; }
 command -v npm >/dev/null || { echo 'npm binary missing' >&2; exit 1; }
 echo 'Preparing pinned 3x-ui source, dependencies and verified binary offline from live services.'
@@ -68,6 +70,11 @@ MASIHA_BUILD_ROOT="$TARGET" bash "$ROOT/deploy/build-3x-ui.sh"
 [[ -s "$TARGET/src/go.mod" && -x "$TARGET/src/frontend/node_modules/.bin/vite" ]] || {
  echo 'Build source is incomplete' >&2;exit 1;
 }
+if [[ "${MASIHA_FRONTEND_ONLY:-0}" == "1" ]];then
+  echo "PORTABLE_FRONTEND_PREPARED=$TARGET"
+  echo 'GO_DOWNLOADS_AND_COMPILATION_SKIPPED'
+  exit 0
+fi
 [[ -s "$TARGET/x-ui" && -s "$TARGET/x-ui.sha256" && -s "$TARGET/source-patch.sha256" ]] || {
  echo 'Compiled binary or build provenance missing' >&2;exit 1;
 }
