@@ -87,6 +87,11 @@ class GitInstallerTests(unittest.TestCase):
         self.assertIn("extra.rstrip()+'\\n  location /sub/ {'",sidecar)
 
     def test_portable_backup_restore_is_bundled_and_large_upload_is_supported(self):
+        updater=file("deploy/upgrade-portable-backup.sh")
+        self.assertIn("PORTABLE_BACKUP_UPGRADE_CHECK_OK",updater)
+        self.assertIn("GOPROXY=off",updater)
+        self.assertNotIn("install-ubuntu-24.04.sh",updater)
+        self.assertIn('cp -a "$LIVE"',updater)
         install=file("deploy/install-ubuntu-24.04.sh")
         worker=file("deploy/web-backup-worker.py")
         sidebar=file("sidecar/server.py")
