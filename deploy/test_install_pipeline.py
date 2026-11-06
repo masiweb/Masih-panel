@@ -96,6 +96,10 @@ class GitInstallerTests(unittest.TestCase):
         self.assertIn("SOURCE_NEEDS_PREP",updater)
         self.assertIn("prepare-portable-build.sh",updater)
         self.assertIn("BUILD_SOURCE_MISSING=YES",updater)
+        self.assertIn("DESTINATION_DB_MISSING_OR_EMPTY=",updater)
+        self.assertLess(updater.index('if [[ "${1:-}" == "--prepare" ]]'),
+                        updater.index('DESTINATION_DB_MISSING_OR_EMPTY='))
+        self.assertIn("prepare_source",updater)
         helper=file("deploy/prepare-portable-build.sh")
         self.assertIn("MASIHA_BUILD_ROOT",helper)
         self.assertIn("go1.27.3",helper)

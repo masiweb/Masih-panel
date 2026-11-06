@@ -70,34 +70,7 @@ else
  echo "Pinned 3x-ui build workspace is not present: $SRC"
  echo "An isolated verified build will be prepared; no live files touched."
 fi
-DOMAIN="$(python3 - "$CONFIG" <<'PY'
-import json,sys
-print(json.load(open(sys.argv[1]))["domain"])
-PY
-)"
-[[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ && -s "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]] || {
- echo "Destination domain or TLS missing" >&2; exit 1;
-}
-[[ -s /etc/x-ui/x-ui.db && -s /etc/masiha-vpn-extension/users.db &&
-   -s /etc/masiha-vpn-extension/sales/sales.db ]] || {
- echo "Destination databases missing; do not replace them with source files" >&2;exit 1;
-}
-python3 - <<'PY'
-import sqlite3
-for p in ("/etc/x-ui/x-ui.db","/etc/masiha-vpn-extension/users.db",
-          "/etc/masiha-vpn-extension/sales/sales.db"):
- with sqlite3.connect("file:"+p+"?mode=ro",uri=True,timeout=30) as c:
-  if c.execute("PRAGMA quick_check").fetchone()[0]!="ok":raise SystemExit("Invalid target DB: "+p)
-print("Destination database integrity check: PASS")
-PY
-echo "Destination domain will be retained: $DOMAIN"
-if [[ "${1:-}" == "--check" ]];then
- if [[ "$SOURCE_NEEDS_PREP" == 1 ]];then
-  echo "BUILD_SOURCE_MISSING=YES; bootstrap required before activation"
- fi
- echo "PORTABLE_BACKUP_UPGRADE_CHECK_OK"
- exit 0
-fi
+prepare_source() {
 if [[ "$SOURCE_NEEDS_PREP" == 1 ]];then
  # Compile in a separate tree before replacing anything on the live server.
  # Source, Go and Node caches can be several gigabytes.
@@ -119,11 +92,55 @@ fi
  echo "Pinned toolchains missing; prepare build first." >&2;exit 1;
 }
 export PATH="$GO:$NODE:$PATH" GOTOOLCHAIN=local GOPROXY=off
+}
+
 if [[ "${1:-}" == "--prepare" ]];then
+ prepare_source
  echo "PORTABLE_BACKUP_BUILD_PREPARED"
  echo "NO_LIVE_SERVICES_CHANGED"
  exit 0
 fi
+
+DOMAIN="$(python3 - "$CONFIG" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1]))["domain"])
+PY
+)"
+[[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ && -s "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]] || {
+ echo "Destination domain or TLS missing" >&2; exit 1;
+}
+MISSING_DBS=0
+for dbfile in /etc/x-ui/x-ui.db /etc/masiha-vpn-extension/users.db \
+              /etc/masiha-vpn-extension/sales/sales.db;do
+ if [[ -s "$dbfile" && -f "$dbfile" && ! -L "$dbfile" ]];then
+  echo "DESTINATION_DB_OK=$dbfile"
+ else
+  echo "DESTINATION_DB_MISSING_OR_EMPTY=$dbfile" >&2
+  MISSING_DBS=1
+ fi
+done
+if [[ "$MISSING_DBS" != 0 ]];then
+ echo "Source preparation is still available: bash deploy/upgrade-portable-backup.sh --prepare" >&2
+ echo "Do not create empty replacement DBs. Check preserved copies or current runtime DB paths." >&2
+ exit 1
+fi
+python3 - <<'PY'
+import sqlite3
+for p in ("/etc/x-ui/x-ui.db","/etc/masiha-vpn-extension/users.db",
+          "/etc/masiha-vpn-extension/sales/sales.db"):
+ with sqlite3.connect("file:"+p+"?mode=ro",uri=True,timeout=30) as c:
+  if c.execute("PRAGMA quick_check").fetchone()[0]!="ok":raise SystemExit("Invalid target DB: "+p)
+print("Destination database integrity check: PASS")
+PY
+echo "Destination domain will be retained: $DOMAIN"
+if [[ "${1:-}" == "--check" ]];then
+ if [[ "$SOURCE_NEEDS_PREP" == 1 ]];then
+  echo "BUILD_SOURCE_MISSING=YES; bootstrap required before activation"
+ fi
+ echo "PORTABLE_BACKUP_UPGRADE_CHECK_OK"
+ exit 0
+fi
+prepare_source
 STMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ROLL="/root/masiha-backups/pre-portable-upgrade-$STMP"
 install -d -m 0700 "$ROLL"
