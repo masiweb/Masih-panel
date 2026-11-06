@@ -15,7 +15,10 @@ PIN=c621ba9014a6aa21fd7c9ecf45655e44e24ebf13
 
 [[ "$(id -u)" == "0" ]] || { echo "Run as root (sudo bash)"; exit 1; }
 [[ "${1:-}" == "" || "${1:-}" == "--check" ]] || { echo "Usage: $0 [--check]"; exit 2; }
-for path in "$SRC/.git" "$SRC/frontend/node_modules/.bin/vite" \
+for path in "$SRC/go.mod" "$SRC/frontend/package.json" "$SRC/frontend/package-lock.json" \
+            "$SRC/internal/web/controller/masiha_backup.go" \
+            "$SRC/frontend/src/pages/vpn/BackupRestorePanel.tsx" \
+            "$SRC/frontend/node_modules/.bin/vite" \
             "$ROOT/sidecar/masiha-vite.config.mjs" "$ROOT/sidecar/masiha-standalone.tsx" \
             "$ROOT/sidecar/masiha-standalone.html" "$ROOT/sidecar/standalone.css" \
             "$LIVE" "$CONFIG" "$NGINX" \
@@ -26,9 +29,37 @@ done
 [[ -x "$GO/go" && -x "$NODE/node" && -x "$SRC/frontend/node_modules/.bin/vite" ]] || {
   echo "Pinned Go/Node/frontend tools missing" >&2;exit 1;
 }
-[[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || {
- echo "Unrecognized pinned 3x-ui checkout; preserving existing installation" >&2; exit 1;
-}
+# Existing machines can retain the compiled/patched 3x-ui source without
+# its .git directory. In that case verify its installer-generated provenance
+# and the checksum of the corresponding already-built binary. Never create
+# a synthetic .git directory or silently trust an unknown checkout.
+if [[ -e "$SRC/.git" ]]; then
+ [[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || {
+  echo "Pinned 3x-ui Git HEAD mismatch; refusing to modify destination." >&2;exit 1;
+ }
+ echo "Pinned source checkout verified via Git."
+else
+ MARKER="$BUILD_ROOT/source-patch.sha256"
+ BUILDSHA="$BUILD_ROOT/x-ui.sha256"
+ [[ -s "$MARKER" && -s "$BUILDSHA" && -s "$BUILD_ROOT/x-ui" ]] || {
+  echo "Source .git is absent and signed-off build metadata is missing." >&2
+  echo "Source must be repaired using the pinned installer; no live data changed." >&2
+  exit 1
+ }
+ read -r MARKER_COMMIT MARKER_PATCH < "$MARKER"
+ [[ "$MARKER_COMMIT" == "$PIN" &&
+    "$MARKER_PATCH" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "Original build metadata does not match pinned 3x-ui commit." >&2;exit 1;
+ }
+ (cd "$BUILD_ROOT" && sha256sum -c --status x-ui.sha256) || {
+  echo "Original installed build artifact checksum mismatch." >&2;exit 1;
+ }
+ [[ "$("$BUILD_ROOT/x-ui" -v 2>&1 | head -1)" == "3.11.0" &&
+    "$("$LIVE" -v 2>&1 | head -1)" == "3.11.0" ]] || {
+  echo "Unexpected installed 3x-ui version." >&2;exit 1;
+ }
+ echo "Pinned source provenance verified without .git using build metadata."
+fi
 DOMAIN="$(python3 - "$CONFIG" <<'PY'
 import json,sys
 print(json.load(open(sys.argv[1]))["domain"])
