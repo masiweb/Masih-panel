@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -68,7 +69,26 @@ func (a *APIController) backupStatus(c *gin.Context) {
 		if err != nil {
 			continue
 		}
-		files = append(files, gin.H{"name": name, "size": info.Size(),
+		files = append(files, gin.H{"name": name, "size": info.Size(), "kind": "local",
+			"created": info.ModTime().UTC().Format(time.RFC3339)})
+	}
+	receivedDir := filepath.Join(archiveDirectory, "web-imports")
+	received, _ := os.ReadDir(receivedDir)
+	for _, item := range received {
+		job := strings.TrimSuffix(item.Name(), ".gpg")
+		if !strings.HasSuffix(item.Name(), ".gpg") || !safeIdentifier.MatchString(job) {
+			continue
+		}
+		path := filepath.Join(receivedDir, item.Name())
+		if !privateRegular(path) {
+			continue
+		}
+		info, err := item.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, gin.H{"name": "بکاپ دریافتی " + job[:10],
+			"job": job, "kind": "received", "size": info.Size(),
 			"created": info.ModTime().UTC().Format(time.RFC3339)})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i]["created"].(string) > files[j]["created"].(string) })
@@ -87,6 +107,75 @@ func (a *APIController) backupStatus(c *gin.Context) {
 	c.JSON(200, gin.H{"success": true, "obj": gin.H{"backups": files, "jobs": jobs,
 		"has_key": privateRegular("/root/.masiha-backup.key")}})
 }
+
+// backupDelete removes only one selected encrypted local or imported backup.
+// The shared master decryption key and all live databases are never touched.
+func (a *APIController) backupDelete(c *gin.Context) {
+	if !a.backupAdmin(c) {
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Kind    string `json:"kind"`
+		Job     string `json:"job"`
+		Confirm string `json:"confirm"`
+	}
+	if c.ShouldBindJSON(&body) != nil || body.Confirm != "DELETE" {
+		c.JSON(400, gin.H{"success": false, "msg": "Invalid deletion request"})
+		return
+	}
+	if body.Kind == "" {
+		body.Kind = "local"
+	}
+	target, related, state := "", "", ""
+	if body.Kind == "local" && safeArchive.MatchString(body.Name) &&
+		strings.HasSuffix(body.Name, ".gpg") {
+		target = filepath.Join(archiveDirectory, body.Name)
+		related = target + ".sha256"
+	} else if body.Kind == "received" && safeIdentifier.MatchString(body.Job) {
+		target = filepath.Join(archiveDirectory, "web-imports", body.Job+".gpg")
+		related = filepath.Join(archiveDirectory, "web-imports", body.Job+".key")
+		state = filepath.Join(archiveDirectory, "web-jobs", body.Job+".json")
+	} else {
+		c.JSON(400, gin.H{"success": false, "msg": "Invalid backup name or job"})
+		return
+	}
+	lockPath := filepath.Join(archiveDirectory, "web-work.lock")
+	lockFD, err := syscall.Open(lockPath, syscall.O_RDWR|syscall.O_CREAT|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		c.JSON(503, gin.H{"success": false, "msg": "Backup lock is unavailable"})
+		return
+	}
+	defer syscall.Close(lockFD)
+	if syscall.Flock(lockFD, syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		c.JSON(409, gin.H{"success": false, "msg": "Backup operation is running"})
+		return
+	}
+	defer syscall.Flock(lockFD, syscall.LOCK_UN)
+	if !privateRegular(target) {
+		c.JSON(404, gin.H{"success": false, "msg": "Backup not found"})
+		return
+	}
+	if _, err := os.Lstat(related); err == nil && !privateRegular(related) {
+		c.JSON(409, gin.H{"success": false, "msg": "Backup related file is invalid"})
+		return
+	} else if err != nil && !os.IsNotExist(err) {
+		c.JSON(503, gin.H{"success": false, "msg": "Could not verify related file"})
+		return
+	}
+	if err := os.Remove(target); err != nil {
+		c.JSON(503, gin.H{"success": false, "msg": "Could not delete backup"})
+		return
+	}
+	if privateRegular(related) {
+		_ = os.Remove(related)
+	}
+	if state != "" && privateRegular(state) {
+		_ = os.Remove(state)
+	}
+	c.JSON(200, gin.H{"success": true, "obj": gin.H{"kind": body.Kind}})
+}
+
 func (a *APIController) backupCreate(c *gin.Context) {
 	if !a.backupAdmin(c) {
 		return

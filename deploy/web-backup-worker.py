@@ -53,7 +53,17 @@ def friendly_failure(logfile):
         return "ابتدا VPN Manager را روی سرور مقصد نصب کنید."
     if "foreign key mismatch" in data or "cross-version" in data:
         return "ساختار دیتابیس مبدأ با نسخه مقصد سازگار نیست؛ لاگ فنی را بررسی کنید."
-    return "عملیات ناموفق بود؛ گزارش فنی روی سرور در پوشه web-jobs ذخیره شد."
+    if "unsupported backup format" in data or "invalid manifest" in data:
+        return "فرمت بکاپ با نسخه موتور بازیابی مقصد سازگار نیست؛ سرور مقصد را آپدیت کنید."
+    if "permission denied" in data:
+        return "دسترسی خواندن یا نوشتن فایل‌های بکاپ در مقصد کافی نیست."
+    if "blockingioerror" in data or "resource temporarily unavailable" in data:
+        return "موتور بکاپ مقصد مشغول یک عملیات هم‌زمان است؛ پس از پایان دوباره بررسی کنید."
+    if "no module named" in data or "module not found" in data or "file not found" in data:
+        return "یکی از فایل‌ها یا وابستگی‌های موتور بازیابی در مقصد موجود نیست."
+    if "not a gzip file" in data or "unexpected end of data" in data or "tarfile" in data:
+        return "ساختار آرشیو فشرده در مقصد قابل خواندن نیست."
+    return "اعتبارسنجی محتوای بکاپ در مقصد ناموفق بود؛ گزارش فنی روی مقصد در web-jobs نگهداری شده است."
 
 
 def main():

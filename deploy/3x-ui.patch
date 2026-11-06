@@ -1312,17 +1312,17 @@ index 0000000..5181f3d
 +}
 diff --git a/frontend/src/pages/vpn/BackupRestorePanel.tsx b/frontend/src/pages/vpn/BackupRestorePanel.tsx
 new file mode 100644
-index 0000000..a31d057
+index 0000000..ea37528
 --- /dev/null
 +++ b/frontend/src/pages/vpn/BackupRestorePanel.tsx
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,340 @@
 +import {useEffect,useMemo,useState} from 'react';
-+import {Alert,Button,Card,Checkbox,Input,Space,Table,Tag,Typography,Upload,App,Descriptions} from 'antd';
++import {Alert,Button,Card,Checkbox,Input,Space,Table,Tag,Typography,Upload,App,Descriptions,Popconfirm} from 'antd';
 +import type {UploadFile} from 'antd';
 +import {HttpUtil} from '@/utils';
 +import {httpRequest} from '@/api/http-init';
 +
-+type BackupEntry={name:string,size:number,created:string};
++type BackupEntry={name:string,size:number,created:string;kind?:'local'|'received';job?:string};
 +type BackupMetadata={
 + source_domain:string;destination_domain:string;requires_rebind:boolean;
 + created_utc?:string;snapshot_type?:string;media_included:boolean;
@@ -1392,6 +1392,18 @@ index 0000000..a31d057
 +  }catch(e){message.error(String(e))}
 +  finally{setBusy(false)}
 + };
++ const deleteArchive=async(row:BackupEntry)=>{
++  setBusy(true);
++  try{
++   const r=await HttpUtil.post(endpoint+'/delete',
++    {kind:row.kind||'local',name:row.name,job:row.job,confirm:'DELETE'},
++    {headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
++   if(!r.success)throw new Error(r.msg||'حذف بکاپ ناموفق بود');
++   message.success('بکاپ انتخاب‌شده و فایل مرتبط آن حذف شدند؛ کلید اصلی حفظ شد.');
++   await reload();
++  }catch(e){message.error(String(e))}
++  finally{setBusy(false)}
++ };
 + const upload=async()=>{
 +  if(!archive[0]?.originFileObj||!key[0]?.originFileObj){
 +   message.error('فایل بکاپ رمزگذاری‌شده و فایل کلید را انتخاب کنید');return;
@@ -1430,19 +1442,24 @@ index 0000000..a31d057
 +  }catch(e){message.error(String(e))}
 +  finally{setSshBusy(false)}
 + };
-+ const sendDirect=async()=>{
++ const sendDirect=async(reinspect=false)=>{
 +  if(!sshProbe||!sshTrusted||!sshPassword)return;
++  const previousJob=reinspect?(remoteProgress?.remote_job||remoteTransfer?.job):undefined;
++  if(reinspect&&!previousJob)return;
 +  setSshBusy(true);
 +  try{
 +   const r=await HttpUtil.post<{job:string}>(endpoint+'/transfer-start',
 +    {host:sshProbe.host,username:sshProbe.username,port:sshProbe.port,
-+     password:sshPassword,fingerprint:sshProbe.fingerprint,include_media:includeMedia},
++     password:sshPassword,fingerprint:sshProbe.fingerprint,include_media:includeMedia,
++     ...(reinspect?{retry_job:previousJob}:{})},
 +    {headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
 +   if(!r.success||!r.obj?.job)throw new Error(r.msg||'شروع انتقال ناموفق بود');
 +   setSshJob(r.obj.job);
 +   setSshPassword('');
 +   setSshTrusted(false);
-+   message.success('ساخت بکاپ و انتقال مستقیم آغاز شد. بستن مرورگر عملیات سرور را قطع نمی‌کند.');
++   message.success(reinspect?
++    'بررسی مجدد فایل موجود در مقصد آغاز شد؛ هیچ بکاپ تازه‌ای ارسال نمی‌شود.':
++    'ساخت بکاپ و انتقال مستقیم آغاز شد. بستن مرورگر عملیات سرور را قطع نمی‌کند.');
 +   await reload();
 +  }catch(e){message.error(String(e))}
 +  finally{setSshBusy(false)}
@@ -1485,14 +1502,24 @@ index 0000000..a31d057
 +    <Alert type="warning" showIcon
 +     title="فایل بکاپ و کلید، هر دو الزامی‌اند"
 +     description="فایل GPG با AES-256 رمزگذاری می‌شود. کلید را جداگانه و محرمانه نگه دارید. ساخت بکاپ کامل به فضای کافی نیاز دارد. بکاپ هنگام فعال بودن سرور یک Snapshot است؛ قبل از جابه‌جایی ربات باید آخرین تغییرات هم همگام شوند."/>
-+    <Table rowKey="name" size="small" pagination={{pageSize:6}}
++    <Table rowKey={r=>(r.kind||'local')+':'+(r.job||r.name)} size="small" pagination={{pageSize:6}}
 +     dataSource={status.backups} columns={[
 +      {title:'فایل بکاپ',dataIndex:'name',ellipsis:true},
++      {title:'محل',render:(_:unknown,r:BackupEntry)=>r.kind==='received'?'دریافت‌شده':'ساخته‌شده'},
 +      {title:'حجم',render:(_:unknown,r:BackupEntry)=>humanSize(r.size)},
 +      {title:'زمان ساخت (UTC)',dataIndex:'created'},
-+      {title:'دانلود',render:(_:unknown,r:BackupEntry)=><a href={url(r.name)} download={r.name}>
-+       <Button>دانلود بکاپ</Button>
-+      </a>},
++      {title:'عملیات',render:(_:unknown,r:BackupEntry)=><Space wrap>
++       {r.kind!=='received'&&<a href={url(r.name)} download={r.name}>
++        <Button size="small">دانلود</Button>
++       </a>}
++       <Popconfirm
++        title="حذف دائمی بکاپ"
++        description={<span>بکاپ {r.name} و فایل‌های مرتبط حذف می‌شوند. پس از حذف بازیابی ممکن نیست؛ کلید اصلی رمزگذاری و دیتابیس‌ها حفظ می‌شوند.</span>}
++        okText="بله، حذف شود" cancelText="انصراف" okButtonProps={{danger:true}}
++        onConfirm={()=>void deleteArchive(r)}>
++        <Button danger size="small" disabled={busy}>حذف بکاپ</Button>
++       </Popconfirm>
++      </Space>},
 +     ]}/>
 +   </Space>
 +  </Card>
@@ -1544,6 +1571,11 @@ index 0000000..a31d057
 +      onClick={()=>void sendDirect()}>
 +      ساخت بکاپ و ارسال مستقیم به مقصد
 +     </Button>
++     {remoteTransfer?.state==='failed'&&<Button
++      disabled={!sshTrusted||!sshPassword} loading={sshBusy}
++      onClick={()=>void sendDirect(true)}>
++      بررسی مجدد فایل موجود در مقصد (بدون ارسال دوباره)
++     </Button>}
 +    </>}
 +    <Typography.Text type="secondary">
 +     برای انتقال به پوشه بازیابی پنل مقصد، ورود root یا کاربری با sudo بدون رمز لازم است.
@@ -2174,7 +2206,7 @@ diff --git a/internal/web/controller/api.go b/internal/web/controller/api.go
 index 4c9038f..5337abb 100644
 --- a/internal/web/controller/api.go
 +++ b/internal/web/controller/api.go
-@@ -200,6 +200,16 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
+@@ -200,6 +200,17 @@ func (a *APIController) initRouter(g *gin.RouterGroup) {
  	api.Use(middleware.ConfigEnvelopeMiddleware())
  	api.Use(middleware.CSRFMiddleware(getRemoteIp))
  
@@ -2185,6 +2217,7 @@ index 4c9038f..5337abb 100644
 +	api.GET("/masiha-backup/status", a.backupStatus)
 +	api.GET("/masiha-backup/download/:name", a.backupDownload)
 +	api.POST("/masiha-backup/create", a.backupCreate)
++	api.POST("/masiha-backup/delete", a.backupDelete)
 +	api.POST("/masiha-backup/import", a.backupUpload)
 +	api.POST("/masiha-backup/restore", a.backupRestore)
 +
@@ -2193,10 +2226,10 @@ index 4c9038f..5337abb 100644
  	// Inbounds API
 diff --git a/internal/web/controller/masiha_backup.go b/internal/web/controller/masiha_backup.go
 new file mode 100644
-index 0000000..adc7ed3
+index 0000000..bfa983a
 --- /dev/null
 +++ b/internal/web/controller/masiha_backup.go
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,356 @@
 +package controller
 +
 +import (
@@ -2214,6 +2247,7 @@ index 0000000..adc7ed3
 +	"regexp"
 +	"sort"
 +	"strings"
++	"syscall"
 +	"time"
 +)
 +
@@ -2267,7 +2301,26 @@ index 0000000..adc7ed3
 +		if err != nil {
 +			continue
 +		}
-+		files = append(files, gin.H{"name": name, "size": info.Size(),
++		files = append(files, gin.H{"name": name, "size": info.Size(), "kind": "local",
++			"created": info.ModTime().UTC().Format(time.RFC3339)})
++	}
++	receivedDir := filepath.Join(archiveDirectory, "web-imports")
++	received, _ := os.ReadDir(receivedDir)
++	for _, item := range received {
++		job := strings.TrimSuffix(item.Name(), ".gpg")
++		if !strings.HasSuffix(item.Name(), ".gpg") || !safeIdentifier.MatchString(job) {
++			continue
++		}
++		path := filepath.Join(receivedDir, item.Name())
++		if !privateRegular(path) {
++			continue
++		}
++		info, err := item.Info()
++		if err != nil {
++			continue
++		}
++		files = append(files, gin.H{"name": "بکاپ دریافتی " + job[:10],
++			"job": job, "kind": "received", "size": info.Size(),
 +			"created": info.ModTime().UTC().Format(time.RFC3339)})
 +	}
 +	sort.Slice(files, func(i, j int) bool { return files[i]["created"].(string) > files[j]["created"].(string) })
@@ -2286,6 +2339,75 @@ index 0000000..adc7ed3
 +	c.JSON(200, gin.H{"success": true, "obj": gin.H{"backups": files, "jobs": jobs,
 +		"has_key": privateRegular("/root/.masiha-backup.key")}})
 +}
++
++// backupDelete removes only one selected encrypted local or imported backup.
++// The shared master decryption key and all live databases are never touched.
++func (a *APIController) backupDelete(c *gin.Context) {
++	if !a.backupAdmin(c) {
++		return
++	}
++	var body struct {
++		Name    string `json:"name"`
++		Kind    string `json:"kind"`
++		Job     string `json:"job"`
++		Confirm string `json:"confirm"`
++	}
++	if c.ShouldBindJSON(&body) != nil || body.Confirm != "DELETE" {
++		c.JSON(400, gin.H{"success": false, "msg": "Invalid deletion request"})
++		return
++	}
++	if body.Kind == "" {
++		body.Kind = "local"
++	}
++	target, related, state := "", "", ""
++	if body.Kind == "local" && safeArchive.MatchString(body.Name) &&
++		strings.HasSuffix(body.Name, ".gpg") {
++		target = filepath.Join(archiveDirectory, body.Name)
++		related = target + ".sha256"
++	} else if body.Kind == "received" && safeIdentifier.MatchString(body.Job) {
++		target = filepath.Join(archiveDirectory, "web-imports", body.Job+".gpg")
++		related = filepath.Join(archiveDirectory, "web-imports", body.Job+".key")
++		state = filepath.Join(archiveDirectory, "web-jobs", body.Job+".json")
++	} else {
++		c.JSON(400, gin.H{"success": false, "msg": "Invalid backup name or job"})
++		return
++	}
++	lockPath := filepath.Join(archiveDirectory, "web-work.lock")
++	lockFD, err := syscall.Open(lockPath, syscall.O_RDWR|syscall.O_CREAT|syscall.O_NOFOLLOW, 0600)
++	if err != nil {
++		c.JSON(503, gin.H{"success": false, "msg": "Backup lock is unavailable"})
++		return
++	}
++	defer syscall.Close(lockFD)
++	if syscall.Flock(lockFD, syscall.LOCK_EX|syscall.LOCK_NB) != nil {
++		c.JSON(409, gin.H{"success": false, "msg": "Backup operation is running"})
++		return
++	}
++	defer syscall.Flock(lockFD, syscall.LOCK_UN)
++	if !privateRegular(target) {
++		c.JSON(404, gin.H{"success": false, "msg": "Backup not found"})
++		return
++	}
++	if _, err := os.Lstat(related); err == nil && !privateRegular(related) {
++		c.JSON(409, gin.H{"success": false, "msg": "Backup related file is invalid"})
++		return
++	} else if err != nil && !os.IsNotExist(err) {
++		c.JSON(503, gin.H{"success": false, "msg": "Could not verify related file"})
++		return
++	}
++	if err := os.Remove(target); err != nil {
++		c.JSON(503, gin.H{"success": false, "msg": "Could not delete backup"})
++		return
++	}
++	if privateRegular(related) {
++		_ = os.Remove(related)
++	}
++	if state != "" && privateRegular(state) {
++		_ = os.Remove(state)
++	}
++	c.JSON(200, gin.H{"success": true, "obj": gin.H{"kind": body.Kind}})
++}
++
 +func (a *APIController) backupCreate(c *gin.Context) {
 +	if !a.backupAdmin(c) {
 +		return

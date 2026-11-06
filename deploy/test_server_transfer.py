@@ -39,6 +39,12 @@ class ServerTransferRegression(unittest.TestCase):
         self.assertIn("sshTrusted",panel)
         self.assertIn("Input.Password",panel)
         self.assertIn("destination_ready_for_restore",panel)
+        self.assertIn("retry_job",panel)
+        self.assertIn("بدون ارسال دوباره",panel)
+        self.assertIn("حذف بکاپ",panel)
+        self.assertIn("delete_backup_file",(ROOT/"sidecar/server.py").read_text())
+        self.assertIn("delete",(ROOT/"sidecar/nginx-locations.conf").read_text())
+        self.assertIn("RemoteInspectionError",(ROOT/"runtime/backup_transfer.py").read_text())
 
     def test_root_only_one_time_handoff_and_no_auto_restore(self):
         raw=(ROOT/"runtime/backup_transfer.py").read_text()

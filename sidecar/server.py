@@ -142,6 +142,41 @@ def private(path):
         return False
 
 
+def delete_backup_file(root, kind, *, name=None, job=None):
+    """Delete one chosen backup under a nonblocking shared backup/restore lock.
+
+    Does not alter active databases, the shared master key or arbitrary paths.
+    root is passed explicitly for isolated regression tests.
+    """
+    import fcntl
+    if kind=="local":
+        if not isinstance(name,str) or not ARCHIVE.fullmatch(name):
+            raise ValueError("Invalid local archive name")
+        target=root/name
+        related=root/(name+".sha256")
+        state=None
+    elif kind=="received":
+        if not isinstance(job,str) or not HEX.fullmatch(job):
+            raise ValueError("Invalid imported backup job")
+        target=root/"web-imports"/(job+".gpg")
+        related=root/"web-imports"/(job+".key")
+        state=root/"web-jobs"/(job+".json")
+    else:
+        raise ValueError("Unknown backup kind")
+    root.mkdir(mode=0o700,parents=True,exist_ok=True)
+    with open(root/"web-work.lock","a+b") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if not private(target):
+            raise FileNotFoundError("Backup not found or unsafe")
+        if related.is_symlink() or (related.exists() and not private(related)):
+            raise ValueError("Backup companion file is unsafe")
+        target.unlink()
+        if private(related):
+            related.unlink()
+        if state is not None and private(state):
+            state.unlink()
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, fmt, *args):
@@ -229,6 +264,15 @@ class Handler(BaseHTTPRequestHandler):
                         "created": __import__("datetime").datetime.fromtimestamp(f.stat().st_mtime,
                                 __import__("datetime").timezone.utc).isoformat()}
                        for f in (BACKUPS.iterdir() if BACKUPS.is_dir() else []) if ARCHIVE.fullmatch(f.name) and private(f)]
+            for imported in (IMPORTS.glob("*.gpg") if IMPORTS.is_dir() else []):
+                job=imported.stem
+                if HEX.fullmatch(job) and private(imported):
+                    backups.append({"name":"بکاپ دریافتی "+job[:10], "job":job,
+                                    "kind":"received", "size":imported.stat().st_size,
+                                    "created":__import__("datetime").datetime.fromtimestamp(
+                                        imported.stat().st_mtime,__import__("datetime").timezone.utc).isoformat()})
+            for b in backups:
+                b.setdefault("kind","local")
             backups.sort(key=lambda x: x["created"], reverse=True)
             jobs = []
             if JOBS.is_dir():
@@ -327,6 +371,20 @@ class Handler(BaseHTTPRequestHandler):
                     handoff.unlink(missing_ok=True)
                     raise
                 return self.send_bytes(202,envelope(True,{"job":job}))
+            if trusted_panel_api_path(path, "masiha-backup/delete"):
+                body=self.read_json(2048)
+                if not isinstance(body,dict) or body.get("confirm")!="DELETE":
+                    return self.error_json(400,"تأیید حذف نامعتبر است")
+                try:
+                    delete_backup_file(BACKUPS,body.get("kind","local"),
+                                       name=body.get("name"),job=body.get("job"))
+                except BlockingIOError:
+                    return self.error_json(409,"عملیات بکاپ یا بازیابی در حال اجراست")
+                except FileNotFoundError:
+                    return self.error_json(404,"بکاپ موردنظر پیدا نشد")
+                except ValueError:
+                    return self.error_json(400,"فایل یا شناسه بکاپ نامعتبر است")
+                return self.send_bytes(200,envelope(True,{"kind":body.get("kind","local")}))
             if trusted_panel_api_path(path, "masiha-backup/create"):
                 body=self.read_json(2048)
                 if not isinstance(body,dict) or not isinstance(body.get("include_media",False),bool):

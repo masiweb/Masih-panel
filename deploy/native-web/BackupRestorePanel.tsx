@@ -1,10 +1,10 @@
 import {useEffect,useMemo,useState} from 'react';
-import {Alert,Button,Card,Checkbox,Input,Space,Table,Tag,Typography,Upload,App,Descriptions} from 'antd';
+import {Alert,Button,Card,Checkbox,Input,Space,Table,Tag,Typography,Upload,App,Descriptions,Popconfirm} from 'antd';
 import type {UploadFile} from 'antd';
 import {HttpUtil} from '@/utils';
 import {httpRequest} from '@/api/http-init';
 
-type BackupEntry={name:string,size:number,created:string};
+type BackupEntry={name:string,size:number,created:string;kind?:'local'|'received';job?:string};
 type BackupMetadata={
  source_domain:string;destination_domain:string;requires_rebind:boolean;
  created_utc?:string;snapshot_type?:string;media_included:boolean;
@@ -74,6 +74,18 @@ export default function BackupRestorePanel(){
   }catch(e){message.error(String(e))}
   finally{setBusy(false)}
  };
+ const deleteArchive=async(row:BackupEntry)=>{
+  setBusy(true);
+  try{
+   const r=await HttpUtil.post(endpoint+'/delete',
+    {kind:row.kind||'local',name:row.name,job:row.job,confirm:'DELETE'},
+    {headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
+   if(!r.success)throw new Error(r.msg||'حذف بکاپ ناموفق بود');
+   message.success('بکاپ انتخاب‌شده و فایل مرتبط آن حذف شدند؛ کلید اصلی حفظ شد.');
+   await reload();
+  }catch(e){message.error(String(e))}
+  finally{setBusy(false)}
+ };
  const upload=async()=>{
   if(!archive[0]?.originFileObj||!key[0]?.originFileObj){
    message.error('فایل بکاپ رمزگذاری‌شده و فایل کلید را انتخاب کنید');return;
@@ -112,19 +124,24 @@ export default function BackupRestorePanel(){
   }catch(e){message.error(String(e))}
   finally{setSshBusy(false)}
  };
- const sendDirect=async()=>{
+ const sendDirect=async(reinspect=false)=>{
   if(!sshProbe||!sshTrusted||!sshPassword)return;
+  const previousJob=reinspect?(remoteProgress?.remote_job||remoteTransfer?.job):undefined;
+  if(reinspect&&!previousJob)return;
   setSshBusy(true);
   try{
    const r=await HttpUtil.post<{job:string}>(endpoint+'/transfer-start',
     {host:sshProbe.host,username:sshProbe.username,port:sshProbe.port,
-     password:sshPassword,fingerprint:sshProbe.fingerprint,include_media:includeMedia},
+     password:sshPassword,fingerprint:sshProbe.fingerprint,include_media:includeMedia,
+     ...(reinspect?{retry_job:previousJob}:{})},
     {headers:{'Content-Type':'application/json'},silent:true,timeout:15000});
    if(!r.success||!r.obj?.job)throw new Error(r.msg||'شروع انتقال ناموفق بود');
    setSshJob(r.obj.job);
    setSshPassword('');
    setSshTrusted(false);
-   message.success('ساخت بکاپ و انتقال مستقیم آغاز شد. بستن مرورگر عملیات سرور را قطع نمی‌کند.');
+   message.success(reinspect?
+    'بررسی مجدد فایل موجود در مقصد آغاز شد؛ هیچ بکاپ تازه‌ای ارسال نمی‌شود.':
+    'ساخت بکاپ و انتقال مستقیم آغاز شد. بستن مرورگر عملیات سرور را قطع نمی‌کند.');
    await reload();
   }catch(e){message.error(String(e))}
   finally{setSshBusy(false)}
@@ -167,14 +184,24 @@ export default function BackupRestorePanel(){
     <Alert type="warning" showIcon
      title="فایل بکاپ و کلید، هر دو الزامی‌اند"
      description="فایل GPG با AES-256 رمزگذاری می‌شود. کلید را جداگانه و محرمانه نگه دارید. ساخت بکاپ کامل به فضای کافی نیاز دارد. بکاپ هنگام فعال بودن سرور یک Snapshot است؛ قبل از جابه‌جایی ربات باید آخرین تغییرات هم همگام شوند."/>
-    <Table rowKey="name" size="small" pagination={{pageSize:6}}
+    <Table rowKey={r=>(r.kind||'local')+':'+(r.job||r.name)} size="small" pagination={{pageSize:6}}
      dataSource={status.backups} columns={[
       {title:'فایل بکاپ',dataIndex:'name',ellipsis:true},
+      {title:'محل',render:(_:unknown,r:BackupEntry)=>r.kind==='received'?'دریافت‌شده':'ساخته‌شده'},
       {title:'حجم',render:(_:unknown,r:BackupEntry)=>humanSize(r.size)},
       {title:'زمان ساخت (UTC)',dataIndex:'created'},
-      {title:'دانلود',render:(_:unknown,r:BackupEntry)=><a href={url(r.name)} download={r.name}>
-       <Button>دانلود بکاپ</Button>
-      </a>},
+      {title:'عملیات',render:(_:unknown,r:BackupEntry)=><Space wrap>
+       {r.kind!=='received'&&<a href={url(r.name)} download={r.name}>
+        <Button size="small">دانلود</Button>
+       </a>}
+       <Popconfirm
+        title="حذف دائمی بکاپ"
+        description={<span>بکاپ {r.name} و فایل‌های مرتبط حذف می‌شوند. پس از حذف بازیابی ممکن نیست؛ کلید اصلی رمزگذاری و دیتابیس‌ها حفظ می‌شوند.</span>}
+        okText="بله، حذف شود" cancelText="انصراف" okButtonProps={{danger:true}}
+        onConfirm={()=>void deleteArchive(r)}>
+        <Button danger size="small" disabled={busy}>حذف بکاپ</Button>
+       </Popconfirm>
+      </Space>},
      ]}/>
    </Space>
   </Card>
@@ -226,6 +253,11 @@ export default function BackupRestorePanel(){
       onClick={()=>void sendDirect()}>
       ساخت بکاپ و ارسال مستقیم به مقصد
      </Button>
+     {remoteTransfer?.state==='failed'&&<Button
+      disabled={!sshTrusted||!sshPassword} loading={sshBusy}
+      onClick={()=>void sendDirect(true)}>
+      بررسی مجدد فایل موجود در مقصد (بدون ارسال دوباره)
+     </Button>}
     </>}
     <Typography.Text type="secondary">
      برای انتقال به پوشه بازیابی پنل مقصد، ورود root یا کاربری با sudo بدون رمز لازم است.

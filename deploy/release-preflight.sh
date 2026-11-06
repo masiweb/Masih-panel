@@ -31,6 +31,8 @@ echo "=== Verified prebuilt x-ui fast-update regression ==="
 python3 -m unittest -q deploy/test_prebuilt_updater.py
 echo "=== Direct SSH backup transfer regression ==="
 python3 -m unittest -q deploy/test_server_transfer.py
+echo "=== Safe archive deletion regression ==="
+python3 -m unittest -q deploy/test_backup_deletion.py
 cmp -s runtime/full_backup.py deploy/full-backup.py
 cmp -s runtime/portable_migration.py deploy/portable_migration.py
 grep -Fq 'runtime/portable_migration.py' deploy/install-ubuntu-24.04.sh

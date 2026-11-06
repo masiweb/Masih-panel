@@ -260,8 +260,13 @@ import sys
 p=Path(sys.argv[1]);s=p.read_text()
 s=s.replace("client_max_body_size 512m;","client_max_body_size 6g;")
 s=s.replace("proxy_request_buffering on;","proxy_request_buffering off;")
-s=s.replace("masiha-backup/(?:status|create|import|restore|download/.+)",
-            "masiha-backup/(?:status|create|import|restore|transfer-probe|transfer-start|download/.+)")
+expected="masiha-backup/(?:status|create|delete|import|restore|transfer-probe|transfer-start|download/.+)"
+for existing in (
+    "masiha-backup/(?:status|create|import|restore|download/.+)",
+    "masiha-backup/(?:status|create|import|restore|transfer-probe|transfer-start|download/.+)",
+    "masiha-backup/(?:status|create|delete|import|restore|download/.+)",
+):
+    s=s.replace(existing,expected)
 p.write_text(s)
 PY
 nginx -t
