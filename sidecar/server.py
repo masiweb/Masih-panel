@@ -55,7 +55,7 @@ def trusted_panel_api_path(path, suffix):
     return path == panel_api_base() + suffix
 
 PATH_BASE = "/xui/panel/api/"  # compatibility alias for imports/tests only
-MAX_UPLOAD = 512 << 20
+MAX_UPLOAD = 6 << 30
 PAY_SLOTS = threading.BoundedSemaphore(4)
 LOG = __import__("logging").getLogger("masiha-sidecar")
 os.umask(0o077)
@@ -122,7 +122,7 @@ def upstream_panel_token(cookie):
 
 
 def launch(action, job):
-    if action not in ("create", "inspect", "restore") or not HEX.fullmatch(job):
+    if action not in ("create", "create-full", "inspect", "restore") or not HEX.fullmatch(job):
         raise ValueError("Invalid backup job")
     subprocess.run(["/usr/bin/systemd-run", "--quiet", "--collect",
                     "--unit=masiha-webbackup-" + action + "-" + job,
@@ -305,9 +305,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = self.read_json(65536)
                 return self.send_bytes(200, json_command("film_admin.py", body))
             if trusted_panel_api_path(path, "masiha-backup/create"):
-                self.read_json(2048)
+                body=self.read_json(2048)
+                if not isinstance(body,dict) or not isinstance(body.get("include_media",False),bool):
+                    return self.error_json(400,"Invalid backup mode")
                 job = secrets.token_hex(16)
-                launch("create", job)
+                launch("create-full" if body.get("include_media") else "create", job)
                 return self.send_bytes(202, envelope(True, {"job": job}))
             if trusted_panel_api_path(path, "masiha-backup/import"):
                 return self.import_backup()
@@ -318,7 +320,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error_json(400, "Type RESTORE to confirm")
                 state = JOBS / (job + ".json")
                 try:
-                    verified = json.loads(state.read_text()).get("state") == "done"
+                    row=json.loads(state.read_text())
+                    verified=(row.get("state")=="done" and row.get("action")=="inspect"
+                              and isinstance(row.get("metadata"),dict))
                 except (OSError, ValueError):
                     verified = False
                 if not verified or not all(private(IMPORTS / (job + ext)) for ext in (".gpg", ".key")):
@@ -338,6 +342,11 @@ class Handler(BaseHTTPRequestHandler):
         if not ct.startswith("multipart/form-data;") or not (1024 <= length <= MAX_UPLOAD):
             return self.error_json(413, "Invalid upload size or Content-Type")
         IMPORTS.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # cgi.FieldStorage spills to disk, then importBackupParts saves a second
+        # copy. Fail early rather than exhaust a production VPN host.
+        import shutil
+        if shutil.disk_usage(IMPORTS).free < (length * 2 + (512 << 20)):
+            return self.error_json(507, "فضای آزاد برای دریافت و بررسی این بکاپ کافی نیست")
         job = secrets.token_hex(16)
         created = []
         try:

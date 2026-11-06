@@ -707,21 +707,59 @@ def network_diagnostics():
     return diagnostics
 
 
+def _tar_entries(out,stage):
+    for folder in ("manifest.json", "db", "files"):
+        path = stage / folder
+        if not path.exists():
+            continue
+        if path.is_file():
+            out.add(path, arcname=folder, recursive=False)
+        else:
+            for p in sorted(path.rglob("*")):
+                if p.is_file() and not p.name.endswith(SENSITIVE_TRANSIENT_SUFFIXES):
+                    out.add(p, arcname=str(p.relative_to(stage)), recursive=False)
+
+
 def pack(stage, tar_path, manifest):
+    """Retained for offline test fixtures and explicit unencrypted staging."""
     (stage / "manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True),
         encoding="utf-8")
     with tarfile.open(tar_path, "w:gz", format=tarfile.PAX_FORMAT) as out:
-        for folder in ("manifest.json", "db", "files"):
-            path = stage / folder
-            if not path.exists():
-                continue
-            if path.is_file():
-                out.add(path, arcname=folder, recursive=False)
-            else:
-                for p in sorted(path.rglob("*")):
-                    if p.is_file() and not p.name.endswith(SENSITIVE_TRANSIENT_SUFFIXES):
-                        out.add(p, arcname=str(p.relative_to(stage)), recursive=False)
+        _tar_entries(out,stage)
+
+
+def pack_encrypted_stream(stage, dest, manifest, key):
+    """Stream tar->gzip->GPG directly; no duplicate 1.5GB plaintext tar.
+
+    The encrypted .part file is made private and renamed by the caller only
+    after GPG exits successfully.
+    """
+    (stage / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8")
+    argv=["gpg","--batch","--yes","--no-tty","--pinentry-mode","loopback",
+          "--passphrase-file",str(key),"--symmetric","--cipher-algo","AES256",
+          "--s2k-digest-algo","SHA512","--s2k-count","65011712",
+          "--output",str(dest)]
+    with subprocess.Popen(argv,stdin=subprocess.PIPE,
+                          stdout=subprocess.DEVNULL,stderr=subprocess.PIPE) as proc:
+        try:
+            with tarfile.open(fileobj=proc.stdin,mode="w|gz",
+                              format=tarfile.PAX_FORMAT) as tar:
+                _tar_entries(tar,stage)
+            proc.stdin.close()
+            errors=proc.stderr.read()
+            code=proc.wait(timeout=1800)
+            if code:
+                die("Encrypted archive streaming failed: " +
+                    errors.decode("utf-8","replace")[-450:])
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            raise
+    dest.chmod(0o600)
 
 
 def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False, skip_media=False):
@@ -786,11 +824,9 @@ def create_backup(directory=DEFAULT_OUTPUT, key=DEFAULT_KEY, quiesce=False, skip
             "databases": databases, "files": files, "source_roots": list(SOURCES),
             "network_audit_only": network_diagnostics(),
         }
-        plain = stage / "payload.tar.gz"
-        pack(stage, plain, manifest)
         pending = directory / ("." + final.name + ".part")
         try:
-            crypt(plain, pending, key)
+            pack_encrypted_stream(stage, pending, manifest, key)
             os.replace(pending, final)
         finally:
             pending.unlink(missing_ok=True)
@@ -1126,6 +1162,9 @@ def main():
                    help="exclude media tables and Telegram Local API cache; preserve sales and points")
     b.add_argument("--quiesce",action="store_true",
                    help="briefly stop VPN services while taking snapshot (recommended for final migration)")
+    i=sub.add_parser("inspect",help="validate archive and show portable identity summary")
+    i.add_argument("archive")
+    i.add_argument("--key-file",default=str(DEFAULT_KEY))
     v=sub.add_parser("verify")
     v.add_argument("archive")
     v.add_argument("--key-file",default=str(DEFAULT_KEY))
@@ -1134,7 +1173,12 @@ def main():
     r.add_argument("--key-file",default=str(DEFAULT_KEY))
     r.add_argument("--confirm-restore",action="store_true")
     r.add_argument("--staging-root",help="isolated restore-only test directory under /tmp or /var/tmp")
-    r.add_argument("--allow-domain-mismatch",action="store_true")
+    r.add_argument("--allow-domain-mismatch",action="store_true",
+                   help="legacy alias for safe --portable restore; never replay source server identity")
+    r.add_argument("--portable",action="store_true",
+                   help="import source data while preserving destination TLS/domain/web panel")
+    r.add_argument("--preview",action="store_true",
+                   help="validate planned portable migration without changing the destination")
     r.add_argument("--activate-telegram",action="store_true",
                    help="start restored Telegram/extension worker immediately; ONLY after old server stops it")
     args=parser.parse_args()
@@ -1145,9 +1189,40 @@ def main():
         with tempfile.TemporaryDirectory(prefix="masiha-verify-") as tmp:
             unpack_verified(args.archive,key_file(args.key_file),Path(tmp))
         print("BACKUP_INTEGRITY_VERIFIED=PASS")
+    elif args.action=="inspect":
+        ensure_root()
+        with tempfile.TemporaryDirectory(prefix="masiha-inspect-") as tmp:
+            manifest,contents=unpack_verified(args.archive,key_file(args.key_file),Path(tmp))
+            summary={
+                "source_domain":manifest["source_domain"],
+                "destination_domain":get_domain(),
+                "requires_rebind":get_domain()!=manifest["source_domain"],
+                "created_utc":manifest.get("created_utc",""),
+                "snapshot_type":manifest.get("snapshot_type",""),
+                "media_included":manifest.get("telegram_media_included",True),
+                "database_tables":{k:len(v.get("tables",{})) for k,v in manifest["databases"].items()},
+                "files":len(manifest["files"]),
+                "safe_portable_restore":True,
+            }
+            print("BACKUP_SUMMARY_JSON "+json.dumps(summary,ensure_ascii=False))
     elif args.action=="restore":
-        restore(args.archive,args.key_file,args.confirm_restore,args.staging_root,
-                args.allow_domain_mismatch,args.activate_telegram)
+        if args.portable or args.allow_domain_mismatch or args.preview:
+            if not args.confirm_restore and not args.preview:
+                die("Refusing portable restore without --confirm-restore")
+            if args.staging_root:
+                die("Use normal staging restore without --portable")
+            ensure_root()
+            with tempfile.TemporaryDirectory(prefix="masiha-portable-unpack-") as tmp:
+                from portable_migration import migrate_destination
+                manifest,contents=unpack_verified(args.archive,key_file(args.key_file),Path(tmp))
+                report=migrate_destination(manifest,contents,get_domain(),apply=not args.preview)
+                print(("PORTABLE_RESTORE_PLAN " if args.preview else "PORTABLE_RESTORE_COMPLETE ")+
+                      json.dumps(report,ensure_ascii=False))
+                if not args.preview:
+                    print("TELEGRAM_CUTOVER_REQUIRED; NEVER POLL THE SAME BOT ON TWO SERVERS")
+        else:
+            restore(args.archive,args.key_file,args.confirm_restore,args.staging_root,
+                    args.allow_domain_mismatch,args.activate_telegram)
 
 
 if __name__=="__main__":

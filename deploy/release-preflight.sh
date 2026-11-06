@@ -23,6 +23,12 @@ python3 -m unittest -q sidecar/test_dynamic_auth.py
 python3 -m unittest -q deploy/test_bootstrap_inbounds.py deploy/test_extend_inbounds.py deploy/test_benchmark_inbounds.py deploy/test_full_backup.py deploy/test_check_panel_login.py
 echo "=== Complete fresh-install pipeline regression tests ==="
 python3 -m unittest -q deploy/test_install_pipeline.py
+echo "=== Portable backup/restore cross-domain regression ==="
+python3 -m unittest -q deploy/test_portable_migration.py
+cmp -s runtime/full_backup.py deploy/full-backup.py
+cmp -s runtime/portable_migration.py deploy/portable_migration.py
+grep -Fq 'runtime/portable_migration.py' deploy/install-ubuntu-24.04.sh
+grep -Fq -- '--portable' deploy/web-backup-worker.py
 git apply --stat deploy/3x-ui.patch >/dev/null
 test -s deploy/3x-ui.patch
 grep -Fq 'frontend/src/pages/vpn/SalesBotPage.css' deploy/3x-ui.patch

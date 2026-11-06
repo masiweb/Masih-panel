@@ -164,12 +164,12 @@ if needle not in s:
     return 302 "/masiha-ui/#bot";
   }
   location ~ "^/(?:[A-Za-z0-9._~-]+/){1,6}panel/api/(?:masiha-session|masiha-vpn|masiha-profiles|sales-bot|masiha-backup/(?:status|create|import|restore|download/.+))$" {
-    client_max_body_size 512m;
+    client_max_body_size 6g;
     proxy_pass http://127.0.0.1:61794;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_request_buffering on;
+    proxy_request_buffering off;
     proxy_read_timeout 360s;
     proxy_send_timeout 360s;
   }

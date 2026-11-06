@@ -19,16 +19,41 @@ CLI=Path("/opt/masiha-vpn-extension/full_backup.py")
 HEX=re.compile(r"^[a-f0-9]{32}$")
 
 
-def status(job,state,detail=""):
+def status(job,state,detail="",metadata=None,action=""):
     JOBS.mkdir(mode=0o700,parents=True,exist_ok=True)
     path=JOBS/(job+".json")
     temp=JOBS/(job+".tmp")
-    temp.write_text(json.dumps({
-        "job":job, "state":state, "detail":str(detail)[-220:],
-        "at":int(time.time())
-    },ensure_ascii=False))
+    data={"job":job, "state":state, "detail":str(detail)[-220:],
+          "at":int(time.time())}
+    if metadata:
+        data["metadata"]=metadata
+    if action:
+        data["action"]=action
+    temp.write_text(json.dumps(data,ensure_ascii=False))
     os.chmod(temp,0o600)
     os.replace(temp,path)
+
+
+def friendly_failure(logfile):
+    # Do not reflect arbitrary error strings: logs can contain paths, bot
+    # tokens, private service settings or user content. Use fixed categories.
+    try:
+        data=logfile.read_bytes()[-16384:].decode("utf-8","replace").lower()
+    except OSError:
+        data=""
+    if "no space left on device" in data or "not enough free space" in data:
+        return "فضای دیسک کافی نیست؛ فضای آزاد سرور را بررسی کنید."
+    if "bad session key" in data or "decryption failed" in data or "no secret key" in data:
+        return "کلید رمزگشایی صحیح نیست یا فایل بکاپ آسیب دیده است."
+    if "sha256 mismatch" in data or "checksum failed" in data or "archive is incomplete" in data:
+        return "صحت فایل بکاپ تأیید نشد؛ دوباره انتقال دهید."
+    if "destination tls certificate" in data:
+        return "ابتدا گواهی HTTPS معتبر برای دامنه سرور مقصد فعال کنید."
+    if "destination component is not installed" in data:
+        return "ابتدا VPN Manager را روی سرور مقصد نصب کنید."
+    if "foreign key mismatch" in data or "cross-version" in data:
+        return "ساختار دیتابیس مبدأ با نسخه مقصد سازگار نیست؛ لاگ فنی را بررسی کنید."
+    return "عملیات ناموفق بود؛ گزارش فنی روی سرور در پوشه web-jobs ذخیره شد."
 
 
 def main():
@@ -36,37 +61,53 @@ def main():
     if len(sys.argv)!=3:
         raise ValueError("expected action and job")
     action,job=sys.argv[1:]
-    if not HEX.fullmatch(job) or action not in {"create","inspect","restore"}:
+    if not HEX.fullmatch(job) or action not in {"create","create-full","inspect","restore"}:
         raise ValueError("invalid job")
     ROOT.mkdir(mode=0o700,parents=True,exist_ok=True)
     with open(ROOT/"web-work.lock","a+b") as lock:
         # Jobs must not compete with each other for restore/backup snapshots.
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        status(job,"running")
+        status(job,"running",action=action)
         args=["/usr/bin/python3",str(CLI)]
-        if action=="create":
-            args+=["backup","--skip-media","--output-dir",str(ROOT),
+        if action in ("create","create-full"):
+            args+=["backup","--output-dir",str(ROOT),
                    "--key-file","/root/.masiha-backup.key"]
+            if action=="create":
+                args.append("--skip-media")
         else:
             archive=IMPORTS/(job+".gpg")
             key=IMPORTS/(job+".key")
             if not archive.is_file() or not key.is_file():
                 raise ValueError("Uploaded archive or key missing")
-            args+=["verify" if action=="inspect" else "restore",str(archive),
+            args+=["inspect" if action=="inspect" else "restore",str(archive),
                    "--key-file",str(key)]
             if action=="restore":
-                # Default restore does not start the Telegram worker: source
-                # must be stopped to prevent duplicated consumption of updates.
-                args+=["--confirm-restore"]
+                # Portable mode preserves destination domain/certificates and
+                # never starts Telegram polling or source-managed remote nodes.
+                args+=["--portable","--confirm-restore"]
         output=ROOT/"web-jobs"/(job+".log")
         with open(output,"wb") as log:
             proc=subprocess.run(args,stdout=log,stderr=subprocess.STDOUT,
                                 timeout=1800,check=False)
         if proc.returncode:
             # Only a short sanitized error; never report tokens or key contents.
-            status(job,"failed","عملیات ناموفق بود؛ لاگ محلی را بررسی کنید.")
+            status(job,"failed",friendly_failure(output),action=action)
         else:
-            status(job,"done")
+            metadata=None
+            if action=="inspect":
+                # Extract only the explicit, validated summary line; never
+                # reveal the underlying backup log or archive secrets.
+                import re
+                text=output.read_text(errors="replace")
+                matches=re.findall(r'^BACKUP_SUMMARY_JSON (.+)$',text,re.M)
+                if len(matches)!=1:
+                    raise ValueError("Backup summary was not produced")
+                metadata=json.loads(matches[0])
+                status(job,"done","رمزگشایی و بررسی فایل موفق؛ آماده بازیابی روی دامنه مقصد",
+                       metadata=metadata,action=action)
+            else:
+                status(job,"done","بکاپ آماده شد" if action.startswith("create") else
+                       "اطلاعات بازیابی شد؛ ربات تا انتقال نهایی غیرفعال است",action=action)
     return 0
 
 

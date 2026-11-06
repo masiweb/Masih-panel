@@ -187,6 +187,7 @@ install -d -m 0700 /etc/x-ui /etc/masiha-vpn-extension /opt/masiha-vpn-extension
 # Web-based, admin-authenticated backup/restore worker runs outside x-ui
 # via systemd-run so final recovery survives panel service restarts.
 install -m 0644 "$REPO_ROOT/runtime/full_backup.py" /opt/masiha-vpn-extension/full_backup.py
+install -m 0644 "$REPO_ROOT/runtime/portable_migration.py" /opt/masiha-vpn-extension/portable_migration.py
 install -m 0644 "$REPO_ROOT/deploy/web-backup-worker.py" /opt/masiha-vpn-extension/web_backup_worker.py
 for file in manager.py routeros6.py ipsec_backend.py ipsec_accounting.py unified.py worker.py sales.py sales_worker.py sales_bot_admin.py ai_admin_audit.py channel_manager.py channel_manager_worker.py gamification.py entertainment.py media_library.py social.py audio_fingerprint.py acoustid_client.py ai_commerce.py ai_models.py ai_media.py ai_fal_video.py ai_conversation.py runtime_config.py bot_texts.py bot_texts_export.py bot_texts_admin.py bot_texts.fa.json; do
   install -m 0644 "$REPO_ROOT/runtime/$file" "/opt/masiha-vpn-extension/$file"
@@ -253,11 +254,11 @@ server {
   client_max_body_size 16m;
   # Restrict large uploads to the authenticated backup-import endpoint.
   location = ${PANEL_PATH}panel/api/masiha-backup/import {
-    client_max_body_size 512m;
+    client_max_body_size 6g;
     # Exact backup import must be owned by the independent Masiha API.
     proxy_pass http://127.0.0.1:61794;
     proxy_http_version 1.1;
-    proxy_request_buffering on;
+    proxy_request_buffering off;
     proxy_read_timeout 360s;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;

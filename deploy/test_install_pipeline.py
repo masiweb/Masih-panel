@@ -86,6 +86,27 @@ class GitInstallerTests(unittest.TestCase):
                         sidecar.index("<<'PYSESSION'"))
         self.assertIn("extra.rstrip()+'\\n  location /sub/ {'",sidecar)
 
+    def test_portable_backup_restore_is_bundled_and_large_upload_is_supported(self):
+        install=file("deploy/install-ubuntu-24.04.sh")
+        worker=file("deploy/web-backup-worker.py")
+        sidebar=file("sidecar/server.py")
+        ui=file("deploy/native-web/BackupRestorePanel.tsx")
+        python_tool=file("runtime/full_backup.py")
+        migration=file("runtime/portable_migration.py")
+        self.assertIn("runtime/portable_migration.py",install)
+        self.assertIn("6g",install)
+        self.assertIn("6g",file("sidecar/nginx-locations.conf"))
+        self.assertIn("MAX_UPLOAD = 6 << 30",sidebar)
+        self.assertIn("create-full",sidebar)
+        self.assertIn("--portable",worker)
+        self.assertIn("BACKUP_SUMMARY_JSON",python_tool)
+        self.assertIn("pack_encrypted_stream",python_tool)
+        self.assertIn("build_panel_candidate",migration)
+        self.assertIn("build_sales_candidate",migration)
+        self.assertIn("s3.chanelchat.ir",file("deploy/test_portable_migration.py"))
+        self.assertIn("meta.requires_rebind",ui)
+        self.assertIn("include_media",ui)
+
     def test_private_chat_and_admin_audit_deployed_with_fresh_install(self):
         install = file("deploy/install-ubuntu-24.04.sh")
         finish = file("deploy/finish-install.sh")
