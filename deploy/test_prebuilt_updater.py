@@ -88,6 +88,12 @@ fi
     def test_rejects_wrong_release_provenance(self):
         self.run_fixture(False)
 
+    def test_default_update_will_not_compile_go_when_release_unavailable(self):
+        script=UPDATER
+        self.assertIn("Precompiled x-ui is not available yet. Local Go compilation was NOT started.",script)
+        self.assertIn('MASIHA_ALLOW_LOCAL_BUILD:-0',script)
+        self.assertIn("Optional emergency fallback: MASIHA_ALLOW_LOCAL_BUILD=1",script)
+
     def test_frontend_mode_is_separate_from_backend(self):
         p=(ROOT/"deploy/build-3x-ui.sh").read_text()
         q=(ROOT/"deploy/prepare-portable-build.sh").read_text()

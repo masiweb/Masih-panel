@@ -127,7 +127,13 @@ if [[ ! -s "$BR/x-ui" || ! -s "$BR/x-ui.sha256" ||
     MASIHA_FRONTEND_ONLY=1 MASIHA_BUILD_ROOT="$BR" \
       bash "$ROOT/deploy/prepare-portable-build.sh"
   else
-    echo '=== No trusted precompiled release available; building locally ==='
+    if [[ "${MASIHA_ALLOW_LOCAL_BUILD:-0}" != "1" ]];then
+      echo 'Precompiled x-ui is not available yet. Local Go compilation was NOT started.' >&2
+      echo 'Check the Masiha GitHub Actions prebuilt workflow/release, then rerun the SAME update command.' >&2
+      echo 'Optional emergency fallback: MASIHA_ALLOW_LOCAL_BUILD=1 (recompiles Go on VPS).' >&2
+      exit 1
+    fi
+    echo '=== Explicit local fallback selected; recompiling from persistent Go cache ==='
     MASIHA_BUILD_ROOT="$BR" bash "$ROOT/deploy/prepare-portable-build.sh"
   fi
 else
