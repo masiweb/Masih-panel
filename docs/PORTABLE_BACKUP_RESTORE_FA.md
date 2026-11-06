@@ -103,3 +103,28 @@ sudo bash deploy/upgrade-portable-backup.sh
 شناسه Commit پین‌شده در `source-patch.sha256`، صحت باینری
 `x-ui.sha256` و نسخه 3.11.0 بررسی می‌شوند. اگر این شواهد موجود
 نباشند، ارتقا پیش از تغییر سرویس‌ها متوقف می‌شود.
+
+
+### سرور مقصد فاقد سورس Go یا فایل go.mod
+
+برخی نصب‌های سرور مقصد فقط باینری فعال 3x-ui را نگه داشته‌اند و
+پوشه سورس اصلی ناقص است. اسکریپت ارتقای جدید در این حالت از پوشه
+ساخت جداگانه /opt/masiha-portable-build-v3.11.0/ استفاده می‌کند.
+سورس رسمی Commit پین‌شده، patch مسیحا، Go و Node دارای SHA256
+تأییدشده، و تمامی وابستگی‌های لازم قبل از لمس سرویس‌های زنده
+آماده می‌شوند. مرحله prepare دیتابیس، دامنه، SSL یا ربات را تغییر نمی‌دهد.
+
+پس از دریافت جدیدترین Git روی S3:
+
+```bash
+bash deploy/upgrade-portable-backup.sh --check
+bash deploy/upgrade-portable-backup.sh --prepare
+bash deploy/upgrade-portable-backup.sh --check
+bash deploy/upgrade-portable-backup.sh
+```
+
+در صورت فقدان سورس، check پیام BUILD_SOURCE_MISSING=YES می‌دهد.
+بعد از prepare موفق، باید پیام PORTABLE_BACKUP_BUILD_PREPARED دیده شود.
+حداقل ۵ گیگابایت فضای آزاد برای ساخت لازم است. در صورت خطا، پوشه
+ساخت جداگانه و کش‌های معتبر را پاک نکنید؛ پس از اصلاح مشکل
+می‌توانید مرحله prepare را تکرار کنید.

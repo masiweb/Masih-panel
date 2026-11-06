@@ -14,51 +14,61 @@ CONFIG=/etc/masiha-vpn-extension/config.json
 PIN=c621ba9014a6aa21fd7c9ecf45655e44e24ebf13
 
 [[ "$(id -u)" == "0" ]] || { echo "Run as root (sudo bash)"; exit 1; }
-[[ "${1:-}" == "" || "${1:-}" == "--check" ]] || { echo "Usage: $0 [--check]"; exit 2; }
-for path in "$SRC/go.mod" "$SRC/frontend/package.json" "$SRC/frontend/package-lock.json" \
-            "$SRC/internal/web/controller/masiha_backup.go" \
-            "$SRC/frontend/src/pages/vpn/BackupRestorePanel.tsx" \
-            "$SRC/frontend/node_modules/.bin/vite" \
-            "$ROOT/sidecar/masiha-vite.config.mjs" "$ROOT/sidecar/masiha-standalone.tsx" \
+[[ "${1:-}" == "" || "${1:-}" == "--check" || "${1:-}" == "--prepare" ]] || {
+ echo "Usage: $0 [--check|--prepare]"; exit 2;
+}
+# On migrated servers, the running 3x-ui binary is installed but the
+# original build source/toolchains can be absent. Use an isolated, resumable
+# workspace instead of relying on /opt/.../src or changing any live files.
+LEGACY_BUILD_ROOT="$BUILD_ROOT"
+PORTABLE_ROOT="${MASIHA_PORTABLE_BUILD_ROOT:-/opt/masiha-portable-build-v3.11.0}"
+if [[ -s "$SRC/go.mod" && -s "$SRC/frontend/package-lock.json" &&
+      -s "$SRC/internal/web/controller/masiha_backup.go" &&
+      -x "$SRC/frontend/node_modules/.bin/vite" ]];then
+ SOURCE_ORIGIN=existing
+else
+ BUILD_ROOT="$PORTABLE_ROOT"
+ SRC="$BUILD_ROOT/src"
+ SOURCE_ORIGIN=isolated
+fi
+for path in "$ROOT/sidecar/masiha-vite.config.mjs" "$ROOT/sidecar/masiha-standalone.tsx" \
             "$ROOT/sidecar/masiha-standalone.html" "$ROOT/sidecar/standalone.css" \
+            "$ROOT/deploy/prepare-portable-build.sh" "$ROOT/deploy/3x-ui.patch" \
             "$LIVE" "$CONFIG" "$NGINX" \
             "$ROOT/runtime/full_backup.py" "$ROOT/runtime/portable_migration.py" \
-            "$ROOT/deploy/native-web/BackupRestorePanel.tsx" "$ROOT/deploy/native-web/masiha_backup.go"; do
- [[ -e "$path" ]] || { echo "Missing installed dependency: $path" >&2;exit 1; }
+            "$ROOT/deploy/native-web/BackupRestorePanel.tsx" "$ROOT/deploy/native-web/masiha_backup.go";do
+ [[ -e "$path" ]] || { echo "Missing application file: $path" >&2;exit 1; }
 done
-[[ -x "$GO/go" && -x "$NODE/node" && -x "$SRC/frontend/node_modules/.bin/vite" ]] || {
-  echo "Pinned Go/Node/frontend tools missing" >&2;exit 1;
-}
-# Existing machines can retain the compiled/patched 3x-ui source without
-# its .git directory. In that case verify its installer-generated provenance
-# and the checksum of the corresponding already-built binary. Never create
-# a synthetic .git directory or silently trust an unknown checkout.
-if [[ -e "$SRC/.git" ]]; then
- [[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || {
-  echo "Pinned 3x-ui Git HEAD mismatch; refusing to modify destination." >&2;exit 1;
- }
- echo "Pinned source checkout verified via Git."
+if [[ ! -s "$SRC/go.mod" || ! -s "$SRC/frontend/package-lock.json" ||
+      ! -s "$SRC/internal/web/controller/masiha_backup.go" ||
+      ! -x "$SRC/frontend/node_modules/.bin/vite" ]];then
+ SOURCE_NEEDS_PREP=1
 else
- MARKER="$BUILD_ROOT/source-patch.sha256"
- BUILDSHA="$BUILD_ROOT/x-ui.sha256"
- [[ -s "$MARKER" && -s "$BUILDSHA" && -s "$BUILD_ROOT/x-ui" ]] || {
-  echo "Source .git is absent and signed-off build metadata is missing." >&2
-  echo "Source must be repaired using the pinned installer; no live data changed." >&2
-  exit 1
- }
- read -r MARKER_COMMIT MARKER_PATCH < "$MARKER"
- [[ "$MARKER_COMMIT" == "$PIN" &&
-    "$MARKER_PATCH" =~ ^[0-9a-f]{64}$ ]] || {
-  echo "Original build metadata does not match pinned 3x-ui commit." >&2;exit 1;
- }
- (cd "$BUILD_ROOT" && sha256sum -c --status x-ui.sha256) || {
-  echo "Original installed build artifact checksum mismatch." >&2;exit 1;
- }
- [[ "$("$BUILD_ROOT/x-ui" -v 2>&1 | head -1)" == "3.11.0" &&
-    "$("$LIVE" -v 2>&1 | head -1)" == "3.11.0" ]] || {
-  echo "Unexpected installed 3x-ui version." >&2;exit 1;
- }
- echo "Pinned source provenance verified without .git using build metadata."
+ SOURCE_NEEDS_PREP=0
+fi
+if [[ "$SOURCE_NEEDS_PREP" == 0 ]];then
+ if [[ -e "$SRC/.git" ]];then
+  [[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || {
+   echo "Pinned 3x-ui Git revision mismatch; refusing to modify destination." >&2;exit 1;
+  }
+  echo "Pinned source checkout verified via Git."
+ else
+  MARKER="$BUILD_ROOT/source-patch.sha256"
+  [[ -s "$MARKER" && -s "$BUILD_ROOT/x-ui" && -s "$BUILD_ROOT/x-ui.sha256" ]] || {
+   echo "Build provenance missing; use an isolated verified workspace." >&2;exit 1;
+  }
+  EXPECTED_ID="$PIN $(sha256sum "$ROOT/deploy/3x-ui.patch" | awk '{print $1}')"
+  [[ "$(cat "$MARKER")" == "$EXPECTED_ID" ]] || {
+   echo "Build provenance differs from current release patch." >&2;exit 1;
+  }
+  (cd "$BUILD_ROOT" && sha256sum -c --status x-ui.sha256) || {
+   echo "Existing build checksum mismatch." >&2;exit 1;
+  }
+  echo "Pinned non-Git build verified by exact release patch and SHA256."
+ fi
+else
+ echo "Pinned 3x-ui build workspace is not present: $SRC"
+ echo "An isolated verified build will be prepared; no live files touched."
 fi
 DOMAIN="$(python3 - "$CONFIG" <<'PY'
 import json,sys
@@ -82,11 +92,38 @@ print("Destination database integrity check: PASS")
 PY
 echo "Destination domain will be retained: $DOMAIN"
 if [[ "${1:-}" == "--check" ]];then
+ if [[ "$SOURCE_NEEDS_PREP" == 1 ]];then
+  echo "BUILD_SOURCE_MISSING=YES; bootstrap required before activation"
+ fi
  echo "PORTABLE_BACKUP_UPGRADE_CHECK_OK"
  exit 0
 fi
-
+if [[ "$SOURCE_NEEDS_PREP" == 1 ]];then
+ # Compile in a separate tree before replacing anything on the live server.
+ # Source, Go and Node caches can be several gigabytes.
+ AVAILABLE_KB=$(df -Pk /opt | awk 'NR==2 {print $4}')
+ if [[ ! "$AVAILABLE_KB" =~ ^[0-9]+$ || "$AVAILABLE_KB" -lt 5242880 ]];then
+  echo "At least 5 GiB free disk is required to bootstrap the pinned build workspace." >&2
+  echo "Do not delete active backup archives to create space." >&2
+  exit 1
+ fi
+ echo "=== PREPARING SOURCE / GO / NODE / NPM IN ISOLATED WORKSPACE ==="
+ MASIHA_BUILD_ROOT="$BUILD_ROOT" bash "$ROOT/deploy/prepare-portable-build.sh"
+fi
+[[ -s "$SRC/go.mod" && -s "$SRC/frontend/package-lock.json" &&
+    -x "$SRC/frontend/node_modules/.bin/vite" &&
+    -s "$SRC/internal/web/controller/masiha_backup.go" ]] || {
+ echo "Build preparation incomplete; live services not touched." >&2;exit 1;
+}
+[[ -x "$GO/go" && -x "$NODE/node" ]] || {
+ echo "Pinned toolchains missing; prepare build first." >&2;exit 1;
+}
 export PATH="$GO:$NODE:$PATH" GOTOOLCHAIN=local GOPROXY=off
+if [[ "${1:-}" == "--prepare" ]];then
+ echo "PORTABLE_BACKUP_BUILD_PREPARED"
+ echo "NO_LIVE_SERVICES_CHANGED"
+ exit 0
+fi
 STMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ROLL="/root/masiha-backups/pre-portable-upgrade-$STMP"
 install -d -m 0700 "$ROLL"
@@ -152,10 +189,22 @@ ASSETS_SWAPPED=1
 install -m 0644 "$ROOT/sidecar/nav.js" /var/www/masiha-ui/nav.js
 install -m 0644 "$ROOT/sidecar/nav.css" /var/www/masiha-ui/nav.css
 chmod -R a+rX /var/www/masiha-ui
-(
- cd "$SRC"
- go build -mod=readonly -o "$ROLL/x-ui.new" .
-)
+# The isolated prep has already built a matching native binary and recorded
+# its checksum and exact patch identity. Avoid compiling it a second time.
+EXPECTED_ID="$PIN $(sha256sum "$ROOT/deploy/3x-ui.patch" | awk '{print $1}')"
+if [[ "$SOURCE_ORIGIN" == isolated && -s "$BUILD_ROOT/x-ui" &&
+      -s "$BUILD_ROOT/x-ui.sha256" && -s "$BUILD_ROOT/source-patch.sha256" &&
+      "$(cat "$BUILD_ROOT/source-patch.sha256")" == "$EXPECTED_ID" ]] &&
+    (cd "$BUILD_ROOT" && sha256sum -c --status x-ui.sha256);then
+ cp -a "$BUILD_ROOT/x-ui" "$ROLL/x-ui.new"
+ echo "Reusing verified native binary built in isolated workspace."
+else
+ (
+  cd "$SRC"
+  GOMAXPROCS="${MASIHA_GOMAXPROCS:-2}" timeout --kill-after=10s 1200s \
+   go build -mod=readonly -o "$ROLL/x-ui.new" .
+ )
+fi
 [[ -x "$ROLL/x-ui.new" ]] || { echo "Native binary build incomplete"; exit 1; }
 [[ "$("$ROLL/x-ui.new" -v 2>&1 | head -1)" == "3.11.0" ]] || { echo "Wrong panel version";exit 1; }
 
