@@ -10,6 +10,7 @@ LIVE=/usr/local/x-ui/x-ui
 EXT=/opt/masiha-vpn-extension
 NGINX=/etc/nginx/sites-available/masiha-vpn
 WEB=/var/www/masiha-ui
+SIDECAR_UNIT=/etc/systemd/system/masiha-vpn-sidecar.service
 PIN='c621ba9014a6aa21fd7c9ecf45655e44e24ebf13'
 TOOLS=/opt/masiha-vpn-toolchains
 PATCH_HASH="$(sha256sum "$ROOT/deploy/3x-ui.patch" | awk '{print $1}')"
@@ -156,13 +157,20 @@ export PATH="$TOOLS/go1.27.3/bin:$TOOLS/node-v26.13.0-linux-x64/bin:$PATH"
 SRC="$BR/src/frontend"
 for f in "$ROOT/sidecar/masiha-vite.config.mjs" "$ROOT/sidecar/masiha-standalone.html" \
          "$ROOT/sidecar/masiha-standalone.tsx" "$ROOT/sidecar/standalone.css" \
-         "$ROOT/sidecar/nav.js" "$ROOT/sidecar/nav.css";do
+         "$ROOT/sidecar/nav.js" "$ROOT/sidecar/nav.css" \
+         "$ROOT/sidecar/masiha-vpn-sidecar.service" "$ROOT/sidecar/nginx-locations.conf" \
+         "$ROOT/deploy/merge-sidecar-nginx.py";do
   [[ -s "$f" ]] || { echo "Missing frontend file $f";exit 1; }
 done
 [[ -x "$SRC/node_modules/.bin/vite" ]] || { echo 'Frontend build cache missing.' >&2;exit 1; }
 STMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ROLL="/root/masiha-updates/rollback-$STMP"
 install -d -m 0700 "$ROLL"
+SIDECAR_UNIT_PREEXISTED=0
+if [[ -e "$SIDECAR_UNIT" ]];then
+ cp -a "$SIDECAR_UNIT" "$ROLL/sidecar-unit.before"
+ SIDECAR_UNIT_PREEXISTED=1
+fi
 install -d -m 0700 "$ROLL/web-next"
 echo '=== Building standalone web UI into a private temporary folder ==='
 # Reapply the same source overlays as the fresh installer (users, AI,
@@ -233,6 +241,14 @@ rollback() {
   if [[ "$NGINX_SWAPPED" == 1 ]];then
     cp -a "$ROLL/nginx.before" "$NGINX"
   fi
+  systemctl stop masiha-vpn-sidecar.service >/dev/null 2>&1 || true
+  if [[ "$SIDECAR_UNIT_PREEXISTED" == 1 ]];then
+    cp -a "$ROLL/sidecar-unit.before" "$SIDECAR_UNIT"
+  else
+    systemctl disable masiha-vpn-sidecar.service >/dev/null 2>&1 || true
+    rm -f "$SIDECAR_UNIT"
+  fi
+  systemctl daemon-reload >/dev/null 2>&1 || true
   if [[ "$XUI_WAS_ACTIVE" == 1 ]];then systemctl restart x-ui.service || true;fi
   if [[ "$SIDE_WAS_ACTIVE" == 1 ]];then systemctl restart masiha-vpn-sidecar.service || true;fi
   if [[ "$BOT_WAS_ACTIVE" == 1 ]];then systemctl restart masiha-vpn-extension.service || true;fi
@@ -250,6 +266,7 @@ done
 install -m 0755 "$ROOT/runtime/transfer_askpass.py" "$EXT/transfer_askpass.py"
 install -m 0644 "$ROOT/deploy/web-backup-worker.py" "$EXT/web_backup_worker.py"
 install -m 0644 "$ROOT/sidecar/server.py" "$EXT/sidecar_server.py"
+install -m 0644 "$ROOT/sidecar/masiha-vpn-sidecar.service" "$SIDECAR_UNIT"
 python3 -m py_compile "$EXT/full_backup.py" "$EXT/portable_migration.py" \
                        "$EXT/web_backup_worker.py" "$EXT/sidecar_server.py"
 # Change only the upload limit for authenticated backup endpoints.
@@ -265,11 +282,12 @@ for existing in (
     "masiha-backup/(?:status|create|import|restore|download/.+)",
     "masiha-backup/(?:status|create|import|restore|transfer-probe|transfer-start|download/.+)",
     "masiha-backup/(?:status|create|delete|import|restore|download/.+)",
+    "masiha-backup/(?:status|create|delete|import|restore|transfer-probe|transfer-start|download/.+)",
 ):
     s=s.replace(existing,expected)
-s=s.replace("masiha-backup/(?:status|create|delete|import|restore|transfer-probe|transfer-start|download/.+)",expected)
 p.write_text(s)
 PY
+python3 "$ROOT/deploy/merge-sidecar-nginx.py" "$NGINX" "$ROOT/sidecar/nginx-locations.conf"
 nginx -t
 # Replace UI with a staged tree; retain a full rollback copy if present.
 # On servers with no webroot yet this is the first static UI installation.
@@ -283,7 +301,9 @@ install -m 0755 "$BR/x-ui" "$LIVE.next"
 mv -f "$LIVE.next" "$LIVE"
 BINARY_SWAPPED=1
 [[ "$XUI_WAS_ACTIVE" == 1 ]] && systemctl restart x-ui.service || true
-[[ "$SIDE_WAS_ACTIVE" == 1 ]] && systemctl restart masiha-vpn-sidecar.service || true
+systemctl daemon-reload
+systemctl enable --now masiha-vpn-sidecar.service
+systemctl restart masiha-vpn-sidecar.service
 systemctl reload nginx.service
 [[ "$BOT_WAS_ACTIVE" == 1 ]] && systemctl restart masiha-vpn-extension.service || true
 # Never enable an inactive bot on S3: S2 might still be processing updates.
@@ -300,6 +320,18 @@ print(json.loads(p.read_text()).get('domain','') if p.is_file() else '')
 PY
 )"
 if [[ "$XUI_WAS_ACTIVE" == 1 && -n "$DOMAIN" ]];then
+   sidecar_ready=0
+   for i in $(seq 1 15);do
+     if curl -fsS --connect-timeout 2 --max-time 3 http://127.0.0.1:61794/healthz >/dev/null;then
+       sidecar_ready=1;break
+     fi
+     sleep 1
+   done
+   [[ "$sidecar_ready" == 1 ]] || {
+     echo 'Masiha sidecar health test failed after installation.' >&2
+     systemctl status masiha-vpn-sidecar --no-pager >&2 || true
+     false
+   }
    ready=0
    for i in $(seq 1 25);do
      status="$(curl -sk --connect-timeout 3 --max-time 4 \
@@ -318,6 +350,13 @@ if [[ "$XUI_WAS_ACTIVE" == 1 && -n "$DOMAIN" ]];then
       "https://$DOMAIN/masiha-ui/" || true)"
    [[ "$ui_status" == 200 ]] || {
      echo "Masiha UI HTTP check failed ($ui_status); rolling back." >&2
+     false
+   }
+   redirect_status="$(curl -sk --connect-timeout 3 --max-time 8 \
+      --resolve "$DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' \
+      "https://$DOMAIN/xui/panel/sales-bot" || true)"
+   [[ "$redirect_status" == 302 ]] || {
+     echo "Masiha sales-bot redirect check failed ($redirect_status); rolling back." >&2
      false
    }
 fi

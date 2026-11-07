@@ -30,7 +30,7 @@ class OneCommandTests(unittest.TestCase):
         self.assertIn('UPDATE_BACKUP_REQUIRED=NO',script)
         self.assertIn('UPDATE_RESTORES_DATABASES=NO',script)
         self.assertIn('MASIHA_UPDATE_OK=',script)
-        self.assertNotIn('systemctl enable',script)
+        self.assertNotIn('systemctl enable masiha-vpn-extension',script)
         for forbidden in ('--confirm-restore','restore_database','restore --portable',
                           'touch /etc/x-ui/x-ui.db','sqlite3 /etc/x-ui/x-ui.db'):
             self.assertNotIn(forbidden,script)
@@ -39,6 +39,11 @@ class OneCommandTests(unittest.TestCase):
         self.assertIn('ROLLBACK_PATH=',script)
         self.assertIn('prepare-sidecar-source.sh',script)
         self.assertIn('BINARY_SWAPPED=1',script)
+        self.assertIn('merge-sidecar-nginx.py',script)
+        self.assertIn('masiha-vpn-sidecar.service',script)
+        self.assertIn('systemctl enable --now masiha-vpn-sidecar.service',script)
+        self.assertIn('Masiha sidecar health test failed',script)
+        self.assertIn('Masiha sales-bot redirect check failed',script)
 
     def test_safe_source_overlays_and_pinned_build(self):
         helper=self.read('deploy/prepare-sidecar-source.sh')
@@ -97,6 +102,36 @@ class OneCommandTests(unittest.TestCase):
                 self.assertIn('Unexpected webroot type',run.stderr)
             finally:
                 script.unlink(missing_ok=True)
+
+    def test_update_installs_and_refreshes_sidecar_nginx_routes_idempotently(self):
+        import importlib.util
+        helper_path=BASE/'deploy/merge-sidecar-nginx.py'
+        spec=importlib.util.spec_from_file_location('merge_sidecar_nginx',helper_path)
+        module=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        bundle=BASE/'sidecar/nginx-locations.conf'
+        original='''server {
+  listen 443 ssl;
+  location /sub/ { proxy_pass http://127.0.0.1:2096; }
+  location / {
+    proxy_pass http://127.0.0.1:62053;
+    proxy_set_header Upgrade $http_upgrade;
+  }
+}
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            target=Path(tmp)/'site.conf'
+            target.write_text(original)
+            module.merge(target,bundle)
+            first=target.read_text()
+            self.assertIn('location ^~ /masiha-ui/',first)
+            self.assertIn('reinspect',first)
+            self.assertIn('sub_filter_once on;',first)
+            module.merge(target,bundle)
+            second=target.read_text()
+            self.assertEqual(first,second)
+            self.assertEqual(second.count('location ^~ /masiha-ui/'),1)
+            self.assertEqual(second.count('MASIHA-SIDECAR BEGIN'),1)
 
     def test_installer_and_updater_keep_data_separate(self):
         install=self.read('deploy/install-ubuntu-24.04.sh')
